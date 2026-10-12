@@ -1,4 +1,4 @@
-//! Profile identifiers. Same grammar as `packages/contracts/src/ids.ts`:
+//! Opaque identifiers. Same grammar as `packages/contracts/src/ids.ts`:
 //! `prf_` followed by 26 Crockford base32 characters (`0-9 A-H J K M N P-T V-Z`).
 //!
 //! A `ProfileId` is the ONLY input from which a profile's on-disk location is derived. Display labels,
@@ -7,70 +7,110 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-const PREFIX: &str = "prf_";
 const BODY_LEN: usize = 26;
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct ProfileId(String);
+fn valid_body(body: &str) -> bool {
+    body.len() == BODY_LEN && body.bytes().all(|b| CROCKFORD.contains(&b))
+}
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("invalid profile id")]
-pub struct InvalidProfileId;
+/// 48-bit milliseconds + 80 random bits, Crockford base32 (same layout as the server's ids).
+fn generate_body() -> Result<String, getrandom::Error> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut bytes = [0u8; 16];
+    bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
+    getrandom::fill(&mut bytes[6..])?;
+    let mut value = u128::from_be_bytes(bytes);
+    let mut body = [b'0'; BODY_LEN];
+    for slot in body.iter_mut().rev() {
+        *slot = CROCKFORD[(value & 31) as usize];
+        value >>= 5;
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
 
-impl ProfileId {
-    pub fn parse(value: &str) -> Result<Self, InvalidProfileId> {
-        let body = value.strip_prefix(PREFIX).ok_or(InvalidProfileId)?;
-        if body.len() != BODY_LEN || !body.bytes().all(|b| CROCKFORD.contains(&b)) {
-            return Err(InvalidProfileId);
+/// Random hex string for opaque local secrets/nonces (e.g. installation ids). Not an entity id.
+pub fn random_hex(bytes: usize) -> Result<String, getrandom::Error> {
+    let mut buf = vec![0u8; bytes];
+    getrandom::fill(&mut buf)?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+macro_rules! opaque_id {
+    ($(#[$meta:meta])* $name:ident, $err:ident, $prefix:literal, $what:literal) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        pub struct $name(String);
+
+        #[derive(Debug, PartialEq, Eq)]
+        pub struct $err;
+
+        impl fmt::Display for $err {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(concat!("invalid ", $what, " id"))
+            }
         }
-        Ok(Self(value.to_owned()))
-    }
 
-    /// Generates a new id (48-bit milliseconds + 80 random bits), for local-only profiles.
-    /// See docs/adr/0002 for how local ids are reconciled with server ids on first sync.
-    pub fn generate() -> Result<Self, getrandom::Error> {
-        let millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let mut bytes = [0u8; 16];
-        bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
-        getrandom::fill(&mut bytes[6..])?;
-        let mut value = u128::from_be_bytes(bytes);
-        let mut body = [b'0'; BODY_LEN];
-        for slot in body.iter_mut().rev() {
-            *slot = CROCKFORD[(value & 31) as usize];
-            value >>= 5;
+        impl std::error::Error for $err {}
+
+        impl $name {
+            pub const PREFIX: &'static str = $prefix;
+
+            pub fn parse(value: &str) -> Result<Self, $err> {
+                let body = value.strip_prefix($prefix).ok_or($err)?;
+                if !valid_body(body) {
+                    return Err($err);
+                }
+                Ok(Self(value.to_owned()))
+            }
+
+            /// Generates a new id on this device. See docs/adr/0008 (item 8) for reconciliation with server ids.
+            pub fn generate() -> Result<Self, getrandom::Error> {
+                Ok(Self(format!("{}{}", $prefix, generate_body()?)))
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
         }
-        let body = String::from_utf8_lossy(&body);
-        Ok(Self(format!("{PREFIX}{body}")))
-    }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+        impl TryFrom<String> for $name {
+            type Error = $err;
+            fn try_from(value: String) -> Result<Self, Self::Error> {
+                Self::parse(&value)
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(id: $name) -> Self {
+                id.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
 }
 
-impl TryFrom<String> for ProfileId {
-    type Error = InvalidProfileId;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::parse(&value)
-    }
-}
-
-impl From<ProfileId> for String {
-    fn from(id: ProfileId) -> Self {
-        id.0
-    }
-}
-
-impl fmt::Display for ProfileId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
+opaque_id!(
+    /// Profile id: the ONLY input from which a profile's on-disk location is derived.
+    ProfileId, InvalidProfileId, "prf_", "profile"
+);
+opaque_id!(
+    /// Local workspace id (ADR-0009). A local workspace becomes an organization at first sync (milestone 06/07).
+    WorkspaceId, InvalidWorkspaceId, "wsp_", "workspace"
+);
+opaque_id!(
+    /// This device's id, generated once per installation.
+    DeviceId, InvalidDeviceId, "dev_", "device"
+);
 
 #[cfg(test)]
 mod tests {
@@ -107,6 +147,15 @@ mod tests {
         for value in bad {
             assert_eq!(ProfileId::parse(value), Err(InvalidProfileId), "{value:?}");
         }
+    }
+
+    #[test]
+    fn prefixes_are_not_interchangeable() {
+        let w = WorkspaceId::generate().unwrap_or_else(|_| panic!("rng"));
+        assert!(w.as_str().starts_with("wsp_"));
+        assert!(ProfileId::parse(w.as_str()).is_err());
+        assert!(DeviceId::parse(w.as_str()).is_err());
+        assert_eq!(random_hex(16).map(|h| h.len()), Ok(32));
     }
 
     #[test]

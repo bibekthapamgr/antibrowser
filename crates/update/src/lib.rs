@@ -4,6 +4,8 @@
 //! Milestone 01 scope: data model, strict parsing and SHA-256 verification. Manifest signatures, staged
 //! rollout and rollback are milestone 12; the Tauri updater handles the manager itself.
 
+pub mod install;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Read;

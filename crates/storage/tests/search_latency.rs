@@ -23,6 +23,7 @@ fn search_10k_rows_p95() {
     let rows: Vec<NewProfile<'_>> = (0..10_000)
         .map(|i| NewProfile {
             id: &ids[i],
+            workspace_id: None,
             name: &names[i],
             client_label: Some(&clients[i]),
             folder_label: None,
@@ -45,7 +46,7 @@ fn search_10k_rows_p95() {
         let q = queries[i % queries.len()];
         let start = Instant::now();
         let found = store
-            .search_profiles(Some(q), 100)
+            .search_profiles(None, Some(q), 100)
             .unwrap_or_else(|e| panic!("{e}"));
         samples.push(start.elapsed().as_secs_f64() * 1000.0);
         assert!(found.len() <= 100);

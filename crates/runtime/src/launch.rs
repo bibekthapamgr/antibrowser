@@ -131,15 +131,22 @@ fn flag(name: &str, path: &Path) -> OsString {
     s
 }
 
+/// A started browser process. `child` is kept by the supervisor so the process can be reaped; it is `None` for
+/// test launchers and for processes adopted after a manager restart.
+pub struct Spawned {
+    pub pid: u32,
+    pub child: Option<Child>,
+}
+
 pub trait Launcher: Send + Sync {
-    fn spawn(&self, spec: &LaunchSpec) -> Result<u32, LaunchError>;
+    fn spawn(&self, spec: &LaunchSpec) -> Result<Spawned, LaunchError>;
 }
 
 /// Spawns the real browser process detached from the manager's stdio.
 pub struct SystemLauncher;
 
 impl Launcher for SystemLauncher {
-    fn spawn(&self, spec: &LaunchSpec) -> Result<u32, LaunchError> {
+    fn spawn(&self, spec: &LaunchSpec) -> Result<Spawned, LaunchError> {
         let child: Child = Command::new(&spec.executable)
             .args(&spec.args)
             .stdin(Stdio::null())
@@ -149,7 +156,10 @@ impl Launcher for SystemLauncher {
             .envs(safe_env())
             .spawn()
             .map_err(LaunchError::Spawn)?;
-        Ok(child.id())
+        Ok(Spawned {
+            pid: child.id(),
+            child: Some(child),
+        })
     }
 }
 

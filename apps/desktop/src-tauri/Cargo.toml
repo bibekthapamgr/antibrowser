@@ -1,6 +1,6 @@
 [package]
 name = "pb-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Desktop manager shell (Tauri 2). Renders only trusted, bundled manager UI; browsing happens in separate Chromium processes."
 edition.workspace = true
 rust-version.workspace = true
@@ -17,12 +17,23 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 pb-runtime.workspace = true
 pb-storage.workspace = true
+pb-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# Plugins are used from Rust only. None of them is granted to the webview (see capabilities/default.json).
+tauri-plugin-deep-link = "2.6"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-opener = "2.7"
+tauri-plugin-single-instance = { version = "2.5", features = ["deep-link"] }
+fs4 = "1.1"
+keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "linux-native"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+url = "2"
 
 [dev-dependencies]
-tauri = { version = "2", features = ["test"] }
+rusqlite.workspace = true
+tauri = { version = "2", features = ["test", "tray-icon", "image-png"] }
 tempfile.workspace = true
 
 [lints]

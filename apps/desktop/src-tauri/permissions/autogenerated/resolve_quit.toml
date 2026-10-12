@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-quit"
+description = "Enables the resolve_quit command without any pre-configured scope."
+commands.allow = ["resolve_quit"]
+
+[[permission]]
+identifier = "deny-resolve-quit"
+description = "Denies the resolve_quit command without any pre-configured scope."
+commands.deny = ["resolve_quit"]

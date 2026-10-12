@@ -1,169 +1,81 @@
-//! Desktop manager shell.
+//! Desktop manager shell (milestone 02).
 //!
-//! Security boundary (roadmap stack decision): the system webview renders ONLY the bundled manager UI.
-//! Untrusted websites are never loaded here; they run in separate Chromium processes with their own
-//! user-data directories. The webview can call exactly three commands (see capabilities/default.json),
-//! and every argument is validated in Rust before any filesystem change or process spawn.
+//! Security boundary (roadmap): the system webview renders ONLY the bundled manager UI. Navigation away from it and
+//! new windows are refused; external links open in the default browser; websites run only in separate Chromium
+//! processes. The webview can invoke only the commands listed in `capabilities/default.json`, each of which checks
+//! its caller and validates its inputs in Rust.
 
-use pb_runtime::{
-    BrowserInstall, LaunchError, LaunchRequest, Launcher, ProfileId, ProfileState, ProfilesRoot,
-    SystemLauncher, prepare_launch,
+pub mod commands;
+pub mod deeplink;
+pub mod events;
+pub mod external;
+pub mod ipc;
+pub mod operations;
+pub mod recovery;
+pub mod secrets;
+pub mod state;
+pub mod supervisor;
+
+use crate::events::{DEEP_LINK, QUIT_REQUESTED};
+use crate::state::AppState;
+use pb_runtime::{BrowserInstall, SystemInspector, SystemLauncher};
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::webview::NewWindowResponse;
+use tauri::{
+    AppHandle, Emitter, Manager, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use pb_storage::{LocalProfile, LocalStore, NewProfile, StoreError};
-use serde::Serialize;
-use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 
-pub struct AppState {
-    pub store: LocalStore,
-    pub root: ProfilesRoot,
-    pub browser: Option<BrowserInstall>,
-    pub launcher: Arc<dyn Launcher>,
-    /// Serialises launches so "is it already running?" and "record pid" cannot interleave.
-    pub launch_lock: Mutex<()>,
+/// The tauri context (config, capabilities/ACL, assets). `generate_context!` must be expanded exactly once per
+/// crate: on macOS it embeds the Info.plist in a fixed linker section. Tests reuse this with the mock runtime.
+pub fn context<R: Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
 }
 
-/// Error returned over IPC: a stable code and a user-safe message. No paths, SQL or OS error text.
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct IpcError {
-    pub code: &'static str,
-    pub message: &'static str,
+/// The full IPC handler set. Integration tests drive exactly this set.
+pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        commands::get_app_state,
+        commands::create_workspace,
+        commands::set_active_workspace,
+        commands::list_profiles,
+        commands::create_profile,
+        commands::update_profile,
+        commands::launch_profile,
+        commands::stop_profile,
+        commands::close_all_profiles,
+        commands::get_runtime_status,
+        commands::select_download_directory,
+        commands::update_setting,
+        commands::get_diagnostics,
+        commands::export_diagnostics,
+        commands::report_ui_ready,
+        commands::recovery_action,
+        commands::resolve_quit,
+        commands::open_external,
+        commands::remove_local_data,
+    ]
 }
 
-impl From<LaunchError> for IpcError {
-    fn from(e: LaunchError) -> Self {
-        let message = match e {
-            LaunchError::UnknownProfile => "This profile does not exist on this device.",
-            LaunchError::AlreadyRunning => "This profile is already open.",
-            LaunchError::BrowserNotConfigured => "The browser runtime is not installed.",
-            LaunchError::BadStartUrl => "Start address must begin with http:// or https://.",
-            LaunchError::Layout(_) => "The profile folder failed a safety check.",
-            LaunchError::Spawn(_) => "The browser could not be started.",
-        };
-        Self {
-            code: e.code(),
-            message,
-        }
-    }
+/// The manager window: bundled UI only; no navigation away, no new windows.
+pub fn build_main_window<R: Runtime, M: Manager<R>>(
+    manager: &M,
+) -> tauri::Result<tauri::WebviewWindow<R>> {
+    WebviewWindowBuilder::new(manager, "main", WebviewUrl::App("index.html".into()))
+        .title("Project Browser")
+        .inner_size(1200.0, 780.0)
+        .min_inner_size(900.0, 600.0)
+        .on_navigation(external::is_app_url)
+        .on_new_window(|_url, _features| NewWindowResponse::Deny)
+        .build()
 }
 
-impl From<StoreError> for IpcError {
-    fn from(_: StoreError) -> Self {
-        Self {
-            code: "LOCAL_STORE_ERROR",
-            message: "Local profile data could not be read or written.",
-        }
-    }
-}
-
-const INVALID_LABEL: IpcError = IpcError {
-    code: "INVALID_LABEL",
-    message: "Names must be 1-120 visible characters.",
-};
-
-#[derive(Debug, Serialize)]
-pub struct Launched {
-    pub pid: u32,
-}
-
-fn clean_label(value: &str) -> Result<String, IpcError> {
-    let trimmed = value.trim();
-    let len = trimmed.chars().count();
-    if len == 0 || len > 120 || trimmed.chars().any(char::is_control) {
-        return Err(INVALID_LABEL);
-    }
-    Ok(trimmed.to_owned())
-}
-
-pub fn list_profiles_impl(
-    state: &AppState,
-    query: Option<String>,
-    limit: Option<u32>,
-) -> Result<Vec<LocalProfile>, IpcError> {
-    let query = query.filter(|q| q.chars().count() <= 200);
-    Ok(state
-        .store
-        .search_profiles(query.as_deref(), limit.unwrap_or(50))?)
-}
-
-pub fn create_local_profile_impl(
-    state: &AppState,
-    name: String,
-    client_label: Option<String>,
-) -> Result<LocalProfile, IpcError> {
-    let name = clean_label(&name)?;
-    let client = client_label.as_deref().map(clean_label).transpose()?;
-    let id = ProfileId::generate().map_err(|_| IpcError {
-        code: "RNG_UNAVAILABLE",
-        message: "Try again.",
-    })?;
-    Ok(state.store.insert_profile(NewProfile {
-        id: &id,
-        name: &name,
-        client_label: client.as_deref(),
-        folder_label: None,
-    })?)
-}
-
-pub fn launch_profile_impl(
-    state: &AppState,
-    profile_id: ProfileId,
-    start_url: Option<String>,
-) -> Result<Launched, IpcError> {
-    let _guard = state
-        .launch_lock
-        .lock()
-        .map_err(|_| IpcError::from(StoreError::Poisoned))?;
-    let existing = state.store.get_profile(&profile_id)?;
-    let profile_state = ProfileState {
-        exists: existing.is_some(),
-        running: existing.as_ref().is_some_and(|p| p.running_pid.is_some()),
-    };
-    let spec = prepare_launch(
-        &state.root,
-        state.browser.as_ref(),
-        profile_state,
-        LaunchRequest {
-            profile_id: &profile_id,
-            start_url: start_url.as_deref(),
-        },
-    )?;
-    let pid = state.launcher.spawn(&spec)?;
-    state.store.record_process(&profile_id, pid)?;
-    Ok(Launched { pid })
-}
-
-#[tauri::command]
-fn list_profiles(
-    state: State<'_, AppState>,
-    query: Option<String>,
-    limit: Option<u32>,
-) -> Result<Vec<LocalProfile>, IpcError> {
-    list_profiles_impl(&state, query, limit)
-}
-
-#[tauri::command]
-fn create_local_profile(
-    state: State<'_, AppState>,
-    name: String,
-    client_label: Option<String>,
-) -> Result<LocalProfile, IpcError> {
-    create_local_profile_impl(&state, name, client_label)
-}
-
-/// `profile_id` is typed as `ProfileId`: a malformed id or path fails deserialization inside Tauri's
-/// IPC layer, so this function body (and therefore any spawn) is never reached.
-#[tauri::command]
-fn launch_profile(
-    state: State<'_, AppState>,
-    profile_id: ProfileId,
-    start_url: Option<String>,
-) -> Result<Launched, IpcError> {
-    launch_profile_impl(&state, profile_id, start_url)
-}
-
-/// Browser location comes from trusted local configuration only. Milestone 03 replaces this with the
-/// pinned runtime installed by the manager (see crates/update). Debug builds may point at a developer build.
+/// Browser location comes from trusted local configuration only. Milestone 03 replaces this with the pinned
+/// runtime installed by the manager (crates/update). Debug builds may point at a developer build.
 fn resolve_browser() -> Option<BrowserInstall> {
     #[cfg(debug_assertions)]
     if let Ok(path) = std::env::var("PB_DEV_BROWSER") {
@@ -176,50 +88,197 @@ fn resolve_browser() -> Option<BrowserInstall> {
     None
 }
 
-pub fn build_state(
-    data_dir: &std::path::Path,
-    browser: Option<BrowserInstall>,
-    launcher: Arc<dyn Launcher>,
-) -> Result<AppState, String> {
-    let profiles_dir = data_dir.join("profiles");
-    std::fs::create_dir_all(&profiles_dir)
-        .map_err(|e| format!("cannot create profiles dir: {e}"))?;
-    let root = ProfilesRoot::open(&profiles_dir).map_err(|e| e.to_string())?;
-    let store = LocalStore::open(&data_dir.join("local.db")).map_err(|e| e.to_string())?;
-    Ok(AppState {
-        store,
-        root,
-        browser,
-        launcher,
-        launch_lock: Mutex::new(()),
-    })
+fn show_main<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
 }
 
-/// The app context (config, capabilities/ACL, assets). `generate_context!` must be expanded exactly once per
-/// crate: on macOS it embeds the Info.plist into a fixed linker section, so a second expansion (e.g. in tests)
-/// fails to compile. Tests reuse this function with the mock runtime.
-pub fn context<R: tauri::Runtime>() -> tauri::Context<R> {
-    tauri::generate_context!()
+/// Quit policy: with profiles open, follow `manager.close_behavior` (ask by default).
+pub fn request_quit<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    let running = state.supervisor.running_count();
+    if running == 0 {
+        app.exit(0);
+        return;
+    }
+    let behavior = state
+        .store()
+        .ok()
+        .and_then(|s| s.get_setting(pb_storage::settings::CLOSE_BEHAVIOR).ok())
+        .and_then(|v| v.value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "ask".into());
+    match behavior.as_str() {
+        "keep_running" => app.exit(0),
+        "close_all" => {
+            let handle = app.clone();
+            let _ = state.close_all(Some(Box::new(move || handle.exit(0))));
+        }
+        _ => {
+            show_main(app);
+            let _ = app.emit_to("main", QUIT_REQUESTED, json!({ "running": running }));
+        }
+    }
 }
 
-/// The IPC handler for the manager window. Public so integration tests drive the same handler set.
-pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
-{
-    tauri::generate_handler![list_profiles, create_local_profile, launch_profile]
+fn handle_deep_link<R: Runtime>(app: &AppHandle<R>, raw: &str) {
+    let state = app.state::<Arc<AppState>>();
+    let store = state.store().ok();
+    let outcome = deeplink::handle(raw, store.as_deref());
+    // The link itself is never logged or echoed back.
+    let _ = app.emit_to(
+        "main",
+        DEEP_LINK,
+        json!({ "kind": "auth-callback", "outcome": outcome }),
+    );
+}
+
+fn build_tray<R: Runtime>(app: &tauri::App<R>, state: &Arc<AppState>) -> tauri::Result<()> {
+    let status = MenuItem::with_id(app, "status", "No profiles open", false, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open manager", true, None::<&str>)?;
+    let close_all = MenuItem::with_id(app, "close_all", "Close all profiles", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Project Browser", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &open,
+            &close_all,
+            &quit,
+        ],
+    )?;
+    let mut builder = TrayIconBuilder::with_id("main")
+        .tooltip("Project Browser")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => show_main(app),
+            "close_all" => {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                let _ = state.close_all(None);
+            }
+            "quit" => request_quit(app),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    let tray = builder.build(app)?;
+    let update = move |n: usize| {
+        let text = match n {
+            0 => "No profiles open".to_owned(),
+            1 => "1 profile open".to_owned(),
+            n => format!("{n} profiles open"),
+        };
+        let _ = status.set_text(&text);
+        let _ = tray.set_tooltip(Some(format!("Project Browser — {text}")));
+    };
+    update(state.supervisor.running_count());
+    if let Ok(mut slot) = state.on_running_changed.write() {
+        *slot = Some(Box::new(update));
+    }
+    Ok(())
 }
 
 pub fn run() {
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
+        // Must be first: a second launch focuses this instance (and forwards deep links) instead of opening a
+        // second writer on the same local database.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app)
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let state = build_state(&data_dir, resolve_browser(), Arc::new(SystemLauncher))?;
-            app.manage(state);
+            std::fs::create_dir_all(&data_dir)?;
+            // Exclusive lock on the data directory: one manager process writes local data at a time.
+            let lock = std::fs::File::create(data_dir.join("manager.lock"))?;
+            if lock.try_lock().is_err() {
+                return Err(
+                    "Another Project Browser manager is already using this data folder.".into(),
+                );
+            }
+            app.manage(lock);
+            recovery::install_panic_hook(data_dir.clone(), state::APP_VERSION);
+
+            let events: Arc<dyn events::EventSink> = Arc::new(app.handle().clone());
+            let state = AppState::build(
+                &data_dir,
+                resolve_browser(),
+                Arc::new(SystemLauncher),
+                Arc::new(SystemInspector::default()),
+                events,
+            )?;
+            app.manage(state.clone());
+
+            // Keychain availability is probed off the UI thread; until then secrets are disabled.
+            let probe_state = state.clone();
+            std::thread::spawn(move || {
+                let status = secrets::probe();
+                if let Ok(mut k) = probe_state.keychain.write() {
+                    *k = status;
+                }
+            });
+
+            // Supervisor monitor: keeps the process table true even while the window is hidden.
+            let monitor = state.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    if let Ok(store) = monitor.store()
+                        && !monitor.supervisor.poll(&store).is_empty()
+                    {
+                        monitor.notify_running_changed();
+                    }
+                }
+            });
+
+            build_main_window(app)?;
+            build_tray(app, &state)?;
+
+            #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
+            let _ = app.deep_link().register_all();
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    handle_deep_link(&handle, url.as_str());
+                }
+            });
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                for url in urls {
+                    handle_deep_link(app.handle(), url.as_str());
+                }
+            }
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                request_quit(window.app_handle());
+            }
+        })
         .invoke_handler(handler())
-        .run(context());
-    if let Err(e) = result {
-        eprintln!("fatal: {e}");
-        std::process::exit(1);
-    }
+        .build(context());
+
+    let app = match app {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("fatal: {e}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|handle, event| {
+        if let RunEvent::Exit = event
+            && let Ok(dir) = handle.path().app_data_dir()
+        {
+            recovery::end_session(&dir);
+        }
+    });
 }

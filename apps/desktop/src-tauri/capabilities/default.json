@@ -1,12 +1,31 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The only capability: the bundled manager window may list, create and launch local profiles. No filesystem, shell, HTTP or remote-URL permissions are granted to the webview.",
-  "windows": ["main"],
+  "description": "The only capability. The bundled manager window may call the app's own validated commands and listen to its events. No filesystem, shell, HTTP, dialog, opener or remote-URL permission is granted to the webview: native dialogs and link opening happen in Rust after validation.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
-    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-app-state",
+    "allow-create-workspace",
+    "allow-set-active-workspace",
     "allow-list-profiles",
-    "allow-create-local-profile",
-    "allow-launch-profile"
+    "allow-create-profile",
+    "allow-update-profile",
+    "allow-launch-profile",
+    "allow-stop-profile",
+    "allow-close-all-profiles",
+    "allow-get-runtime-status",
+    "allow-select-download-directory",
+    "allow-update-setting",
+    "allow-get-diagnostics",
+    "allow-export-diagnostics",
+    "allow-report-ui-ready",
+    "allow-recovery-action",
+    "allow-resolve-quit",
+    "allow-open-external",
+    "allow-remove-local-data"
   ]
 }

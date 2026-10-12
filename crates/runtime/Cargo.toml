@@ -11,6 +11,7 @@ publish.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 getrandom.workspace = true
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 serde_json.workspace = true
