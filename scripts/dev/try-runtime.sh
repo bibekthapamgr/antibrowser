@@ -43,7 +43,11 @@ need curl "Install curl."
 need node "Install Node.js 24 (https://nodejs.org)."
 need pnpm "Run: corepack enable  (or npm install -g pnpm@10)"
 need cargo "Install Rust: https://rustup.rs"
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
+if ! node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null)"; then
+  echo "The Node.js at $(command -v node) cannot run on this computer (for example an Intel build on Apple Silicon" >&2
+  echo "without Rosetta). Install Node.js 24 for this machine from https://nodejs.org and put it first in PATH." >&2
+  exit 1
+fi
 if [ "$node_major" != "24" ]; then
   echo "Warning: Node $node_major found; the project is tested with Node 24." >&2
 fi
