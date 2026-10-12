@@ -103,8 +103,22 @@ jobs:
           for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             [ -z "${!v}" ] && unset "$v"
           done
-          [ -n "$SIGNING_IDENTITY" ] && export APPLE_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+          if [ -n "$SIGNING_IDENTITY" ]; then
+            export APPLE_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+          elif [ "${{ matrix.target }}" = "macos-arm64" ]; then
+            # No certificate: sign ad hoc ("-") so the bundle carries one consistent signature. Without it the
+            # linker's per-binary signature no longer matches the finished .app and macOS reports it as "damaged".
+            export APPLE_SIGNING_IDENTITY="-"
+          fi
           ../../scripts/ci/annotate.sh "tauri build ${{ matrix.target }}" pnpm tauri build --ci --bundles ${{ matrix.bundles }} ${TAURI_EXTRA_CONFIG:-}
+
+      - name: Check the macOS bundle signature (signed or ad hoc)
+        if: matrix.target == 'macos-arm64'
+        shell: bash
+        run: |
+          app=$(ls -d target/release/bundle/macos/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|flags" || true
 
       - name: Package the macOS app bundle
         if: matrix.target == 'macos-arm64'
@@ -156,7 +170,7 @@ jobs:
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
           app=$(ls -d "$mnt"/*.app | head -1)
           test -x "$app/Contents/MacOS/"*
-          codesign -dv "$app" 2>&1 | head -5 || true
+          codesign --verify --deep --strict --verbose=2 "$app"
           hdiutil detach "$mnt"
 
       - name: Build provenance attestation

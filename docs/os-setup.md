@@ -16,8 +16,18 @@ Files named `internal-UNSIGNED` are engineering builds. They are not for custome
 | | Windows | macOS |
 |---|---|---|
 | Installer | `…-nsis-setup.exe` (per user, no admin rights) or `…-msi.msi` | `…-dmg.dmg` → drag *Project Browser* to Applications |
-| Unsigned build warning | SmartScreen: *More info → Run anyway* | Right-click the app → *Open* → *Open* (first launch only) |
+| Unsigned build warning | SmartScreen: *More info → Run anyway* | macOS says the app "is damaged" or "cannot be verified". Builds from 0.2.0 onward are signed ad hoc; remove the download mark once: `xattr -cr "/Applications/Project Browser.app"` (see below) |
 | Deep-link scheme | `projectbrowser://` registered for the current user | `projectbrowser://` registered via the app's Info.plist |
+
+### macOS: opening an unsigned internal build
+Browsers mark downloads with `com.apple.quarantine`, and Gatekeeper refuses quarantined apps that are not signed with a Developer ID. Recent macOS versions no longer offer *Open anyway* from the right-click menu for these, and older internal builds (before the ad-hoc signing fix) are reported as "damaged". In Terminal:
+
+```bash
+xattr -cr "/Applications/Project Browser.app"                    # remove the download mark
+codesign --force --deep --sign - "/Applications/Project Browser.app"   # only if it still says "damaged"
+open "/Applications/Project Browser.app"
+```
+Only do this for builds whose checksum matches `SHA256SUMS` from the workflow run. Signed and notarized builds (owner certificates) need none of this.
 
 ## Where data lives
 | | Windows | macOS |
