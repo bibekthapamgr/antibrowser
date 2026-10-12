@@ -141,7 +141,9 @@ mod tests {
             validate(DOWNLOAD_DIR, &json!("/tmp"), true).err(),
             Some(SettingError::NotUiSettable)
         );
-        assert!(validate(DOWNLOAD_DIR, &json!("/tmp"), false).is_ok());
+        // An absolute path on the host OS ("/tmp" is not absolute on Windows).
+        let abs = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(validate(DOWNLOAD_DIR, &json!(abs), false).is_ok());
         assert_eq!(
             validate(DOWNLOAD_DIR, &json!("relative/dir"), false).err(),
             Some(SettingError::InvalidValue)
