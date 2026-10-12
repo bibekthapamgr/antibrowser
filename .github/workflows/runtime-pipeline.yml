@@ -76,7 +76,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, platform: windows-x64, switches: "" }
+          # Windows keeps Chromium's own log (chrome_debug.log) so failures can be explained.
+          - { os: windows-latest, platform: windows-x64, switches: "--enable-logging" }
           - { os: macos-14, platform: macos-arm64, switches: "" }
           # Linux is a development/CI platform only: a normal browser that draws nowhere.
           - { os: ubuntu-24.04, platform: linux-x64, switches: "--ozone-platform=headless,--disable-gpu,--password-store=basic" }

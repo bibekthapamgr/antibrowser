@@ -80,6 +80,8 @@ const SW: &str = "self.addEventListener('install', () => self.skipWaiting());\n\
 struct Server {
     port: u16,
     reports: Arc<Mutex<HashMap<String, Value>>>,
+    /// Request lines received ("GET /?mode=…"), for failure diagnostics.
+    requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl Server {
@@ -93,14 +95,21 @@ impl Server {
         let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| panic!("{e}"));
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         let reports: Arc<Mutex<HashMap<String, Value>>> = Arc::default();
+        let requests: Arc<Mutex<Vec<String>>> = Arc::default();
         let store = reports.clone();
+        let log = requests.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let store = store.clone();
-                std::thread::spawn(move || handle(stream, &store));
+                let log = log.clone();
+                std::thread::spawn(move || handle(stream, &store, &log));
             }
         });
-        Self { port, reports }
+        Self {
+            port,
+            reports,
+            requests,
+        }
     }
 
     fn url(&self, mode: &str, who: &str, tag: &str) -> String {
@@ -122,7 +131,7 @@ impl Server {
     }
 }
 
-fn handle(stream: TcpStream, reports: &Mutex<HashMap<String, Value>>) {
+fn handle(stream: TcpStream, reports: &Mutex<HashMap<String, Value>>, log: &Mutex<Vec<String>>) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -143,6 +152,9 @@ fn handle(stream: TcpStream, reports: &Mutex<HashMap<String, Value>>) {
     }
     let mut body = vec![0u8; length.min(1 << 20)];
     let _ = reader.read_exact(&mut body);
+    if let Ok(mut l) = log.lock() {
+        l.push(request_line.trim().chars().take(120).collect());
+    }
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let (status, ctype, payload) = if target.starts_with("/report") {
         let who = target
@@ -349,8 +361,32 @@ impl Env {
                 .unwrap_or_else(|e| format!("<{e}>"))
         };
         let args = mains.first().map(|m| m.args.join(" ")).unwrap_or_default();
+        let requests = self
+            .server
+            .requests
+            .lock()
+            .map(|r| {
+                r.iter()
+                    .rev()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ; ")
+            })
+            .unwrap_or_default();
+        // Chromium's own log, when the run enabled it (--enable-logging): the lines that explain failures.
+        let chrome_log = std::fs::read_to_string(ud.join("chrome_debug.log"))
+            .map(|t| {
+                let lines: Vec<String> = t
+                    .lines()
+                    .filter(|l| l.contains("ERROR") || l.contains("WARNING") || l.contains("FATAL"))
+                    .map(|l| l.chars().take(220).collect())
+                    .collect();
+                lines[lines.len().saturating_sub(25)..].join(" ;; ")
+            })
+            .unwrap_or_else(|_| "<no chrome_debug.log>".into());
         format!(
-            "user-data={} | processes=[{}] | main args=[{args}] | status={} | top=[{}] | Default=[{}]",
+            "requests (newest first)=[{requests}] | chrome log=[{chrome_log}] | user-data={} | processes=[{}] | main args=[{args}] | status={} | top=[{}] | Default=[{}]",
             ud.display(),
             procs.join(" "),
             self.state

@@ -86,14 +86,15 @@ pub struct LaunchRequest<'a> {
 
 pub const MAX_START_URLS: usize = 10;
 
-/// Switches the manager's test configuration may add (headless CI). Notably absent: `--no-sandbox` and any
-/// remote-debugging switch.
+/// Switches the manager's test configuration may add (headless CI, diagnostics). Notably absent: `--no-sandbox`
+/// and any remote-debugging switch. `--enable-logging` writes `chrome_debug.log` into the profile folder (CI only).
 pub const ALLOWED_EXTRA_SWITCHES: &[&str] = &[
     "--headless=new",
     "--ozone-platform=headless",
     "--disable-gpu",
     "--use-mock-keychain",
     "--password-store=basic",
+    "--enable-logging",
 ];
 
 pub fn valid_start_url(url: &str) -> bool {
