@@ -10,20 +10,12 @@ name: desktop internal build
 #   Windows: WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
 # See docs/os-setup.md.
 
+# Cost policy: installers are built when started by hand (Actions → desktop internal build → Run workflow) or for a
+# pushed tag `desktop-v*`, not on every push.
 on:
   workflow_dispatch:
   push:
-    branches: [main]
     tags: ["desktop-v*"]
-    paths:
-      - "apps/desktop/**"
-      - "crates/**"
-      - "packages/contracts/**"
-      - "packages/ui/**"
-      - "Cargo.lock"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/desktop-internal-build.yml"
-      - "scripts/release/**"
 
 permissions:
   contents: read

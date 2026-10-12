@@ -9,28 +9,35 @@ real cookie, encrypted at rest by Chromium with the OS key store; plus localStor
 is copied, and is restored into a new folder. Restores use the same origin (`http://127.0.0.1:47615`) because
 browser storage is keyed by scheme, host **and port**. "Other machine" means a fresh CI runner.
 
-## Results so far
+## Results (Chrome for Testing 155.0.8059.39, runtime pipeline run [38315660017](https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017), 2026-10-12)
 
-| Source | Target | Machine | Runtime | Cookie (encrypted) | localStorage | IndexedDB | Evidence |
-|---|---|---|---|---|---|---|---|
-| macOS arm64 | macOS arm64 | same, new folder | CfT 155.0.8059.39 | kept | kept | kept | runtime pipeline run 38281685691 |
-| Linux x64 | Linux x64 | same, new folder | CfT 155.0.8059.39 | kept | kept | kept | runtime pipeline runs 38274243731, 38281685691 |
-| Linux x64 | Linux x64 | same, new folder | Chromium 141.0.7390.37 | kept | kept | kept | local sandbox, 2026-10-12 |
-| Windows x64 | Windows x64 | same, new folder | CfT 155.0.8059.39 | pending | pending | pending | blocked: Windows fix awaiting CI |
-| each OS | each OS | other machine (9 pairs) | CfT 155.0.8059.39 | pending | pending | pending | blocked: needs all three compatibility jobs green |
+| Source | Target | Machine | Cookie (encrypted) | localStorage | IndexedDB |
+|---|---|---|---|---|---|
+| Windows x64 | Windows x64 | same, new folder | kept | kept | kept |
+| Windows x64 | Windows x64 | other machine | **lost** | kept | kept |
+| Windows x64 | macOS arm64 | other machine | **lost** | kept | kept |
+| Windows x64 | Linux x64 | other machine | **lost** | kept | kept |
+| macOS arm64 | macOS arm64 | same, new folder | kept | kept | kept |
+| macOS arm64 | macOS arm64 | other machine | **lost** | kept | kept |
+| macOS arm64 | Windows x64 | other machine | **lost** | kept | kept |
+| macOS arm64 | Linux x64 | other machine | **lost** | kept | kept |
+| Linux x64 | Linux x64 | same, new folder | kept | kept | kept |
+| Linux x64 | Linux x64 | other machine | kept | kept | kept |
+| Linux x64 | Windows x64 | other machine | **lost** | kept | kept |
+| Linux x64 | macOS arm64 | other machine | **lost** | kept | kept |
 
-The cross-machine jobs run automatically once the compatibility set passes on all three platforms; the pipeline's
-"portability matrix" job then prints the full table (`scripts/runtime/portability-report.mjs`), which replaces the
-pending rows here.
+Every restored profile opened. Also confirmed locally: Linux, Chromium 141.0.7390.37, same machine, everything kept.
 
-## What to expect on other machines (to be confirmed by the pending rows)
-| Pair | Cookies / sign-ins | Site data (localStorage, IndexedDB) | Why |
+## What this means
+| Pair | Sign-ins (cookies) | Site data (localStorage, IndexedDB) | Why |
 |---|---|---|---|
-| Same device, new folder | Kept | Kept | Same OS user, same key store |
-| Windows → other Windows | Expected lost | Expected kept | Cookie key protected with DPAPI for that Windows user and machine |
-| macOS → other Mac | Expected lost | Expected kept | Cookie key stored in that Mac's login Keychain, not in the profile |
-| Windows ↔ macOS | Expected lost | Expected kept | Different key stores and formats |
-| Linux (development only) | Kept anywhere | Kept | The basic password store is not machine-bound, so Linux results are **not** representative |
+| Same device, new folder | **Kept** on all three OSes | Kept | Same OS user, same key store |
+| Windows → another Windows PC | Lost | Kept | Cookie key protected with DPAPI for that Windows user and machine |
+| Mac → another Mac | Lost | Kept | Cookie key stored in that Mac's login Keychain, not in the profile |
+| Between different OSes | Lost | Kept | Different key stores and formats |
+| Linux → Linux (development only) | Kept | Kept | The basic password store is not machine-bound, so Linux is **not** representative |
+
+This confirms [ADR-0002](adr/0002-profile-portability.md) exactly: site data travels, sign-ins do not.
 
 ## Supported in v1 (backup vs session transfer)
 | Operation | v1 support |

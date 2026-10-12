@@ -40,7 +40,8 @@ The product owner chose Chrome for Testing for the internal alpha (2026-10-12).
    RECOVERING; every other transition is rejected. Launches are serialized by an OS file lock per profile plus an
    in-process launch lock; a repeated launch returns the existing operation. Processes are identified by pid + OS
    start time + executable. A run ends only when the main process and its helper processes have exited.
-7. **Graceful close per OS:** Windows `taskkill /PID … /T` without `/F` (WM_CLOSE → normal shutdown); macOS the
+7. **Graceful close per OS:** Windows `taskkill /PID …` without `/F` or `/T`, sent to the browser main process only
+   (WM_CLOSE → normal shutdown; its helper processes have no windows and are ended by the browser itself); macOS the
    standard quit Apple event to that exact process (`NSRunningApplication.terminate` via `osascript -l JavaScript`),
    falling back to SIGTERM; Linux (development only) SIGTERM, which Chromium treats as "session ending" and which can
    drop cookie writes from the last ~30 s. After 10 s without exit the UI offers an explicit force close; nothing is
@@ -64,6 +65,13 @@ The product owner chose Chrome for Testing for the internal alpha (2026-10-12).
   by the manager's installer, so the extraction is faithful and the upstream bundle is the cause. The pipeline
   therefore records `macos_codesign: none`; integrity rests on the pinned SHA-256 and size of the archive. A
   customer-grade runtime must be properly signed (gate 2 above).
+- **Windows (1):** Chromium runs its network service in an app-container sandbox that must be able to read the
+  browser executable. In a folder created by the manager (under the user's app data) it could not ("Sandbox cannot
+  access executable"), the network service restarted in a loop and no page loaded. Chrome's own installer grants
+  ALL APPLICATION PACKAGES and ALL RESTRICTED APPLICATION PACKAGES read/execute on its folder; the manager's
+  installer now does the same (`icacls`, before the runtime is published). The sandbox stays on.
+- **Windows (2):** `taskkill /T` (whole tree) without `/F` did not close Chromium within 10 s on the CI runner;
+  asking only the main process closes it cleanly. All five compatibility tests then passed (run 38315660017).
 - **Linux:** SIGTERM takes Chromium's "session ending" path; storage written in the last seconds can be lost. Linux is
   a development platform only.
 

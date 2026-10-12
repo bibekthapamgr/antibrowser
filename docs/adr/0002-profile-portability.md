@@ -1,5 +1,5 @@
 # 0002 — Profile portability
-Status: **Accepted (provisional)** under the milestone 01 stop gate. Date: 2026-10-12. Owner: technical lead.
+Status: **Accepted**; confirmed by the milestone 03 portability matrix (originally provisional under the milestone 01 stop gate). Date: 2026-10-12. Owner: technical lead.
 
 ## Context
 Milestone 01 stop gate: "if portable authenticated sessions cannot be safely supported, choose same-device backup plus reauthentication on new devices for v1. Do not advertise portable login continuity."
@@ -20,11 +20,10 @@ Chromium protects cookies and saved credentials at rest with OS-bound keys:
 |---|---|
 | Same device, restore to a new path (Linux harness, Chromium 153) | Cookie, localStorage and IndexedDB restored |
 | Second OS user, same Linux machine | Restored (basic key store; NOT representative) |
-| Windows → Windows (different machine) | **Not run yet** |
-| macOS → macOS (different machine) | **Not run yet** |
-| Windows ↔ macOS | **Not run yet**; expected to fail for cookies |
+| Same machine, new folder: Windows x64, macOS arm64, Linux x64 (Chrome for Testing 155.0.8059.39, milestone 03 pipeline) | Everything kept |
+| Other machine, all 9 OS pairs (same runs) | localStorage and IndexedDB kept everywhere; cookies **lost** everywhere except Linux → Linux |
 
-Commands for the outstanding runs are in docs/spikes/01-step6-snapshot-restore.md.
+Full table: [docs/portability-matrix.md](../portability-matrix.md). The decision above is confirmed.
 
 ## Consequences
 - Milestone 07 sync scope is "encrypted backup and same-device restore, plus best-effort site data on new devices".

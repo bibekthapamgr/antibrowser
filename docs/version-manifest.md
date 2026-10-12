@@ -21,7 +21,7 @@ Recorded 2026-10-12 (milestone 01). Exact versions are locked in `pnpm-lock.yaml
 | rusqlite (bundled SQLite) | 0.40.2 (libsqlite3-sys 0.38.2) | https://crates.io/crates/rusqlite |
 | React / React DOM | 19.3.0 | https://react.dev/versions |
 | Vite / @vitejs/plugin-react | 8.3.4 / 6.1.2 | https://vite.dev |
-| Browser runtime | Chrome for Testing stable, pinned per manager release in the signed `runtimes/manifest.json` (internal alpha only; ADR-0010). Upstream stable on 2026-10-12: 155.0.8059.39 | docs/runtime-pipeline.md |
+| Browser runtime | Chrome for Testing **155.0.8059.39** (revision 1697595), pinned in the signed `runtimes/manifest.json` (signed 2026-10-12 after Windows/macOS/Linux compatibility passed; internal alpha only, ADR-0010) | docs/runtime-pipeline.md |
 | ed25519-dalek / ureq (rustls, platform verifier) | 3.0.0 / 3.4.x | crates/update |
 
 ## Backend

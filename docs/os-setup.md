@@ -47,7 +47,9 @@ Inside the data directory: `local.db` (SQLite, WAL), `local.db.v<N>.bak` (copy t
   *Project Browser* may control the browser, choose **OK**; otherwise closing falls back to a faster signal that can
   lose the last few seconds of website changes. If macOS asks whether the browser may use its *Safe Storage*
   keychain item (Chromium encrypts cookies with it), choose **Always Allow**.
-- **Windows:** closing a profile closes its windows normally (like clicking ×).
+- **Windows:** closing a profile closes its windows normally (like clicking ×). When the browser is installed, the
+  manager lets Windows' app sandboxes read the browser folder (as Chrome's own installer does); without that,
+  Chromium's sandboxed network service cannot start and pages never load.
 - Profiles cannot be opened with less than 1 GiB of free disk space.
 
 Browser profiles contain cookies and site data in plaintext while in use (see security-model.md, disclosure 1). Use OS disk encryption (BitLocker / FileVault).

@@ -1,9 +1,12 @@
 name: ci
 
+# Cost policy (private repository, metered minutes): every push and pull request runs only the Linux jobs.
+# The Windows/macOS compile-and-test job runs when started by hand (Actions → ci → Run workflow).
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -126,6 +129,8 @@ jobs:
 
   desktop:
     name: desktop compile (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

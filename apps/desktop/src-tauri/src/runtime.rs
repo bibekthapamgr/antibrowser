@@ -135,3 +135,30 @@ pub struct ResolvedRuntime {
     pub version: Option<String>,
     pub source: &'static str,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The manifest compiled into this build is either absent (development builds) or verifies against the
+    /// compiled-in keys and pins every supported platform.
+    #[test]
+    fn embedded_manifest_verifies() {
+        let config = RuntimeConfig {
+            manifest: (EMBEDDED_MANIFEST.to_vec(), EMBEDDED_SIGNATURE.to_vec()),
+            trusted_keys: TRUSTED_KEYS.to_owned(),
+            dev_override: None,
+            fetcher: Arc::new(HttpsFetcher),
+            switches: vec![],
+        };
+        match verify(&config) {
+            (ManifestStatus::Missing, None) => {}
+            (ManifestStatus::Verified { .. }, Some(m)) => {
+                for p in ["windows-x64", "macos-arm64", "linux-x64"] {
+                    assert!(m.artifact_for(p).is_some(), "{p} pinned");
+                }
+            }
+            (status, _) => panic!("embedded manifest: {status:?}"),
+        }
+    }
+}

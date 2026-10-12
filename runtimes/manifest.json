@@ -1,0 +1,63 @@
+{
+  "schema": 2,
+  "channel": "internal-alpha",
+  "created_at": "2026-10-12T22:22:08Z",
+  "distribution": {
+    "id": "chrome-for-testing",
+    "name": "Chrome for Testing",
+    "license": "Google Chrome for Testing binaries: intended for automated testing; internal engineering use only, not for customer distribution (ADR-0010)",
+    "customer_distribution": false,
+    "source": "https://googlechromelabs.github.io/chrome-for-testing/"
+  },
+  "runtime": {
+    "version": "155.0.8059.39",
+    "revision": "1697595",
+    "artifacts": [
+      {
+        "platform": "linux-x64",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/linux64/chrome-linux64.zip",
+        "sha256": "55672d1f392fd3e7b7a08621b6e804e6bcb39d40cf155504abb74b3a021ea8ea",
+        "size_bytes": 198195769,
+        "format": "zip",
+        "executable": "chrome-linux64/chrome"
+      },
+      {
+        "platform": "macos-arm64",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-arm64/chrome-mac-arm64.zip",
+        "sha256": "529a71bd61aaa2ef266a4d4bd300ae9572ba6a3468a8d55c3023ffeffb5b6b4e",
+        "size_bytes": 192634606,
+        "format": "zip",
+        "executable": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        "macos_codesign": "none"
+      },
+      {
+        "platform": "windows-x64",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/win64/chrome-win64.zip",
+        "sha256": "59ab2a6e99bde9c0bc180414988394f9f5355a0d3764c704151ee8ecea235c7e",
+        "size_bytes": 207197429,
+        "format": "zip",
+        "executable": "chrome-win64/chrome.exe"
+      }
+    ]
+  },
+  "compatibility": [
+    {
+      "platform": "linux-x64",
+      "result": "pass",
+      "tests": 5,
+      "run_url": "https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017"
+    },
+    {
+      "platform": "macos-arm64",
+      "result": "pass",
+      "tests": 5,
+      "run_url": "https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017"
+    },
+    {
+      "platform": "windows-x64",
+      "result": "pass",
+      "tests": 5,
+      "run_url": "https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017"
+    }
+  ]
+}

@@ -37,9 +37,9 @@ extraction, executable check), on GitHub-hosted runners.
 
 | Platform | Runner | Result | Run |
 |---|---|---|---|
-| Windows x64 | `windows-latest` | **Pending.** All four browser tests timed out waiting for the page; suspected cause fixed (`\\?\` profile paths, see below); fix in commit 703ef1c not yet run because GitHub Actions stopped starting jobs (account billing) | [38281685691](https://github.com/bibekthapamgr/antibrowser/actions/runs/38281685691) (before the fix) |
-| macOS arm64 | `macos-14` (Apple Silicon) | 5/5 passed (incl. cookie persistence after restart) | [38281685691](https://github.com/bibekthapamgr/antibrowser/actions/runs/38281685691), 38279180137 |
-| Linux x64 (development only) | `ubuntu-24.04`, `--ozone-platform=headless` | 5/5 passed | [38281685691](https://github.com/bibekthapamgr/antibrowser/actions/runs/38281685691), 38274243731 |
+| Windows x64 | `windows-latest` | 5/5 passed (incl. cookie persistence after restart) | [38315660017](https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017) |
+| macOS arm64 | `macos-14` (Apple Silicon) | 5/5 passed (incl. cookie persistence after restart) | [38315660017](https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017), 38281685691 |
+| Linux x64 (development only) | `ubuntu-24.04`, `--ozone-platform=headless` | 5/5 passed | [38315660017](https://github.com/bibekthapamgr/antibrowser/actions/runs/38315660017), 38281685691 |
 | Linux x64, local sandbox | Chromium 141.0.7390.37, non-root user | 5/5 passed after the backup-cancel fix (103 s) | — |
 
 The Linux graceful close is `SIGTERM`, which Chromium treats as a session end and may drop cookie writes from the
@@ -55,4 +55,6 @@ macOS (`NSRunningApplication.terminate`) use the browser's normal quit, and cook
 | Windows CI | The browser environment allow-list was case-sensitive (`SystemRoot`, `Path`), so Chromium started without them | Case-insensitive allow-list |
 | Windows CI | The browser inherited the test step's output pipe, so the step never finished | Output goes to a file; the test harness force-closes leftover browsers |
 | Local Linux + Windows CI | Re-opening right after a close failed with "profile busy" while the automatic backup ran | Opening a profile cancels a routine backup (previous copy kept); `backup_now` joins a running backup |
-| Windows CI | Profile folders were passed to Chromium as Windows "verbatim" paths (`\\?\C:\...`, what `canonicalize` returns); the most likely reason no page ever loaded (Chromium and many Windows programs do not handle that form) | Paths converted to the ordinary form when it names the same file (`simplify_path`); **awaiting CI confirmation** |
+| Windows CI | Chromium's sandboxed network service could not read the browser folder ("Sandbox cannot access executable") and restarted in a loop, so no page loaded (found with Chromium's own log) | The installer grants Windows app sandboxes read access to the runtime folder, as Chrome's installer does; sandbox stays on |
+| Windows CI | Closing the whole process tree (`taskkill /T`) did not close Chromium within 10 s | The close request goes to the browser main process only |
+| Windows CI | Profile folders were passed to Chromium as Windows "verbatim" paths (`\\?\C:\...`, what `canonicalize` returns) | Paths converted to the ordinary form when it names the same file (`simplify_path`) |

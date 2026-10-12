@@ -8,7 +8,8 @@ name: runtime pipeline
 #   manifest     only after every platform passed: build runtimes/manifest.json, sign it with the owner's key
 #                (secret RUNTIME_MANIFEST_SIGNING_KEY), verify, and publish it as an artifact to commit
 #
-# Scheduled weekly so a newer upstream security release is noticed and tested promptly.
+# Cost policy: the weekly scheduled run only checks whether upstream stable moved (a warning on the run page); the
+# test matrix, portability matrix and signing run when started by hand (Actions → runtime pipeline → Run workflow).
 
 on:
   workflow_dispatch:
@@ -19,22 +20,12 @@ on:
         default: true
   schedule:
     - cron: "17 3 * * 1"
-  push:
-    branches: [main]
-    paths:
-      - "crates/runtime/**"
-      - "crates/update/**"
-      - "apps/desktop/src-tauri/src/**"
-      - "apps/desktop/src-tauri/tests/browser.rs"
-      - "scripts/runtime/**"
-      - ".github/actions/install-runtime/**"
-      - ".github/workflows/runtime-pipeline.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  # A push never cancels a manual (signing) run, and vice versa.
+  # A scheduled check never cancels a manual (signing) run, and vice versa.
   group: runtime-pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
@@ -71,7 +62,8 @@ jobs:
   compat:
     name: compatibility (${{ matrix.platform }})
     needs: resolve
-    timeout-minutes: 90
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +103,7 @@ jobs:
           # Written to a file, never a pipe: browsers inherit handles on Windows and would hold a pipe open.
           status=0
           scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
-            scripts/ci/with-timeout.sh 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture \
+            scripts/ci/with-timeout.sh 1200 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture \
             > "$RUNNER_TEMP/browser-tests.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/browser-tests.log"
           [ "$status" -eq 0 ] || exit "$status"
@@ -140,7 +132,7 @@ jobs:
   portability:
     name: restore ${{ matrix.source }} on ${{ matrix.platform }}
     needs: [resolve, compat]
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

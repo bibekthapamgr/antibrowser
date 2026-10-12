@@ -29,6 +29,15 @@ invalidate the signature. An empty `manifest.json` means "no approved runtime in
 Target cadence (ADR-0001 proposal): upstream High/Critical security fixes in a released manager within 7 days. An
 older version must not be kept indefinitely; deferring an update needs a named owner who accepts the risk.
 
+## When workflows run (cost policy)
+| Workflow | Automatic | By hand (Actions → workflow → Run workflow) |
+|---|---|---|
+| `ci` | Every push and pull request: Linux jobs only (lint, types, tests, Rust, UI end-to-end, secret scan, licences) | Adds Windows and macOS compile + Rust tests |
+| `desktop internal build` | Tags `desktop-v*` | Installers for Windows and macOS |
+| `runtime pipeline` | Weekly: checks whether upstream stable moved (warning only) | Full test matrix, portability matrix and (with `sign`) signing |
+
+Windows and macOS minutes cost far more than Linux in a private repository, so they never run on every push.
+
 ## Compatibility test set
 Run per platform against the downloaded runtime (also locally with `PB_TEST_BROWSER=/path/to/chrome`):
 
