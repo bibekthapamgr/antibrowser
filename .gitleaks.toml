@@ -13,6 +13,8 @@ regexes = [
   '''ci-superuser-only''',
   '''local-superuser-only''',
   '''pb-local-only-password''',
+  # Fake JWT used by the crash-report scrubber test (header {"alg":"HS256"}, payload {"sub":"1234567890"}, no real signature).
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.abcdef012345''',
 ]
 paths = [
   '''docs/openapi\.json''',
