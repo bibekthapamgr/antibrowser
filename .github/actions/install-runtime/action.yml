@@ -1,0 +1,40 @@
+name: install browser runtime
+description: >
+  Downloads the pinned Chrome for Testing archive for this runner and installs it with the manager's own installer
+  (digest check, safe extraction, executable and macOS code-signature checks). Exports PB_TEST_BROWSER.
+inputs:
+  platform: { description: "windows-x64 | macos-arm64 | linux-x64", required: true }
+  url: { description: "archive URL from the resolve job", required: true }
+  version: { description: "Chromium version", required: true }
+outputs:
+  artifact: { description: "path of the artifact JSON entry", value: "${{ steps.describe.outputs.artifact }}" }
+runs:
+  using: composite
+  steps:
+    - name: Download archive
+      shell: bash
+      run: curl -fsSL --retry 3 -o "$RUNNER_TEMP/runtime.zip" "${{ inputs.url }}"
+    - name: Describe and install with the manager's installer
+      id: describe
+      shell: bash
+      run: |
+        art="$RUNNER_TEMP/artifact-${{ inputs.platform }}.json"
+        node scripts/runtime/manifest.mjs artifact "${{ inputs.platform }}" "$RUNNER_TEMP/runtime.zip" "${{ inputs.url }}" "${{ inputs.version }}" > "$art"
+        if ! exe=$(cargo run -q --locked -p pb-update --example install_runtime -- "$art" "$RUNNER_TEMP/runtime.zip" "${{ inputs.version }}" "$RUNNER_TEMP/runtimes"); then
+          if [ "${{ inputs.platform }}" = "macos-arm64" ]; then
+            echo "::warning title=Runtime code signature::The upstream app bundle did not pass codesign --verify; recording macos_codesign=none"
+            rm -rf "$RUNNER_TEMP/runtimes"
+            PB_MACOS_CODESIGN=none node scripts/runtime/manifest.mjs artifact "${{ inputs.platform }}" "$RUNNER_TEMP/runtime.zip" "${{ inputs.url }}" "${{ inputs.version }}" > "$art"
+            exe=$(cargo run -q --locked -p pb-update --example install_runtime -- "$art" "$RUNNER_TEMP/runtime.zip" "${{ inputs.version }}" "$RUNNER_TEMP/runtimes")
+          else
+            exit 1
+          fi
+        fi
+        echo "installed: $exe"
+        echo "PB_TEST_BROWSER=$exe" >> "$GITHUB_ENV"
+        echo "PB_TEST_BROWSER_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+        echo "artifact=$art" >> "$GITHUB_OUTPUT"
+    - name: Allow the Chromium sandbox (Ubuntu 24.04 restricts unprivileged user namespaces)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

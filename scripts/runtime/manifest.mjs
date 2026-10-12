@@ -95,7 +95,8 @@ switch (cmd) {
       size_bytes: statSync(zip).size,
       format: 'zip',
       executable: p.exe,
-      ...(p.codesign ? { macos_codesign: p.codesign } : {}),
+      // The pipeline sets PB_MACOS_CODESIGN=none only if the upstream bundle's signature did not verify.
+      ...(p.codesign ? { macos_codesign: process.env.PB_MACOS_CODESIGN ?? p.codesign } : {}),
     };
     console.log(JSON.stringify(entry));
     break;

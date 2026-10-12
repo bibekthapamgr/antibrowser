@@ -83,8 +83,14 @@ struct Server {
 }
 
 impl Server {
+    /// Storage is per origin (scheme, host AND port), so the portability spike uses a fixed port on every machine.
     fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("{e}"));
+        let port: u16 = if std::env::var("PB_PORTABILITY").is_ok() {
+            47615
+        } else {
+            0
+        };
+        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| panic!("{e}"));
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         let reports: Arc<Mutex<HashMap<String, Value>>> = Arc::default();
         let store = reports.clone();
@@ -493,4 +499,97 @@ fn ten_launch_close_cycles_stay_clean() {
         .unwrap_or_default();
     assert_eq!(runs.len(), 10);
     assert!(runs.iter().all(|r| r.outcome == "clean"));
+}
+
+// ---------------------------------------------------------------------------------------------- portability spike
+
+fn platform_name() -> &'static str {
+    pb_desktop_lib::state::platform()
+}
+
+/// Milestone 03 step 8 (portability spike with real cookie encryption). Driven by the runtime pipeline:
+/// - `PB_PORTABILITY=create PB_PORTABILITY_DIR=<dir>`: a profile signs in to the test page (cookie, localStorage,
+///   IndexedDB), closes cleanly, and its data is copied (caches and lock files excluded, as in a backup) to
+///   `<dir>/user-data`. The same machine then restores it into a NEW profile directory and records the result.
+/// - `PB_PORTABILITY=verify PB_PORTABILITY_DIR=<dir> PB_PORTABILITY_RESULT=<file>`: on another machine (a fresh
+///   CI runner), restore that copy into a new profile and record what survived.
+#[test]
+fn portability_spike() {
+    let Ok(mode) = std::env::var("PB_PORTABILITY") else {
+        return;
+    };
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(env) = env() else { return };
+    let dir = PathBuf::from(
+        std::env::var("PB_PORTABILITY_DIR").unwrap_or_else(|_| panic!("PB_PORTABILITY_DIR")),
+    );
+    let copy = dir.join("user-data");
+
+    let restore_and_read = |who: &str| -> Value {
+        let target = env.profile("Restored");
+        let dirs = env
+            .state
+            .root
+            .ensure(&target)
+            .unwrap_or_else(|e| panic!("{e}"));
+        std::fs::remove_dir_all(&dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
+        pb_runtime::backup::copy_tree(&copy, &dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
+        let r = env.visit(&target, "read", who, "-");
+        env.close(&target);
+        r
+    };
+    let summarize = |source: &str, same_machine: bool, r: &Value| {
+        json!({
+            "source": source,
+            "target": platform_name(),
+            "same_machine": same_machine,
+            "browser_version": std::env::var("PB_TEST_BROWSER_VERSION").ok(),
+            "opened": true,
+            "cookie": r["cookie"].as_str().is_some_and(|c| c.contains("pb_iso=portable")),
+            "local_storage": r["local"] == json!("portable"),
+            "indexeddb": r["idb"] == json!("portable"),
+        })
+    };
+
+    match mode.as_str() {
+        "create" => {
+            let source = env.profile("Source");
+            env.visit(&source, "write", "p-write", "portable");
+            if cfg!(not(any(windows, target_os = "macos"))) {
+                // Linux closes with SIGTERM: let Chromium's 30 s cookie commit run first (see the module docs).
+                std::thread::sleep(Duration::from_secs(32));
+            }
+            env.close(&source);
+            std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{e}"));
+            pb_runtime::backup::copy_tree(&env.user_data(&source), &copy)
+                .unwrap_or_else(|e| panic!("{e}"));
+            std::fs::write(
+                dir.join("meta.json"),
+                json!({ "platform": platform_name() }).to_string(),
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+            let r = restore_and_read("p-same");
+            let result = summarize(platform_name(), true, &r);
+            eprintln!("portability (same machine, new path): {result}");
+            if let Ok(out) = std::env::var("PB_PORTABILITY_RESULT") {
+                std::fs::write(out, result.to_string()).unwrap_or_else(|e| panic!("{e}"));
+            }
+            // Same machine, new directory must keep site data (ADR-0002 v1 promise).
+            assert_eq!(result["local_storage"], json!(true), "{result}");
+            assert_eq!(result["indexeddb"], json!(true), "{result}");
+        }
+        "verify" => {
+            let meta: Value =
+                serde_json::from_slice(&std::fs::read(dir.join("meta.json")).unwrap_or_default())
+                    .unwrap_or_default();
+            let source = meta["platform"].as_str().unwrap_or("unknown").to_owned();
+            let r = restore_and_read("p-other");
+            let result = summarize(&source, false, &r);
+            eprintln!("portability (other machine): {result}");
+            let out = std::env::var("PB_PORTABILITY_RESULT")
+                .unwrap_or_else(|_| panic!("PB_PORTABILITY_RESULT"));
+            std::fs::write(out, result.to_string()).unwrap_or_else(|e| panic!("{e}"));
+        }
+        other => panic!("unknown PB_PORTABILITY mode {other}"),
+    }
 }

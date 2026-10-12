@@ -1,0 +1,227 @@
+name: runtime pipeline
+
+# Milestone 03, steps 1, 7 and 8 (ADR-0010):
+#   resolve      current Chrome for Testing stable version and download URLs (Windows x64, macOS arm64, Linux x64)
+#   compat       download + install with the manager's own installer, then run the real-browser compatibility test
+#                set on each OS (storage isolation, restart, crash, double launch, no debug endpoint, ten cycles)
+#   portability  restore each OS's signed-in profile on fresh runners of every OS (cookie encryption included)
+#   manifest     only after every platform passed: build runtimes/manifest.json, sign it with the owner's key
+#                (secret RUNTIME_MANIFEST_SIGNING_KEY), verify, and publish it as an artifact to commit
+#
+# Scheduled weekly so a newer upstream security release is noticed and tested promptly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: Build and sign a new runtime manifest when all platforms pass
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 3 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "crates/runtime/**"
+      - "crates/update/**"
+      - "apps/desktop/src-tauri/src/**"
+      - "apps/desktop/src-tauri/tests/browser.rs"
+      - "scripts/runtime/**"
+      - ".github/actions/install-runtime/**"
+      - ".github/workflows/runtime-pipeline.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  resolve:
+    name: resolve upstream stable
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.r.outputs.version }}
+      revision: ${{ steps.r.outputs.revision }}
+      urls: ${{ steps.r.outputs.urls }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - id: r
+        run: |
+          json=$(node scripts/runtime/manifest.mjs resolve)
+          echo "$json"
+          echo "version=$(echo "$json" | jq -r .version)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(echo "$json" | jq -r .revision)" >> "$GITHUB_OUTPUT"
+          echo "urls=$(echo "$json" | jq -c .urls)" >> "$GITHUB_OUTPUT"
+          pinned=$(jq -r '.runtime.version // empty' runtimes/manifest.json 2>/dev/null || true)
+          stable=$(echo "$json" | jq -r .version)
+          if [ -z "$pinned" ]; then
+            echo "::warning title=No pinned runtime::This repository has no signed runtime manifest yet (upstream stable is $stable)."
+          elif [ "$pinned" != "$stable" ]; then
+            echo "::warning title=Runtime behind upstream::Pinned $pinned, upstream stable $stable. Run this workflow with sign=true and commit the manifest."
+          fi
+
+  compat:
+    name: compatibility (${{ matrix.platform }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x64, switches: "" }
+          - { os: macos-14, platform: macos-arm64, switches: "" }
+          # Linux is a development/CI platform only: a normal browser that draws nowhere.
+          - { os: ubuntu-24.04, platform: linux-x64, switches: "--ozone-platform=headless,--disable-gpu,--password-store=basic" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - name: System libraries for Tauri
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with: { key: runtime-pipeline }
+      - uses: pnpm/action-setup@v4
+      - name: Frontend bundle (embedded by the desktop crate)
+        run: pnpm install --frozen-lockfile && pnpm --filter @pb/desktop build
+      - uses: ./.github/actions/install-runtime
+        id: rt
+        with:
+          platform: ${{ matrix.platform }}
+          url: ${{ fromJSON(needs.resolve.outputs.urls)[matrix.platform] }}
+          version: ${{ needs.resolve.outputs.version }}
+      - name: Compatibility test set (real browser)
+        shell: bash
+        env:
+          PB_TEST_BROWSER_REQUIRED: "1"
+          PB_TEST_SWITCHES: ${{ matrix.switches }}
+        run: |
+          set -o pipefail
+          scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
+            cargo test --locked -p pb-desktop --test browser -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+          passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | tail -1)
+          mkdir -p out
+          cp "${{ steps.rt.outputs.artifact }}" out/
+          echo "{\"platform\":\"${{ matrix.platform }}\",\"result\":\"pass\",\"tests\":${passed:-0},\"run_url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > "out/compat-${{ matrix.platform }}.json"
+      - name: Portability spike, source side (sign in, close, copy; restore on this machine)
+        shell: bash
+        env:
+          PB_TEST_BROWSER_REQUIRED: "1"
+          PB_TEST_SWITCHES: ${{ matrix.switches }}
+          PB_PORTABILITY: create
+        run: |
+          export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
+          export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.platform }}-same.json"
+          scripts/ci/annotate.sh "portability create ${{ matrix.platform }}" \
+            cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+      - uses: actions/upload-artifact@v4
+        with: { name: "runtime-meta-${{ matrix.platform }}", path: out/ }
+      - uses: actions/upload-artifact@v4
+        with: { name: "portable-${{ matrix.platform }}", path: "${{ runner.temp }}/portable/" }
+
+  portability:
+    name: restore ${{ matrix.source }} on ${{ matrix.platform }}
+    needs: [resolve, compat]
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [windows-x64, macos-arm64, linux-x64]
+        platform: [windows-x64, macos-arm64, linux-x64]
+        include:
+          - { platform: windows-x64, os: windows-latest, switches: "" }
+          - { platform: macos-arm64, os: macos-14, switches: "" }
+          - { platform: linux-x64, os: ubuntu-24.04, switches: "--ozone-platform=headless,--disable-gpu,--password-store=basic" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - name: System libraries for Tauri
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with: { key: runtime-pipeline }
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile && pnpm --filter @pb/desktop build
+      - uses: ./.github/actions/install-runtime
+        with:
+          platform: ${{ matrix.platform }}
+          url: ${{ fromJSON(needs.resolve.outputs.urls)[matrix.platform] }}
+          version: ${{ needs.resolve.outputs.version }}
+      - uses: actions/download-artifact@v4
+        with: { name: "portable-${{ matrix.source }}", path: "${{ runner.temp }}/portable" }
+      - name: Restore and read
+        shell: bash
+        env:
+          PB_TEST_BROWSER_REQUIRED: "1"
+          PB_TEST_SWITCHES: ${{ matrix.switches }}
+          PB_PORTABILITY: verify
+        run: |
+          mkdir -p out
+          export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
+          export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.source }}-to-${{ matrix.platform }}.json"
+          scripts/ci/annotate.sh "portability verify" \
+            cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+      - uses: actions/upload-artifact@v4
+        with: { name: "portability-${{ matrix.source }}-to-${{ matrix.platform }}", path: out/ }
+
+  report:
+    name: portability matrix
+    needs: [resolve, compat, portability]
+    if: always() && needs.compat.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - uses: actions/download-artifact@v4
+        with: { path: results }
+      - run: |
+          node scripts/runtime/portability-report.mjs results "${{ needs.resolve.outputs.version }}" > portability-matrix.md
+          cat portability-matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: portability-matrix, path: portability-matrix.md }
+
+  manifest:
+    name: build and sign manifest
+    needs: [resolve, compat]
+    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "runtime-meta-*", path: meta }
+      - name: Build (refuses unless every platform passed)
+        run: node scripts/runtime/manifest.mjs build "${{ needs.resolve.outputs.version }}" "${{ needs.resolve.outputs.revision }}" meta meta
+      - name: Sign with the owner's key
+        env:
+          RUNTIME_MANIFEST_SIGNING_KEY: ${{ secrets.RUNTIME_MANIFEST_SIGNING_KEY }}
+        run: node scripts/runtime/manifest.mjs sign runtimes/manifest.json pb-runtime-2026-10
+      - run: node scripts/runtime/manifest.mjs verify runtimes/manifest.json runtimes/manifest.json.sig runtimes/trusted-keys.json
+      - run: |
+          {
+            echo "### Signed runtime manifest ${{ needs.resolve.outputs.version }}"
+            echo
+            echo "Commit \`runtimes/manifest.json\` and \`runtimes/manifest.json.sig\` from the \`runtime-manifest\` artifact."
+            echo
+            echo '```json'
+            cat runtimes/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-manifest
+          path: |
+            runtimes/manifest.json
+            runtimes/manifest.json.sig
