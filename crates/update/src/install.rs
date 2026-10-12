@@ -15,6 +15,8 @@
 //!  - Symbolic links are accepted only on macOS/Linux, only with a relative target that stays inside the runtime
 //!    (macOS app bundles need them, e.g. `Versions/Current -> A`), and no file is ever written through a link.
 //!  - The manifest's executable must exist after extraction; on macOS a `required` code signature is verified.
+//!  - Windows: the runtime folder is made readable by Windows' app-container sandboxes (see [`grant_sandbox_access`]),
+//!    as Chrome's own installer does; otherwise Chromium's sandboxed network service cannot start.
 //!  - The installed directory appears only via an atomic rename after a complete, verified extraction.
 //!  - An interrupted install leaves its journal; on next start the manager offers retry or discard.
 
@@ -47,6 +49,8 @@ pub enum InstallError {
     MissingExecutable,
     #[error("the runtime's code signature did not verify")]
     SignatureCheckFailed,
+    #[error("the runtime folder's permissions could not be set for the browser sandbox: {0}")]
+    SandboxPermissions(String),
     #[error("download failed: {0}")]
     Download(String),
     #[error("io error: {0}")]
@@ -65,6 +69,7 @@ impl InstallError {
             Self::InProgress => "INSTALL_INTERRUPTED",
             Self::MissingExecutable => "RUNTIME_EXECUTABLE_MISSING",
             Self::SignatureCheckFailed => "RUNTIME_SIGNATURE_INVALID",
+            Self::SandboxPermissions(_) => "RUNTIME_PERMISSIONS_FAILED",
             Self::Download(_) => "DOWNLOAD_FAILED",
             Self::Io(_) => "IO_ERROR",
             Self::Manifest(_) => "BAD_MANIFEST",
@@ -307,6 +312,10 @@ impl Installer<'_> {
             let _ = fs::remove_dir_all(&staging);
             return Err(InstallError::SignatureCheckFailed);
         }
+        if let Err(e) = grant_sandbox_access(&extract_dir) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(InstallError::SandboxPermissions(e.to_string()));
+        }
         let installed = self.installed_dir(version, &artifact.platform)?;
         fs::create_dir_all(self.dir("installed"))?;
         if installed.exists() {
@@ -527,6 +536,41 @@ fn make_symlink(_target: &str, _at: &Path) -> io::Result<()> {
         io::ErrorKind::Unsupported,
         "symbolic links are not accepted on this platform",
     ))
+}
+
+/// Windows: grants read/execute on the runtime folder (inherited by everything in it) to ALL APPLICATION PACKAGES
+/// (`S-1-15-2-1`) and ALL RESTRICTED APPLICATION PACKAGES (`S-1-15-2-2`). Chromium runs its network service in an
+/// app-container sandbox that must be able to read the browser's own executable; Chrome's installer sets the same
+/// permissions. Without them Chromium logs "Sandbox cannot access executable", its network service keeps
+/// restarting, and no page ever loads. The sandbox itself stays on.
+#[cfg(windows)]
+pub fn grant_sandbox_access(dir: &Path) -> io::Result<()> {
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let icacls = Path::new(&system_root).join("System32").join("icacls.exe");
+    let out = std::process::Command::new(icacls)
+        .arg(dir)
+        .args([
+            "/grant",
+            "*S-1-15-2-1:(OI)(CI)(RX)",
+            "*S-1-15-2-2:(OI)(CI)(RX)",
+            "/Q",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "icacls exited with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn grant_sandbox_access(_dir: &Path) -> io::Result<()> {
+    Ok(()) // app-container sandboxes are a Windows concept
 }
 
 /// macOS: verifies the app bundle containing `exe` with `codesign --verify --deep --strict`.

@@ -391,3 +391,25 @@ fn bundle_internal_links_are_preserved() -> Result<(), InstallError> {
     );
     Ok(())
 }
+
+/// Windows only: the installed runtime folder (and files created in it later) is readable by app-container
+/// sandboxes, which Chromium's network service needs.
+#[cfg(windows)]
+#[test]
+fn runtime_folder_is_readable_by_app_container_sandboxes() -> io::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let dir = tmp.path().join("rt");
+    fs::create_dir_all(dir.join("sub"))?;
+    fs::write(dir.join("sub").join("chrome.exe"), b"x")?;
+    grant_sandbox_access(&dir)?;
+    let acl = std::process::Command::new("icacls")
+        .arg(dir.join("sub").join("chrome.exe"))
+        .output()?;
+    let text = String::from_utf8_lossy(&acl.stdout).to_ascii_uppercase();
+    assert!(text.contains("ALL APPLICATION PACKAGES"), "{text}");
+    assert!(
+        text.contains("ALL RESTRICTED APPLICATION PACKAGES"),
+        "{text}"
+    );
+    Ok(())
+}
