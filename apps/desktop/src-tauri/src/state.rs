@@ -1,29 +1,30 @@
 //! Application state and the logic behind every IPC command. Commands in `commands.rs` are thin wrappers that
-//! check the caller and delegate here, so the behaviour is unit-testable without a webview.
+//! check the caller and delegate here (and to `lifecycle.rs`), so the behaviour is testable without a webview.
 
 use crate::events::{EventSink, PROFILES_CHANGED};
 use crate::ipc::{self, IpcError, limits};
-use crate::operations::{OpKind, Operations, Started};
+use crate::operations::Operations;
 use crate::recovery::{self, SessionInfo};
+use crate::runtime::{self, ManifestStatus, ResolvedRuntime, RuntimeConfig};
 use crate::secrets::KeychainStatus;
-use crate::supervisor::{
-    GRACEFUL_TIMEOUT, ReconcileReport, RunningProfile, StopOutcome, Supervisor,
-};
+use crate::supervisor::{ReconcileReport, RunningProfile, Supervisor};
+use pb_runtime::backup::Backups;
 use pb_runtime::{
-    BrowserInstall, LaunchRequest, Launcher, ProcessInspector, ProfileId, ProfileState,
-    ProfilesRoot, WorkspaceId, prepare_launch,
+    BrowserInstall, Launcher, PermissionDefault, ProcessInspector, ProfileId, ProfilesRoot,
+    RunState, WorkspaceId, valid_start_url,
 };
 use pb_storage::settings::{self, SettingValue};
 use pb_storage::{
     LocalProfile, LocalStore, NewProfile, ProfileUpdate, RuntimeInstallation, StoreError, Workspace,
 };
+use pb_update::RuntimeManifest;
 use pb_update::install::{FsSpace, Installer, Stage};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Called with the number of open profiles whenever it changes (tray text).
 pub type RunningListener = Box<dyn Fn(usize) + Send + Sync>;
@@ -64,18 +65,24 @@ pub struct Paths {
 pub struct AppState {
     pub paths: Paths,
     pub root: ProfilesRoot,
-    store: RwLock<StoreSlot>,
+    pub(crate) store: RwLock<StoreSlot>,
     pub supervisor: Arc<Supervisor>,
     pub ops: Arc<Operations>,
     pub events: Arc<dyn EventSink>,
-    launcher: Arc<dyn Launcher>,
-    browser: RwLock<Option<BrowserInstall>>,
+    pub(crate) launcher: Arc<dyn Launcher>,
+    pub(crate) runtime: RuntimeConfig,
+    pub(crate) manifest: Option<RuntimeManifest>,
+    pub(crate) manifest_status: ManifestStatus,
+    pub(crate) backups: Backups,
     pub session: SessionInfo,
-    crash_acknowledged: AtomicBool,
+    pub(crate) crash_acknowledged: AtomicBool,
     pub keychain: RwLock<KeychainStatus>,
     pub started: Instant,
-    ui_ready_recorded: AtomicBool,
-    launch_lock: Mutex<()>,
+    pub(crate) ui_ready_recorded: AtomicBool,
+    pub(crate) launch_lock: Mutex<()>,
+    pub(crate) installing: AtomicBool,
+    pub(crate) poll_count: AtomicU64,
+    pub(crate) low_disk_warned: AtomicBool,
     pub reconcile: ReconcileReport,
     /// Set by the shell to refresh the tray's running-profile count.
     pub on_running_changed: RwLock<Option<RunningListener>>,
@@ -83,20 +90,43 @@ pub struct AppState {
 
 // ----------------------------------------------------------------------------- views returned over IPC
 #[derive(Serialize)]
+pub struct Permissions {
+    pub camera: PermissionDefault,
+    pub microphone: PermissionDefault,
+    pub location: PermissionDefault,
+}
+
+#[derive(Serialize)]
 pub struct ProfileView {
     pub id: String,
     pub workspace_id: Option<String>,
     pub name: String,
     pub client_label: Option<String>,
+    pub client_colour: Option<String>,
     pub notes: String,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
-    /// closed | running | stopping
+    /// Display status: closed | starting | running | stopping | crashed | recovering
     pub status: &'static str,
+    pub state: RunState,
     pub pid: Option<u32>,
     /// Running since before this manager instance started (the manager was closed or crashed meanwhile).
     pub adopted: bool,
+    /// The browser has started its helper processes.
+    pub ready: bool,
+    /// At least one page (renderer) is open.
+    pub window_open: bool,
+    pub force_available: bool,
+    pub start_urls: Vec<String>,
+    pub download_dir: Option<String>,
+    pub permissions: Permissions,
+    pub runtime_version: Option<String>,
+    pub last_error: Option<String>,
+    pub crash_count: u32,
+    pub last_started_at: Option<String>,
+    pub last_clean_shutdown_at: Option<String>,
+    pub last_backup_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -123,10 +153,26 @@ pub struct RuntimeStatus {
     pub manager_updates: Value,
 }
 
+/// Arguments of `update_profile` after deserialization (validated in [`AppState::update_profile`]).
+#[derive(Default)]
+pub struct ProfileChanges<'a> {
+    pub name: Option<&'a str>,
+    pub client_label: Option<&'a str>,
+    pub clear_client_label: bool,
+    pub notes: Option<&'a str>,
+    pub client_colour: Option<&'a str>,
+    pub clear_client_colour: bool,
+    pub start_urls: Option<&'a [String]>,
+    pub clear_download_dir: bool,
+    pub camera: Option<&'a str>,
+    pub microphone: Option<&'a str>,
+    pub location: Option<&'a str>,
+}
+
 impl AppState {
     pub fn build(
         data_dir: &Path,
-        browser: Option<BrowserInstall>,
+        runtime: RuntimeConfig,
         launcher: Arc<dyn Launcher>,
         inspector: Arc<dyn ProcessInspector>,
         events: Arc<dyn EventSink>,
@@ -140,11 +186,16 @@ impl AppState {
         std::fs::create_dir_all(&paths.profiles)
             .map_err(|e| format!("cannot create profiles dir: {e}"))?;
         let root = ProfilesRoot::open(&paths.profiles).map_err(|e| e.to_string())?;
+        let backups = Backups {
+            root: data_dir.join("backups"),
+            evidence: data_dir.join("evidence"),
+        };
         let insp = inspector.clone();
         let session = recovery::begin_session(&paths.data, APP_VERSION, move |pid| {
             insp.inspect(pid).is_some()
         });
         let supervisor = Arc::new(Supervisor::new(inspector));
+        let (manifest_status, manifest) = runtime::verify(&runtime);
 
         let t0 = Instant::now();
         let slot = open_slot(&paths.db);
@@ -152,7 +203,9 @@ impl AppState {
         if let StoreSlot::Ready(store) = &slot {
             let _ = store.record_timing("store_open_ms", t0.elapsed().as_secs_f64() * 1000.0);
             let _ = store.ensure_device(platform(), std::env::consts::ARCH);
-            reconcile = supervisor.reconcile_on_startup(store);
+            tidy_profiles(&root, &backups);
+            let trusted = trusted_executables(store, &runtime, &paths.runtimes);
+            reconcile = supervisor.reconcile_on_startup(store, &root, &trusted);
         }
 
         Ok(Arc::new(Self {
@@ -163,7 +216,10 @@ impl AppState {
             ops: Arc::new(Operations::new(events.clone())),
             events,
             launcher,
-            browser: RwLock::new(browser),
+            runtime,
+            manifest,
+            manifest_status,
+            backups,
             session,
             crash_acknowledged: AtomicBool::new(false),
             keychain: RwLock::new(KeychainStatus {
@@ -173,6 +229,9 @@ impl AppState {
             started: Instant::now(),
             ui_ready_recorded: AtomicBool::new(false),
             launch_lock: Mutex::new(()),
+            installing: AtomicBool::new(false),
+            poll_count: AtomicU64::new(0),
+            low_disk_warned: AtomicBool::new(false),
             reconcile,
             on_running_changed: RwLock::new(None),
         }))
@@ -185,7 +244,7 @@ impl AppState {
         }
     }
 
-    fn store_failure(&self) -> Option<StoreFailure> {
+    pub(crate) fn store_failure(&self) -> Option<StoreFailure> {
         match &*self.store.read().ok()? {
             StoreSlot::Failed(f) => Some(f.clone()),
             StoreSlot::Ready(_) => None,
@@ -211,25 +270,46 @@ impl AppState {
         Ok(store.get_workspace(&id)?.map(|w| w.id))
     }
 
-    fn view(&self, p: LocalProfile) -> ProfileView {
-        let running = self.supervisor.running();
-        let r = running.iter().find(|r| r.profile_id == p.id.as_str());
+    pub(crate) fn view(&self, p: LocalProfile) -> ProfileView {
+        let live = self.supervisor.status(&p.id);
+        let state = live.as_ref().map(|r| r.state).unwrap_or(match p.state {
+            // Without a tracked process the profile cannot be active (the supervisor reconciles at start-up).
+            RunState::Starting | RunState::Running | RunState::Stopping => RunState::Stopped,
+            other => other,
+        });
         ProfileView {
             id: p.id.to_string(),
             workspace_id: p.workspace_id.map(|w| w.to_string()),
             name: p.name,
             client_label: p.client_label,
+            client_colour: p.client_colour,
             notes: p.notes,
             version: p.version,
             created_at: p.created_at,
             updated_at: p.updated_at,
-            status: match r {
-                Some(r) if r.stopping => "stopping",
-                Some(_) => "running",
-                None => "closed",
+            status: match state {
+                RunState::Stopped => "closed",
+                other => other.as_str(),
             },
-            pid: r.map(|r| r.pid),
-            adopted: r.is_some_and(|r| r.adopted),
+            state,
+            pid: live.as_ref().and_then(|r| r.pid),
+            adopted: live.as_ref().is_some_and(|r| r.adopted),
+            ready: live.as_ref().is_some_and(|r| r.ready),
+            window_open: live.as_ref().is_some_and(|r| r.window_open),
+            force_available: live.as_ref().is_some_and(|r| r.force_available),
+            start_urls: p.start_urls,
+            download_dir: p.download_dir,
+            permissions: Permissions {
+                camera: p.camera,
+                microphone: p.microphone,
+                location: p.location,
+            },
+            runtime_version: p.runtime_version,
+            last_error: p.last_error,
+            crash_count: p.crash_count,
+            last_started_at: p.last_started_at,
+            last_clean_shutdown_at: p.last_clean_shutdown_at,
+            last_backup_at: p.last_backup_at,
         }
     }
 
@@ -266,8 +346,9 @@ impl AppState {
                 "previous_session_crashed": self.session.previous_session_crashed
                     && !self.crash_acknowledged.load(Ordering::Relaxed),
                 "crash_reports": recovery::list_reports(&self.paths.data).len(),
-                "adopted_profiles": self.reconcile.adopted,
+                "adopted_profiles": self.reconcile.adopted + self.reconcile.orphans_adopted,
                 "cleared_stale_processes": self.reconcile.cleared,
+                "interrupted_profiles": self.reconcile.interrupted,
                 "interrupted_installs": installer.interrupted().map(|v| v.len()).unwrap_or(0),
             }),
             keychain: self
@@ -355,164 +436,129 @@ impl AppState {
         &self,
         profile_id: &ProfileId,
         expected_version: i64,
-        name: Option<&str>,
-        client_label: Option<&str>,
-        clear_client_label: bool,
-        notes: Option<&str>,
+        c: ProfileChanges<'_>,
     ) -> Result<ProfileView, IpcError> {
-        let name = name
+        let name = c
+            .name
             .map(|n| ipc::clean_text(n, limits::LABEL_CHARS, ipc::INVALID_LABEL))
             .transpose()?;
-        let client = client_label
-            .map(|c| ipc::clean_text(c, limits::LABEL_CHARS, ipc::INVALID_LABEL))
+        let client = c
+            .client_label
+            .map(|v| ipc::clean_text(v, limits::LABEL_CHARS, ipc::INVALID_LABEL))
             .transpose()?;
-        let notes = notes.map(ipc::clean_notes).transpose()?;
+        let notes = c.notes.map(ipc::clean_notes).transpose()?;
+        let colour = c
+            .client_colour
+            .map(|v| {
+                let ok = v.len() == 7
+                    && v.starts_with('#')
+                    && v[1..]
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+                ok.then(|| v.to_owned()).ok_or(ipc::INVALID_COLOUR)
+            })
+            .transpose()?;
+        if let Some(urls) = c.start_urls
+            && (urls.len() > pb_runtime::MAX_START_URLS || !urls.iter().all(|u| valid_start_url(u)))
+        {
+            return Err(pb_runtime::LaunchError::BadStartUrl.into());
+        }
+        let perm = |v: Option<&str>| {
+            v.map(|s| PermissionDefault::parse(s).ok_or(ipc::INVALID_PERMISSION))
+                .transpose()
+        };
+        let (camera, microphone, location) =
+            (perm(c.camera)?, perm(c.microphone)?, perm(c.location)?);
         let store = self.store()?;
         let p = store.update_profile(
             profile_id,
             ProfileUpdate {
                 name: name.as_deref(),
-                client_label: if clear_client_label {
+                client_label: if c.clear_client_label {
                     Some(None)
                 } else {
                     client.as_deref().map(Some)
                 },
                 notes: notes.as_deref(),
+                client_colour: if c.clear_client_colour {
+                    Some(None)
+                } else {
+                    colour.as_deref().map(Some)
+                },
+                start_urls: c.start_urls,
+                download_dir: c.clear_download_dir.then_some(None),
+                camera,
+                microphone,
+                location,
             },
             expected_version,
         )?;
         Ok(self.view(p))
     }
 
-    // ------------------------------------------------------------------------- lifecycle
-    pub fn launch_profile(
-        self: &Arc<Self>,
+    /// Saves a per-profile download folder chosen in the native dialog.
+    pub fn set_profile_download_directory(
+        &self,
         profile_id: &ProfileId,
-        start_url: Option<&str>,
-    ) -> Result<Started, IpcError> {
-        if start_url.is_some_and(|u| u.len() > limits::URL_BYTES) {
-            return Err(pb_runtime::LaunchError::BadStartUrl.into());
-        }
+        chosen: &Path,
+    ) -> Result<String, IpcError> {
+        let text = self.validate_download_dir(chosen)?;
         let store = self.store()?;
-        let _guard = self.launch_lock.lock().map_err(|_| ipc::INTERNAL)?;
-        let exists = store.get_profile(profile_id)?.is_some();
-        let browser = self.browser.read().map_err(|_| ipc::INTERNAL)?.clone();
-        // Every check happens here, before any process exists (milestone 01 step 5 / 02 step 2).
-        let spec = prepare_launch(
-            &self.root,
-            browser.as_ref(),
-            ProfileState {
-                exists,
-                running: self.supervisor.is_running(profile_id),
+        let p = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
+        store.update_profile(
+            profile_id,
+            ProfileUpdate {
+                download_dir: Some(Some(&text)),
+                ..ProfileUpdate::default()
             },
-            LaunchRequest {
-                profile_id,
-                start_url,
-            },
+            p.version,
         )?;
-        let op = self
-            .ops
-            .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
-        let t0 = Instant::now();
-        let spawned = match self.launcher.spawn(&spec) {
-            Ok(s) => {
-                // Browser process start is measured on its own, never folded into manager start-up time.
-                if let Ok(store) = self.store() {
-                    let _ = store
-                        .record_timing("browser_spawn_ms", t0.elapsed().as_secs_f64() * 1000.0);
-                }
-                s
-            }
-            Err(e) => {
-                let err = IpcError::from(e);
-                self.ops.fail(&op, err.code, err.message);
-                return Ok(Started { operation_id: op });
-            }
-        };
-        let exe = spec.executable.to_string_lossy().into_owned();
-        self.supervisor
-            .register(&store, profile_id, spawned, &exe)?;
-        self.notify_running_changed();
-
-        // Confirm in the background that the browser did not exit immediately (e.g. a broken runtime).
-        let this = self.clone();
-        let id = profile_id.clone();
-        let op_id = op.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(1500));
-            let exited = this.supervisor.poll(&store);
-            if exited.contains(&id) {
-                this.ops.fail(
-                    &op_id,
-                    "EXITED_EARLY",
-                    "The browser closed right after starting.",
-                );
-                this.notify_running_changed();
-            } else {
-                this.ops.succeed(&op_id);
-            }
-        });
-        Ok(Started { operation_id: op })
+        Ok(text)
     }
 
-    pub fn stop_profile(self: &Arc<Self>, profile_id: &ProfileId) -> Result<Started, IpcError> {
-        let store = self.store()?;
-        if !self.supervisor.is_running(profile_id) {
-            return Err(ipc::NOT_RUNNING);
+    // ------------------------------------------------------------------------- runtime
+    /// The browser executable for launches: the installed manifest runtime, or a debug/test override.
+    pub fn resolve_runtime(&self, store: &LocalStore) -> Result<ResolvedRuntime, IpcError> {
+        if let Some(dev) = &self.runtime.dev_override {
+            dev.validate()?;
+            return Ok(ResolvedRuntime {
+                executable: dev.executable.clone(),
+                version: pb_update::parse_version(&dev.revision).map(|_| dev.revision.clone()),
+                source: "development_override",
+            });
         }
-        let op = self
-            .ops
-            .start(OpKind::StopProfile, Some(profile_id.to_string()));
-        let this = self.clone();
-        let id = profile_id.clone();
-        let op_id = op.clone();
-        std::thread::spawn(move || {
-            this.notify_running_changed();
-            match this.supervisor.stop(&store, &id, GRACEFUL_TIMEOUT) {
-                StopOutcome::Stopped | StopOutcome::NotRunning | StopOutcome::Forced => {
-                    this.ops.succeed(&op_id)
-                }
-                StopOutcome::StillRunning => {
-                    this.ops
-                        .fail(&op_id, "STOP_FAILED", "The profile could not be closed.")
-                }
-            }
-            this.notify_running_changed();
-        });
-        Ok(Started { operation_id: op })
-    }
-
-    /// Gracefully closes every running profile. `then` runs after all have stopped (used by "close all and quit").
-    pub fn close_all(
-        self: &Arc<Self>,
-        then: Option<Box<dyn FnOnce() + Send>>,
-    ) -> Result<Started, IpcError> {
-        let store = self.store()?;
-        let op = self.ops.start(OpKind::CloseAll, None);
-        let this = self.clone();
-        let op_id = op.clone();
-        std::thread::spawn(move || {
-            let ids = this.supervisor.running_ids();
-            let total = ids.len().max(1) as f32;
-            let mut failed = false;
-            for (i, id) in ids.iter().enumerate() {
-                if this.supervisor.stop(&store, id, GRACEFUL_TIMEOUT) == StopOutcome::StillRunning {
-                    failed = true;
-                }
-                this.ops.progress(&op_id, (i + 1) as f32 / total);
-                this.notify_running_changed();
-            }
-            if failed {
-                this.ops
-                    .fail(&op_id, "STOP_FAILED", "Some profiles could not be closed.");
-            } else {
-                this.ops.succeed(&op_id);
-                if let Some(f) = then {
-                    f();
-                }
-            }
-        });
-        Ok(Started { operation_id: op })
+        let manifest = self.manifest.as_ref().ok_or(ipc::RUNTIME_UNAVAILABLE)?;
+        let artifact = manifest
+            .artifact_for(platform())
+            .ok_or(ipc::RUNTIME_UNAVAILABLE)?;
+        let version = &manifest.runtime.version;
+        let installed = store
+            .list_runtimes()?
+            .into_iter()
+            .find(|r| &r.version == version && r.platform == platform() && r.status == "verified")
+            .ok_or(ipc::RUNTIME_NOT_INSTALLED)?;
+        let expected_dir = Installer {
+            root: self.paths.runtimes.clone(),
+            space: &FsSpace,
+        }
+        .installed_dir(version, platform())
+        .map_err(|_| ipc::INTERNAL)?;
+        // Never trust a stored path: the executable must be the manifest's, inside our installed directory.
+        if Path::new(&installed.path) != expected_dir {
+            return Err(ipc::RUNTIME_NOT_INSTALLED);
+        }
+        let executable = expected_dir.join(&artifact.executable);
+        BrowserInstall {
+            executable: executable.clone(),
+            revision: version.clone(),
+        }
+        .validate()
+        .map_err(|_| ipc::RUNTIME_NOT_INSTALLED)?;
+        Ok(ResolvedRuntime {
+            executable,
+            version: Some(version.clone()),
+            source: "manifest",
+        })
     }
 
     pub fn runtime_status(&self) -> RuntimeStatus {
@@ -520,17 +566,33 @@ impl AppState {
             root: self.paths.runtimes.clone(),
             space: &FsSpace,
         };
-        let browser = self.browser.read().ok().and_then(|b| b.clone());
+        let store = self.store().ok();
+        let resolved = store.as_ref().map(|s| self.resolve_runtime(s));
+        let manifest = self.manifest.as_ref().map(|m| {
+            json!({
+                "version": m.runtime.version,
+                "channel": m.channel,
+                "distribution": m.distribution.name,
+                "customer_distribution": m.distribution.customer_distribution,
+                "platform_supported": m.artifact_for(platform()).is_some(),
+                "size_bytes": m.artifact_for(platform()).map(|a| a.size_bytes),
+            })
+        });
         RuntimeStatus {
-            browser: match browser {
-                Some(b) => {
-                    json!({ "configured": true, "source": "development_override", "revision": b.revision })
-                }
-                None => json!({ "configured": false, "source": "none", "revision": null }),
-            },
-            installations: self
-                .store()
-                .ok()
+            browser: json!({
+                "configured": matches!(resolved, Some(Ok(_))),
+                "source": match &resolved {
+                    Some(Ok(r)) => r.source,
+                    _ => "none",
+                },
+                "version": resolved.as_ref().and_then(|r| r.as_ref().ok()).and_then(|r| r.version.clone()),
+                "error": resolved.as_ref().and_then(|r| r.as_ref().err()).map(|e| e.code),
+                "manifest_status": self.manifest_status,
+                "manifest": manifest,
+                "installing": self.installing.load(Ordering::Relaxed),
+            }),
+            installations: store
+                .as_ref()
                 .and_then(|s| s.list_runtimes().ok())
                 .unwrap_or_default(),
             interrupted: installer
@@ -539,7 +601,7 @@ impl AppState {
                 .into_iter()
                 .filter_map(|i| {
                     let id = i.dir.file_name()?.to_string_lossy().into_owned();
-                    let stage = i.journal.map(|j| j.stage).unwrap_or(Stage::Copying);
+                    let stage = i.journal.map(|j| j.stage).unwrap_or(Stage::Downloading);
                     Some(json!({ "id": id, "stage": stage }))
                 })
                 .collect(),
@@ -578,8 +640,7 @@ impl AppState {
         Ok(store.set_setting(key, value, true, expected_version)?)
     }
 
-    /// Validates and saves a folder chosen in the native dialog.
-    pub fn set_download_directory(&self, chosen: &Path) -> Result<String, IpcError> {
+    fn validate_download_dir(&self, chosen: &Path) -> Result<String, IpcError> {
         if !chosen.is_absolute()
             || std::fs::symlink_metadata(chosen)
                 .map(|m| m.file_type().is_symlink())
@@ -598,7 +659,12 @@ impl AppState {
         ));
         std::fs::write(&probe, b"").map_err(|_| ipc::INVALID_DIRECTORY)?;
         let _ = std::fs::remove_file(&probe);
-        let text = dir.to_string_lossy().into_owned();
+        Ok(dir.to_string_lossy().into_owned())
+    }
+
+    /// Validates and saves a folder chosen in the native dialog.
+    pub fn set_download_directory(&self, chosen: &Path) -> Result<String, IpcError> {
+        let text = self.validate_download_dir(chosen)?;
         self.store()?
             .set_setting(settings::DOWNLOAD_DIR, &json!(text), false, None)?;
         Ok(text)
@@ -620,6 +686,10 @@ impl AppState {
         let own = self.supervisor.inspector().inspect(std::process::id());
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
+        let audit = store
+            .as_ref()
+            .and_then(|s| s.list_audit(None, 20).ok())
+            .unwrap_or_default();
         json!({
             "app": { "version": APP_VERSION, "platform": platform(), "os": sysinfo::System::long_os_version(),
                      "arch": std::env::consts::ARCH },
@@ -634,6 +704,10 @@ impl AppState {
             },
             "disk_free_bytes": fs4::available_space(&self.paths.data).ok(),
             "keychain": self.keychain.read().map(|k| k.clone()).ok(),
+            "runtime": {
+                "manifest_status": self.manifest_status,
+                "platform": platform(),
+            },
             // Manager and browser measurements are kept separate (milestone 02 acceptance).
             "manager": {
                 "uptime_s": self.started.elapsed().as_secs(),
@@ -645,15 +719,18 @@ impl AppState {
                 "running": self.supervisor.running_count(),
                 "main_process_rss_bytes": self.supervisor.browser_memory_bytes(),
                 "spawn_ms": summary("browser_spawn_ms"),
+                "ready_ms": summary("browser_ready_ms"),
             },
             "system_memory_bytes": sys.total_memory(),
             "crash_reports": recovery::list_reports(&self.paths.data).len(),
             "previous_session_crashed": self.session.previous_session_crashed,
             "reconcile": self.reconcile,
+            // Launch/stop/crash history: actions and codes only (no URLs, titles or cookie contents).
+            "recent_activity": audit,
         })
     }
 
-    // ------------------------------------------------------------------------- recovery
+    // ------------------------------------------------------------------------- store recovery
     pub fn recovery_action(&self, action: &str, target: Option<&str>) -> Result<(), IpcError> {
         match action {
             "dismiss_crash" => {
@@ -701,8 +778,8 @@ impl AppState {
         }
     }
 
-    /// Deletes every local profile and the local database ("clear uninstall choice" on platforms without an
-    /// uninstaller). The caller restarts the app afterwards.
+    /// Deletes every local profile, backup and the local database ("clear uninstall choice" on platforms without
+    /// an uninstaller). The caller restarts the app afterwards.
     pub fn remove_local_data(&self, confirm: &str) -> Result<(), IpcError> {
         if confirm != "DELETE" {
             return Err(ipc::CONFIRMATION_REQUIRED);
@@ -720,6 +797,8 @@ impl AppState {
         for dir in [
             &self.paths.profiles,
             &self.paths.runtimes,
+            &self.backups.root,
+            &self.backups.evidence,
             &self.paths.data.join("crash-reports"),
         ] {
             if dir.exists() {
@@ -739,7 +818,52 @@ impl AppState {
     }
 }
 
-fn open_slot(db: &Path) -> StoreSlot {
+/// Every runtime executable this manager may have launched (adoption after a crash is limited to these).
+fn trusted_executables(
+    store: &LocalStore,
+    config: &RuntimeConfig,
+    runtimes: &Path,
+) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = config
+        .dev_override
+        .iter()
+        .map(|d| d.executable.clone())
+        .collect();
+    let installed = runtimes.join("installed");
+    for r in store.list_runtimes().unwrap_or_default() {
+        if let Some(exe) = &r.executable
+            && Path::new(&r.path).starts_with(&installed)
+        {
+            out.push(Path::new(&r.path).join(exe));
+        }
+    }
+    out
+}
+
+/// Finishes or rolls back backups and restores interrupted by a crash.
+fn tidy_profiles(root: &ProfilesRoot, backups: &Backups) {
+    let Ok(entries) = std::fs::read_dir(root.path()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(id) = ProfileId::parse(&name) else {
+            continue;
+        };
+        let _ = backups.tidy(id.as_str());
+        let dirs = root.dirs(&id);
+        let restoring = dirs.root.join("user-data.restoring");
+        if restoring.is_dir() {
+            if dirs.user_data.exists() {
+                let _ = std::fs::remove_dir_all(&restoring); // crashed while copying: discard the copy
+            } else {
+                let _ = std::fs::rename(&restoring, &dirs.user_data); // crashed after moving evidence aside
+            }
+        }
+    }
+}
+
+pub(crate) fn open_slot(db: &Path) -> StoreSlot {
     match LocalStore::open(db) {
         Ok(s) => StoreSlot::Ready(Arc::new(s)),
         Err(StoreError::MigrationFailed(f)) => StoreSlot::Failed(StoreFailure {

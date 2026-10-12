@@ -1,4 +1,4 @@
-//! Desktop manager shell (milestone 02).
+//! Desktop manager shell (milestone 02) and browser runtime lifecycle (milestone 03).
 //!
 //! Security boundary (roadmap): the system webview renders ONLY the bundled manager UI. Navigation away from it and
 //! new windows are refused; external links open in the default browser; websites run only in separate Chromium
@@ -10,15 +10,17 @@ pub mod deeplink;
 pub mod events;
 pub mod external;
 pub mod ipc;
+pub mod lifecycle;
 pub mod operations;
 pub mod recovery;
+pub mod runtime;
 pub mod secrets;
 pub mod state;
 pub mod supervisor;
 
 use crate::events::{DEEP_LINK, QUIT_REQUESTED};
 use crate::state::AppState;
-use pb_runtime::{BrowserInstall, SystemInspector, SystemLauncher};
+use pb_runtime::{SystemInspector, SystemLauncher};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,6 +60,10 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::resolve_quit,
         commands::open_external,
         commands::remove_local_data,
+        commands::get_profile_status,
+        commands::recover_profile,
+        commands::install_runtime,
+        commands::select_profile_download_directory,
     ]
 }
 
@@ -72,20 +78,6 @@ pub fn build_main_window<R: Runtime, M: Manager<R>>(
         .on_navigation(external::is_app_url)
         .on_new_window(|_url, _features| NewWindowResponse::Deny)
         .build()
-}
-
-/// Browser location comes from trusted local configuration only. Milestone 03 replaces this with the pinned
-/// runtime installed by the manager (crates/update). Debug builds may point at a developer build.
-fn resolve_browser() -> Option<BrowserInstall> {
-    #[cfg(debug_assertions)]
-    if let Ok(path) = std::env::var("PB_DEV_BROWSER") {
-        let install = BrowserInstall {
-            executable: path.into(),
-            revision: "dev".into(),
-        };
-        return install.validate().is_ok().then_some(install);
-    }
-    None
 }
 
 fn show_main<R: Runtime>(app: &AppHandle<R>) {
@@ -114,11 +106,15 @@ pub fn request_quit<R: Runtime>(app: &AppHandle<R>) {
         "keep_running" => app.exit(0),
         "close_all" => {
             let handle = app.clone();
-            let _ = state.close_all(Some(Box::new(move || handle.exit(0))));
+            let _ = state.close_all(false, Some(Box::new(move || handle.exit(0))));
         }
         _ => {
             show_main(app);
-            let _ = app.emit_to("main", QUIT_REQUESTED, json!({ "running": running }));
+            let _ = app.emit_to(
+                "main",
+                QUIT_REQUESTED,
+                json!({ "running": running, "unresponsive": 0 }),
+            );
         }
     }
 }
@@ -158,7 +154,7 @@ fn build_tray<R: Runtime>(app: &tauri::App<R>, state: &Arc<AppState>) -> tauri::
             "open" => show_main(app),
             "close_all" => {
                 let state = app.state::<Arc<AppState>>().inner().clone();
-                let _ = state.close_all(None);
+                let _ = state.close_all(false, None);
             }
             "quit" => request_quit(app),
             _ => {}
@@ -211,7 +207,7 @@ pub fn run() {
             let events: Arc<dyn events::EventSink> = Arc::new(app.handle().clone());
             let state = AppState::build(
                 &data_dir,
-                resolve_browser(),
+                runtime::RuntimeConfig::embedded(),
                 Arc::new(SystemLauncher),
                 Arc::new(SystemInspector::default()),
                 events,
@@ -232,11 +228,7 @@ pub fn run() {
             std::thread::spawn(move || {
                 loop {
                     std::thread::sleep(Duration::from_millis(1500));
-                    if let Ok(store) = monitor.store()
-                        && !monitor.supervisor.poll(&store).is_empty()
-                    {
-                        monitor.notify_running_changed();
-                    }
+                    monitor.poll_once();
                 }
             });
 
@@ -277,10 +269,13 @@ pub fn run() {
         }
     };
     app.run(|handle, event| {
-        if let RunEvent::Exit = event
-            && let Ok(dir) = handle.path().app_local_data_dir()
-        {
-            recovery::end_session(&dir);
+        if let RunEvent::Exit = event {
+            if let Some(state) = handle.try_state::<Arc<AppState>>() {
+                state.supervisor.detach_all();
+            }
+            if let Ok(dir) = handle.path().app_local_data_dir() {
+                recovery::end_session(&dir);
+            }
         }
     });
 }

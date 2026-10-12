@@ -9,9 +9,12 @@
 //! installed/<version>-<platform>/                verified, fully extracted runtime
 //! ```
 //! Guarantees:
-//!  - Free space is checked before copying AND before extracting; the error states how much is required.
+//!  - Free space is checked before downloading AND before extracting; the error states how much is required.
 //!  - The digest is verified before anything is extracted; a mismatch quarantines the artifact.
-//!  - Extraction refuses absolute paths, `..`, symlinks, oversized totals and excessive entry counts (zip-slip/bombs).
+//!  - Extraction refuses absolute paths, `..`, oversized totals and excessive entry counts (zip-slip/bombs).
+//!  - Symbolic links are accepted only on macOS/Linux, only with a relative target that stays inside the runtime
+//!    (macOS app bundles need them, e.g. `Versions/Current -> A`), and no file is ever written through a link.
+//!  - The manifest's executable must exist after extraction; on macOS a `required` code signature is verified.
 //!  - The installed directory appears only via an atomic rename after a complete, verified extraction.
 //!  - An interrupted install leaves its journal; on next start the manager offers retry or discard.
 
@@ -40,6 +43,12 @@ pub enum InstallError {
     BadArchive(String),
     #[error("another install of this runtime is in progress or was interrupted")]
     InProgress,
+    #[error("the runtime's executable is missing from the archive")]
+    MissingExecutable,
+    #[error("the runtime's code signature did not verify")]
+    SignatureCheckFailed,
+    #[error("download failed: {0}")]
+    Download(String),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
     #[error(transparent)]
@@ -54,6 +63,9 @@ impl InstallError {
             Self::UnsafeEntry(_) => "UNSAFE_ARCHIVE_ENTRY",
             Self::BadArchive(_) => "BAD_ARCHIVE",
             Self::InProgress => "INSTALL_INTERRUPTED",
+            Self::MissingExecutable => "RUNTIME_EXECUTABLE_MISSING",
+            Self::SignatureCheckFailed => "RUNTIME_SIGNATURE_INVALID",
+            Self::Download(_) => "DOWNLOAD_FAILED",
             Self::Io(_) => "IO_ERROR",
             Self::Manifest(_) => "BAD_MANIFEST",
         }
@@ -63,7 +75,9 @@ impl InstallError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
+    /// Older journals only (milestone 02 copied local files).
     Copying,
+    Downloading,
     Verifying,
     Extracting,
     Finalizing,
@@ -90,6 +104,8 @@ pub struct Installed {
     pub version: String,
     pub platform: String,
     pub path: PathBuf,
+    /// Absolute path of the browser executable inside `path`.
+    pub executable: PathBuf,
     pub sha256: String,
 }
 
@@ -99,7 +115,7 @@ pub struct Interrupted {
     pub journal: Option<Journal>,
 }
 
-/// Something that yields the artifact bytes: a local file now; an HTTPS download once a runtime is chosen (ADR-0001).
+/// Something that yields the artifact bytes: an HTTPS download (`download::HttpsSource`) or a local file.
 pub trait ArtifactSource {
     fn open(&self) -> io::Result<Box<dyn Read>>;
 }
@@ -198,21 +214,35 @@ impl Installer<'_> {
         let mut journal = Journal {
             version: version.to_owned(),
             platform: artifact.platform.clone(),
-            stage: Stage::Copying,
+            stage: Stage::Downloading,
             expected_sha256: artifact.sha256.clone(),
             started_at_unix: now_unix(),
         };
         Self::write_journal(&staging, &journal)?;
 
-        // 1. Copy while hashing.
+        // 1. Download (or copy) while hashing.
         let partial = staging.join("artifact.partial");
-        let mut reader = source.open()?;
+        let mut reader = match source.open() {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(InstallError::Download(e.to_string()));
+            }
+        };
         let mut out = File::create(&partial)?;
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 1 << 16];
         let mut done = 0u64;
         loop {
-            let n = reader.read(&mut buf)?;
+            let n = match reader.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    drop(out);
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(InstallError::Download(e.to_string()));
+                }
+            };
             if n == 0 {
                 break;
             }
@@ -223,7 +253,7 @@ impl Installer<'_> {
             hasher.update(&buf[..n]);
             out.write_all(&buf[..n])?;
             progress(Progress {
-                stage: Stage::Copying,
+                stage: Stage::Downloading,
                 done,
                 total: artifact.size_bytes,
             });
@@ -260,9 +290,23 @@ impl Installer<'_> {
         fs::create_dir_all(&extract_dir)?;
         self.extract_zip(&partial, &extract_dir, artifact.size_bytes, progress)?;
 
-        // 4. Atomically publish.
+        // 4. Check what was extracted, then atomically publish.
         journal.stage = Stage::Finalizing;
         Self::write_journal(&staging, &journal)?;
+        let exe_rel = safe_relative(&artifact.executable)?;
+        let exe_in_extract = extract_dir.join(&exe_rel);
+        if !fs::symlink_metadata(&exe_in_extract).is_ok_and(|m| m.is_file()) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(InstallError::MissingExecutable);
+        }
+        if artifact.macos_codesign.as_deref() == Some("required") && !codesign_ok(&exe_in_extract) {
+            let quarantine = self.dir("quarantine");
+            fs::create_dir_all(&quarantine)?;
+            let target = quarantine.join(format!("{name}-{}.unsigned", now_unix()));
+            fs::rename(&extract_dir, &target)?;
+            let _ = fs::remove_dir_all(&staging);
+            return Err(InstallError::SignatureCheckFailed);
+        }
         let installed = self.installed_dir(version, &artifact.platform)?;
         fs::create_dir_all(self.dir("installed"))?;
         if installed.exists() {
@@ -278,6 +322,7 @@ impl Installer<'_> {
         Ok(Installed {
             version: version.to_owned(),
             platform: artifact.platform.clone(),
+            executable: installed.join(exe_rel),
             path: installed,
             sha256: digest,
         })
@@ -305,7 +350,7 @@ impl Installer<'_> {
                 .name()
                 .map_err(|e| InstallError::BadArchive(e.to_string()))?
                 .into_owned();
-            if entry.is_symlink() {
+            if entry.is_symlink() && !cfg!(unix) {
                 return Err(InstallError::UnsafeEntry(format!("symbolic link: {name}")));
             }
             safe_relative(&name)?;
@@ -329,12 +374,29 @@ impl Installer<'_> {
                 .into_owned();
             let rel = safe_relative(&name)?;
             let target = dest.join(&rel);
+            // Never create or write anything through a symbolic link created by an earlier entry.
+            no_symlink_ancestors(dest, &rel)?;
+            if entry.is_symlink() {
+                let mut link = String::new();
+                (&mut entry).take(1025).read_to_string(&mut link)?;
+                link_inside(&rel, &link)?;
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                make_symlink(&link, &target)?;
+                continue;
+            }
             if entry.is_dir() {
                 fs::create_dir_all(&target)?;
                 continue;
             }
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            if fs::symlink_metadata(&target).is_ok() {
+                return Err(InstallError::UnsafeEntry(format!(
+                    "duplicate entry: {name}"
+                )));
             }
             let mut out = File::create(&target)?;
             let expected = entry.size();
@@ -408,6 +470,87 @@ impl Installer<'_> {
         out.sort();
         Ok(out)
     }
+}
+
+/// Rejects a path if any existing ancestor below `root` is a symbolic link.
+fn no_symlink_ancestors(root: &Path, rel: &Path) -> Result<(), InstallError> {
+    let mut cur = root.to_path_buf();
+    let parts: Vec<_> = rel.components().collect();
+    for c in parts.iter().take(parts.len().saturating_sub(1)) {
+        cur.push(c);
+        if fs::symlink_metadata(&cur).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(InstallError::UnsafeEntry(format!(
+                "entry below a symbolic link: {}",
+                rel.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A link target must be relative and, resolved from the link's own directory, stay inside the archive root.
+fn link_inside(link_rel: &Path, target: &str) -> Result<(), InstallError> {
+    if target.is_empty() || target.len() > 1024 || target.contains('\\') || target.contains('\0') {
+        return Err(InstallError::UnsafeEntry(format!("link target: {target}")));
+    }
+    let mut depth: i64 = link_rel.components().count() as i64 - 1;
+    for c in Path::new(target).components() {
+        match c {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(InstallError::UnsafeEntry(format!(
+                        "link escapes the runtime: {target}"
+                    )));
+                }
+            }
+            _ => {
+                return Err(InstallError::UnsafeEntry(format!(
+                    "absolute link: {target}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_symlink(target: &str, at: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, at)
+}
+
+#[cfg(not(unix))]
+fn make_symlink(_target: &str, _at: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symbolic links are not accepted on this platform",
+    ))
+}
+
+/// macOS: verifies the app bundle containing `exe` with `codesign --verify --deep --strict`.
+#[cfg(target_os = "macos")]
+fn codesign_ok(exe: &Path) -> bool {
+    let Some(app) = exe
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app"))
+    else {
+        return false;
+    };
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(app)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn codesign_ok(_exe: &Path) -> bool {
+    true // code signatures are a macOS bundle concept; Windows/Linux rely on the pinned digest
 }
 
 /// Accepts only plain relative paths made of normal components.

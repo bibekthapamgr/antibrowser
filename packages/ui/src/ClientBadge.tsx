@@ -21,12 +21,14 @@ export function clientColor(label: string): string {
   return CLIENT_COLORS[hash % CLIENT_COLORS.length] ?? '#7C3AED';
 }
 
-export function ClientBadge({ label }: { label: string }) {
+/** `colour` (a chosen `#rrggbb`) overrides the colour derived from the label. */
+export function ClientBadge({ label, colour }: { label: string; colour?: string | null }) {
   const text = label.trim();
   if (!text) return null;
+  const dot = colour && /^#[0-9a-f]{6}$/i.test(colour) ? colour : clientColor(text);
   return (
     <span className="pb-badge">
-      <span className="pb-badge__dot" style={{ background: clientColor(text) }} aria-hidden="true" />
+      <span className="pb-badge__dot" style={{ background: dot }} aria-hidden="true" />
       {text}
     </span>
   );

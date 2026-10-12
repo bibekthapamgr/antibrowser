@@ -4,8 +4,9 @@
 //! |---------------------|------------------------------------------|
 //! | `operation`         | [`crate::operations::Operation`]          |
 //! | `profiles-changed`  | `{ "running": <count> }`                  |
-//! | `quit-requested`    | `{ "running": <count> }`                  |
+//! | `quit-requested`    | `{ "running": <count>, "unresponsive": <count> }` |
 //! | `deep-link`         | `{ "kind": "auth-callback", "outcome": … }` |
+//! | `warning`           | `{ "code": "LOW_DISK_SPACE", "free_bytes": … }` |
 
 use serde_json::Value;
 use std::sync::Mutex;
@@ -14,6 +15,7 @@ pub const OPERATION: &str = "operation";
 pub const PROFILES_CHANGED: &str = "profiles-changed";
 pub const QUIT_REQUESTED: &str = "quit-requested";
 pub const DEEP_LINK: &str = "deep-link";
+pub const WARNING: &str = "warning";
 
 pub trait EventSink: Send + Sync {
     fn emit_json(&self, event: &str, payload: Value);

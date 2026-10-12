@@ -24,6 +24,10 @@
     "allow-recovery-action",
     "allow-resolve-quit",
     "allow-open-external",
-    "allow-remove-local-data"
+    "allow-remove-local-data",
+    "allow-get-profile-status",
+    "allow-recover-profile",
+    "allow-install-runtime",
+    "allow-select-profile-download-directory"
   ]
 }

@@ -177,6 +177,7 @@
               "crash_reports",
               "adopted_profiles",
               "cleared_stale_processes",
+              "interrupted_profiles",
               "interrupted_installs"
             ],
             "properties": {
@@ -190,6 +191,9 @@
                 "type": "integer"
               },
               "cleared_stale_processes": {
+                "type": "integer"
+              },
+              "interrupted_profiles": {
                 "type": "integer"
               },
               "interrupted_installs": {
@@ -308,13 +312,27 @@
             "workspace_id",
             "name",
             "client_label",
+            "client_colour",
             "notes",
             "version",
             "created_at",
             "updated_at",
             "status",
+            "state",
             "pid",
-            "adopted"
+            "adopted",
+            "ready",
+            "window_open",
+            "force_available",
+            "start_urls",
+            "download_dir",
+            "permissions",
+            "runtime_version",
+            "last_error",
+            "crash_count",
+            "last_started_at",
+            "last_clean_shutdown_at",
+            "last_backup_at"
           ],
           "properties": {
             "id": {
@@ -348,6 +366,17 @@
                 }
               ]
             },
+            "client_colour": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^#[0-9a-f]{6}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "notes": {
               "type": "string",
               "maxLength": 2000
@@ -365,8 +394,21 @@
             "status": {
               "enum": [
                 "closed",
+                "starting",
                 "running",
-                "stopping"
+                "stopping",
+                "crashed",
+                "recovering"
+              ]
+            },
+            "state": {
+              "enum": [
+                "stopped",
+                "starting",
+                "running",
+                "stopping",
+                "crashed",
+                "recovering"
               ]
             },
             "pid": {
@@ -382,10 +424,127 @@
             "adopted": {
               "type": "boolean",
               "description": "Running since before this manager instance started."
+            },
+            "ready": {
+              "type": "boolean",
+              "description": "The browser has started its helper processes."
+            },
+            "window_open": {
+              "type": "boolean",
+              "description": "At least one page (renderer) is open."
+            },
+            "force_available": {
+              "type": "boolean",
+              "description": "Graceful close timed out; an explicit force close is offered."
+            },
+            "start_urls": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 2048,
+                "pattern": "^https?://"
+              },
+              "maxItems": 10
+            },
+            "download_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "permissions": {
+              "type": "object",
+              "required": [
+                "camera",
+                "microphone",
+                "location"
+              ],
+              "properties": {
+                "camera": {
+                  "enum": [
+                    "ask",
+                    "block",
+                    "allow"
+                  ]
+                },
+                "microphone": {
+                  "enum": [
+                    "ask",
+                    "block",
+                    "allow"
+                  ]
+                },
+                "location": {
+                  "enum": [
+                    "ask",
+                    "block",
+                    "allow"
+                  ]
+                }
+              }
+            },
+            "runtime_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_error": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "crash_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_started_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_clean_shutdown_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_backup_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
-        "maxItems": 100
+        "maxItems": 10000
       }
     },
     "create_profile": {
@@ -414,13 +573,27 @@
           "workspace_id",
           "name",
           "client_label",
+          "client_colour",
           "notes",
           "version",
           "created_at",
           "updated_at",
           "status",
+          "state",
           "pid",
-          "adopted"
+          "adopted",
+          "ready",
+          "window_open",
+          "force_available",
+          "start_urls",
+          "download_dir",
+          "permissions",
+          "runtime_version",
+          "last_error",
+          "crash_count",
+          "last_started_at",
+          "last_clean_shutdown_at",
+          "last_backup_at"
         ],
         "properties": {
           "id": {
@@ -454,6 +627,17 @@
               }
             ]
           },
+          "client_colour": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9a-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "notes": {
             "type": "string",
             "maxLength": 2000
@@ -471,8 +655,21 @@
           "status": {
             "enum": [
               "closed",
+              "starting",
               "running",
-              "stopping"
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "state": {
+            "enum": [
+              "stopped",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
             ]
           },
           "pid": {
@@ -488,6 +685,123 @@
           "adopted": {
             "type": "boolean",
             "description": "Running since before this manager instance started."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The browser has started its helper processes."
+          },
+          "window_open": {
+            "type": "boolean",
+            "description": "At least one page (renderer) is open."
+          },
+          "force_available": {
+            "type": "boolean",
+            "description": "Graceful close timed out; an explicit force close is offered."
+          },
+          "start_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "maxItems": 10
+          },
+          "download_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "type": "object",
+            "required": [
+              "camera",
+              "microphone",
+              "location"
+            ],
+            "properties": {
+              "camera": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "microphone": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "location": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              }
+            }
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "crash_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_clean_shutdown_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_backup_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -524,6 +838,46 @@
           "notes": {
             "type": "string",
             "maxLength": 2000
+          },
+          "clientColour": {
+            "type": "string",
+            "pattern": "^#[0-9a-f]{6}$"
+          },
+          "clearClientColour": {
+            "type": "boolean"
+          },
+          "startUrls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "maxItems": 10
+          },
+          "clearDownloadDir": {
+            "type": "boolean"
+          },
+          "camera": {
+            "enum": [
+              "ask",
+              "block",
+              "allow"
+            ]
+          },
+          "microphone": {
+            "enum": [
+              "ask",
+              "block",
+              "allow"
+            ]
+          },
+          "location": {
+            "enum": [
+              "ask",
+              "block",
+              "allow"
+            ]
           }
         }
       },
@@ -534,13 +888,27 @@
           "workspace_id",
           "name",
           "client_label",
+          "client_colour",
           "notes",
           "version",
           "created_at",
           "updated_at",
           "status",
+          "state",
           "pid",
-          "adopted"
+          "adopted",
+          "ready",
+          "window_open",
+          "force_available",
+          "start_urls",
+          "download_dir",
+          "permissions",
+          "runtime_version",
+          "last_error",
+          "crash_count",
+          "last_started_at",
+          "last_clean_shutdown_at",
+          "last_backup_at"
         ],
         "properties": {
           "id": {
@@ -574,6 +942,17 @@
               }
             ]
           },
+          "client_colour": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9a-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "notes": {
             "type": "string",
             "maxLength": 2000
@@ -591,8 +970,21 @@
           "status": {
             "enum": [
               "closed",
+              "starting",
               "running",
-              "stopping"
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "state": {
+            "enum": [
+              "stopped",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
             ]
           },
           "pid": {
@@ -608,6 +1000,123 @@
           "adopted": {
             "type": "boolean",
             "description": "Running since before this manager instance started."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The browser has started its helper processes."
+          },
+          "window_open": {
+            "type": "boolean",
+            "description": "At least one page (renderer) is open."
+          },
+          "force_available": {
+            "type": "boolean",
+            "description": "Graceful close timed out; an explicit force close is offered."
+          },
+          "start_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "maxItems": 10
+          },
+          "download_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "type": "object",
+            "required": [
+              "camera",
+              "microphone",
+              "location"
+            ],
+            "properties": {
+              "camera": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "microphone": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "location": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              }
+            }
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "crash_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_clean_shutdown_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_backup_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -652,6 +1161,10 @@
           "profileId": {
             "type": "string",
             "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Explicit force close, offered after a graceful timeout."
           }
         }
       },
@@ -670,7 +1183,11 @@
     "close_all_profiles": {
       "args": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
       },
       "result": {
         "type": "object",
@@ -680,6 +1197,521 @@
         "properties": {
           "operation_id": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "get_profile_status": {
+      "args": {
+        "type": "object",
+        "required": [
+          "profileId"
+        ],
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "profile",
+          "runs",
+          "backup",
+          "evidence_count",
+          "suggested_recovery"
+        ],
+        "properties": {
+          "profile": {
+            "type": "object",
+            "required": [
+              "id",
+              "workspace_id",
+              "name",
+              "client_label",
+              "client_colour",
+              "notes",
+              "version",
+              "created_at",
+              "updated_at",
+              "status",
+              "state",
+              "pid",
+              "adopted",
+              "ready",
+              "window_open",
+              "force_available",
+              "start_urls",
+              "download_dir",
+              "permissions",
+              "runtime_version",
+              "last_error",
+              "crash_count",
+              "last_started_at",
+              "last_clean_shutdown_at",
+              "last_backup_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "workspace_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "client_label": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "client_colour": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^#[0-9a-f]{6}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "closed",
+                  "starting",
+                  "running",
+                  "stopping",
+                  "crashed",
+                  "recovering"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "stopped",
+                  "starting",
+                  "running",
+                  "stopping",
+                  "crashed",
+                  "recovering"
+                ]
+              },
+              "pid": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "adopted": {
+                "type": "boolean",
+                "description": "Running since before this manager instance started."
+              },
+              "ready": {
+                "type": "boolean",
+                "description": "The browser has started its helper processes."
+              },
+              "window_open": {
+                "type": "boolean",
+                "description": "At least one page (renderer) is open."
+              },
+              "force_available": {
+                "type": "boolean",
+                "description": "Graceful close timed out; an explicit force close is offered."
+              },
+              "start_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 2048,
+                  "pattern": "^https?://"
+                },
+                "maxItems": 10
+              },
+              "download_dir": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "permissions": {
+                "type": "object",
+                "required": [
+                  "camera",
+                  "microphone",
+                  "location"
+                ],
+                "properties": {
+                  "camera": {
+                    "enum": [
+                      "ask",
+                      "block",
+                      "allow"
+                    ]
+                  },
+                  "microphone": {
+                    "enum": [
+                      "ask",
+                      "block",
+                      "allow"
+                    ]
+                  },
+                  "location": {
+                    "enum": [
+                      "ask",
+                      "block",
+                      "allow"
+                    ]
+                  }
+                }
+              },
+              "runtime_version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "crash_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_started_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_clean_shutdown_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_backup_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "run_id",
+                "profile_id",
+                "pid",
+                "identity",
+                "runtime_version",
+                "exit_code",
+                "outcome",
+                "started_at",
+                "ended_at"
+              ],
+              "properties": {
+                "run_id": {
+                  "type": "string",
+                  "pattern": "^run_[0-9a-f]{24}$"
+                },
+                "profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "pid": {
+                  "type": "integer"
+                },
+                "identity": {
+                  "type": "object",
+                  "required": [
+                    "start_time",
+                    "exe"
+                  ],
+                  "properties": {
+                    "start_time": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "exe": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "runtime_version": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "exit_code": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outcome": {
+                  "enum": [
+                    "running",
+                    "clean",
+                    "crashed",
+                    "early_exit",
+                    "forced",
+                    "interrupted",
+                    "lost"
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "ended_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "maxItems": 5
+          },
+          "backup": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "created_at_unix",
+                  "runtime_version",
+                  "bytes",
+                  "files"
+                ],
+                "properties": {
+                  "created_at_unix": {
+                    "type": "integer"
+                  },
+                  "runtime_version": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "bytes": {
+                    "type": "integer"
+                  },
+                  "files": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_count": {
+            "type": "integer"
+          },
+          "suggested_recovery": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reopen",
+                  "restore_backup",
+                  "start_fresh"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "recover_profile": {
+      "args": {
+        "type": "object",
+        "required": [
+          "profileId",
+          "action"
+        ],
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "action": {
+            "enum": [
+              "reopen",
+              "restore_backup",
+              "start_fresh",
+              "backup_now"
+            ]
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "install_runtime": {
+      "args": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[0-9]+(\\.[0-9]+){3}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "select_profile_download_directory": {
+      "args": {
+        "type": "object",
+        "required": [
+          "profileId"
+        ],
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -706,7 +1738,11 @@
             "required": [
               "configured",
               "source",
-              "revision"
+              "version",
+              "error",
+              "manifest_status",
+              "manifest",
+              "installing"
             ],
             "properties": {
               "configured": {
@@ -714,11 +1750,12 @@
               },
               "source": {
                 "enum": [
+                  "manifest",
                   "development_override",
                   "none"
                 ]
               },
-              "revision": {
+              "version": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -727,6 +1764,112 @@
                     "type": "null"
                   }
                 ]
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "manifest_status": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "status",
+                      "version"
+                    ],
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "status"
+                    ],
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "missing"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "status",
+                      "reason"
+                    ],
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "invalid"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "manifest": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "version",
+                      "channel",
+                      "distribution",
+                      "customer_distribution",
+                      "platform_supported",
+                      "size_bytes"
+                    ],
+                    "properties": {
+                      "version": {
+                        "type": "string"
+                      },
+                      "channel": {
+                        "type": "string"
+                      },
+                      "distribution": {
+                        "type": "string"
+                      },
+                      "customer_distribution": {
+                        "type": "boolean"
+                      },
+                      "platform_supported": {
+                        "type": "boolean"
+                      },
+                      "size_bytes": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "installing": {
+                "type": "boolean"
               }
             }
           },
@@ -740,7 +1883,9 @@
                 "digest",
                 "verified_at",
                 "path",
-                "status"
+                "status",
+                "distribution",
+                "executable"
               ],
               "properties": {
                 "version": {
@@ -774,6 +1919,26 @@
                     "removed",
                     "dev"
                   ]
+                },
+                "distribution": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "executable": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             }
@@ -793,6 +1958,7 @@
                 "stage": {
                   "enum": [
                     "copying",
+                    "downloading",
                     "verifying",
                     "extracting",
                     "finalizing"
@@ -810,21 +1976,62 @@
               "type": "object",
               "required": [
                 "profile_id",
+                "run_id",
                 "pid",
+                "state",
                 "adopted",
-                "stopping"
+                "ready",
+                "window_open",
+                "helpers",
+                "force_available"
               ],
               "properties": {
                 "profile_id": {
                   "type": "string"
                 },
+                "run_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "pid": {
-                  "type": "integer"
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "stopped",
+                    "starting",
+                    "running",
+                    "stopping",
+                    "crashed",
+                    "recovering"
+                  ]
                 },
                 "adopted": {
                   "type": "boolean"
                 },
-                "stopping": {
+                "ready": {
+                  "type": "boolean"
+                },
+                "window_open": {
+                  "type": "boolean"
+                },
+                "helpers": {
+                  "type": "integer"
+                },
+                "force_available": {
                   "type": "boolean"
                 }
               }
@@ -853,7 +2060,10 @@
                     "launch_profile",
                     "stop_profile",
                     "close_all",
-                    "verify_runtime"
+                    "verify_runtime",
+                    "install_runtime",
+                    "recover_profile",
+                    "backup_profile"
                   ]
                 },
                 "status": {
@@ -1090,7 +2300,8 @@
             "enum": [
               "cancel",
               "leave_running",
-              "close_all"
+              "close_all",
+              "force_close_all"
             ]
           }
         }
@@ -1157,7 +2368,10 @@
             "launch_profile",
             "stop_profile",
             "close_all",
-            "verify_runtime"
+            "verify_runtime",
+            "install_runtime",
+            "recover_profile",
+            "backup_profile"
           ]
         },
         "status": {
@@ -1225,10 +2439,14 @@
     "quit-requested": {
       "type": "object",
       "required": [
-        "running"
+        "running",
+        "unresponsive"
       ],
       "properties": {
         "running": {
+          "type": "integer"
+        },
+        "unresponsive": {
           "type": "integer"
         }
       }
@@ -1245,6 +2463,22 @@
           "const": "auth-callback"
         },
         "outcome": {}
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "code",
+        "free_bytes"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "const": "LOW_DISK_SPACE"
+        },
+        "free_bytes": {
+          "type": "integer"
+        }
       }
     }
   }

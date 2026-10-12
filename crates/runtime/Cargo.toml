@@ -1,7 +1,7 @@
 [package]
 name = "pb-runtime"
 version = "0.1.0"
-description = "Browser runtime: profile identity, directory layout and validated Chromium launch specs"
+description = "Browser runtime: profile identity, layout, launch specs, run states, locks, process trees, prefs, backups"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,12 +9,12 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 getrandom.workspace = true
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

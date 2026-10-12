@@ -6,8 +6,9 @@
 //! Long work returns an `operation_id`; progress arrives as events (see `events.rs`).
 
 use crate::ipc::{self, IpcError};
+use crate::lifecycle::ProfileStatus;
 use crate::operations::Started;
-use crate::state::{AppState, AppView, ProfileView, RuntimeStatus};
+use crate::state::{AppState, AppView, ProfileChanges, ProfileView, RuntimeStatus};
 use pb_runtime::ProfileId;
 use pb_storage::Workspace;
 use pb_storage::settings::SettingValue;
@@ -77,6 +78,8 @@ pub fn create_profile<Rt: Runtime>(
     state.create_profile(&name, client_label.as_deref())
 }
 
+/// Profile settings. Start URLs, colour and permission defaults are validated in Rust; the download folder is set
+/// only through the native picker (`select_profile_download_directory`).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn update_profile<Rt: Runtime>(
@@ -88,15 +91,31 @@ pub fn update_profile<Rt: Runtime>(
     client_label: Option<String>,
     clear_client_label: Option<bool>,
     notes: Option<String>,
+    client_colour: Option<String>,
+    clear_client_colour: Option<bool>,
+    start_urls: Option<Vec<String>>,
+    clear_download_dir: Option<bool>,
+    camera: Option<String>,
+    microphone: Option<String>,
+    location: Option<String>,
 ) -> R<ProfileView> {
     caller(&webview)?;
     state.update_profile(
         &profile_id,
         expected_version,
-        name.as_deref(),
-        client_label.as_deref(),
-        clear_client_label.unwrap_or(false),
-        notes.as_deref(),
+        ProfileChanges {
+            name: name.as_deref(),
+            client_label: client_label.as_deref(),
+            clear_client_label: clear_client_label.unwrap_or(false),
+            notes: notes.as_deref(),
+            client_colour: client_colour.as_deref(),
+            clear_client_colour: clear_client_colour.unwrap_or(false),
+            start_urls: start_urls.as_deref(),
+            clear_download_dir: clear_download_dir.unwrap_or(false),
+            camera: camera.as_deref(),
+            microphone: microphone.as_deref(),
+            location: location.as_deref(),
+        },
     )
 }
 
@@ -112,20 +131,62 @@ pub fn launch_profile<Rt: Runtime>(
     state.launch_profile(&profile_id, start_url.as_deref())
 }
 
+/// Graceful close; `force: true` is the explicit force close offered after a graceful close timed out.
 #[tauri::command]
 pub fn stop_profile<Rt: Runtime>(
     webview: Webview<Rt>,
     state: S<'_>,
     profile_id: ProfileId,
+    force: Option<bool>,
 ) -> R<Started> {
     caller(&webview)?;
-    state.stop_profile(&profile_id)
+    state.stop_profile(&profile_id, force.unwrap_or(false))
 }
 
 #[tauri::command]
-pub fn close_all_profiles<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<Started> {
+pub fn close_all_profiles<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    force: Option<bool>,
+) -> R<Started> {
     caller(&webview)?;
-    state.close_all(None)
+    state.close_all(force.unwrap_or(false), None)
+}
+
+#[tauri::command]
+pub fn get_profile_status<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<ProfileStatus> {
+    caller(&webview)?;
+    state.profile_status(&profile_id)
+}
+
+/// `reopen`, `restore_backup`, `start_fresh` or `backup_now` (see `AppState::recover_profile`).
+#[tauri::command]
+pub fn recover_profile<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    action: String,
+) -> R<Started> {
+    caller(&webview)?;
+    state.recover_profile(&profile_id, &action)
+}
+
+/// Installs the runtime version pinned in this build's signed manifest. Any other version is refused.
+#[tauri::command]
+pub fn install_runtime<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    version: String,
+) -> R<Started> {
+    caller(&webview)?;
+    if version.len() > 32 {
+        return Err(ipc::RUNTIME_NOT_IN_MANIFEST);
+    }
+    state.install_runtime(&version)
 }
 
 #[tauri::command]
@@ -157,6 +218,28 @@ pub async fn select_download_directory<Rt: Runtime>(
     let state = app.state::<Arc<AppState>>();
     Ok(ChosenPath {
         path: Some(state.set_download_directory(&chosen)?),
+    })
+}
+
+/// Native folder picker for one profile's downloads.
+#[tauri::command]
+pub async fn select_profile_download_directory<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    profile_id: ProfileId,
+) -> R<ChosenPath> {
+    caller(&webview)?;
+    let picker = app.clone();
+    let chosen =
+        tauri::async_runtime::spawn_blocking(move || picker.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|_| ipc::INTERNAL)?;
+    let Some(chosen) = chosen.and_then(|p| p.into_path().ok()) else {
+        return Ok(ChosenPath { path: None });
+    };
+    let state = app.state::<Arc<AppState>>();
+    Ok(ChosenPath {
+        path: Some(state.set_profile_download_directory(&profile_id, &chosen)?),
     })
 }
 
@@ -224,7 +307,8 @@ pub fn recovery_action<Rt: Runtime>(
 }
 
 /// Answer to the quit prompt: `cancel`, `leave_running` (quit; profiles keep running and are re-attached at next
-/// start) or `close_all` (close every profile gracefully, then quit).
+/// start), `close_all` (close every profile gracefully, then quit) or `force_close_all` (offered after profiles did
+/// not respond: force-close those, then quit).
 #[tauri::command]
 pub fn resolve_quit<Rt: Runtime>(
     app: AppHandle<Rt>,
@@ -239,10 +323,13 @@ pub fn resolve_quit<Rt: Runtime>(
             app.exit(0);
             Ok(())
         }
-        "close_all" => {
+        "close_all" | "force_close_all" => {
             let handle = app.clone();
             state
-                .close_all(Some(Box::new(move || handle.exit(0))))
+                .close_all(
+                    choice == "force_close_all",
+                    Some(Box::new(move || handle.exit(0))),
+                )
                 .map(|_| ())
         }
         _ => Err(ipc::INVALID_ARGUMENT),

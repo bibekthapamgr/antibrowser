@@ -43,13 +43,12 @@ describe('IPC surface', () => {
     expect(names).toEqual(contract);
   });
 
-  it('declares the four UI events', () => {
-    expect(Object.keys(EVENTS).sort()).toEqual([
-      'deep-link',
-      'operation',
-      'profiles-changed',
-      'quit-requested',
-    ]);
+  it('declares the same UI events as the Rust shell emits', () => {
+    const rust = [...read('src/events.rs').matchAll(/pub const [A-Z_]+: &str = "([a-z-]+)";/g)]
+      .map((m) => m[1])
+      .sort();
+    expect(Object.keys(EVENTS).sort()).toEqual(rust);
+    expect(rust).toEqual(['deep-link', 'operation', 'profiles-changed', 'quit-requested', 'warning']);
   });
 });
 

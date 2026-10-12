@@ -14,6 +14,9 @@ pub enum OpKind {
     StopProfile,
     CloseAll,
     VerifyRuntime,
+    InstallRuntime,
+    RecoverProfile,
+    BackupProfile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -76,18 +79,24 @@ impl Operations {
         self.update(id, |op| op.progress = Some(value.clamp(0.0, 1.0)));
     }
 
+    /// Marks a running operation as succeeded (no effect once it has finished).
     pub fn succeed(&self, id: &str) {
         self.update(id, |op| {
-            op.status = OpStatus::Succeeded;
-            op.progress = Some(1.0);
+            if op.status == OpStatus::Running {
+                op.status = OpStatus::Succeeded;
+                op.progress = Some(1.0);
+            }
         });
     }
 
+    /// Marks a running operation as failed (no effect once it has finished).
     pub fn fail(&self, id: &str, code: &'static str, message: &'static str) {
         self.update(id, |op| {
-            op.status = OpStatus::Failed;
-            op.error_code = Some(code);
-            op.message = Some(message);
+            if op.status == OpStatus::Running {
+                op.status = OpStatus::Failed;
+                op.error_code = Some(code);
+                op.message = Some(message);
+            }
         });
     }
 

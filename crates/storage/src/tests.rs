@@ -1,4 +1,5 @@
 use super::*;
+use pb_runtime::{PermissionDefault, RunState};
 use serde_json::json;
 
 fn id(n: u32) -> ProfileId {
@@ -56,16 +57,34 @@ fn wal_foreign_keys_search_and_process_tracking() -> Result<(), StoreError> {
     );
     assert_eq!(store.profile_count(Some(&ws.id))?, 2);
 
-    store.record_process(&a, 4242, Some(1_700_000_000), Some("/opt/rt/chromium"))?;
-    assert_eq!(
-        store.get_profile(&a)?.and_then(|p| p.running_pid),
-        Some(4242)
+    let identity = runs::StartIdentity {
+        start_time: Some(1_700_000_000),
+        exe: Some("/opt/rt/chromium".into()),
+    };
+    let run = store.begin_run(&a, 4242, &identity, Some("155.0.1.2"), RunState::Starting)?;
+    let p = store.get_profile(&a)?.ok_or(StoreError::NotFound)?;
+    assert_eq!((p.running_pid, p.state), (Some(4242), RunState::Starting));
+    assert_eq!(p.active_run_id.as_deref(), Some(run.as_str()));
+    assert_eq!(p.runtime_version.as_deref(), Some("155.0.1.2"));
+    let active = store.active_runs()?;
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].identity, identity);
+    assert!(
+        store
+            .begin_run(&a, 4243, &identity, None, RunState::Starting)
+            .is_err(),
+        "at most one active run per profile"
     );
-    let tracked = store.list_processes()?;
-    assert_eq!(tracked.len(), 1);
-    assert_eq!(tracked[0].process_start_time, Some(1_700_000_000));
-    store.clear_process(&a)?;
-    assert_eq!(store.get_profile(&a)?.and_then(|p| p.running_pid), None);
+    store.end_run(
+        &run,
+        runs::RunOutcome::Clean,
+        Some(0),
+        RunState::Stopped,
+        None,
+    )?;
+    let p = store.get_profile(&a)?.ok_or(StoreError::NotFound)?;
+    assert_eq!((p.running_pid, p.state), (None, RunState::Stopped));
+    assert!(p.last_clean_shutdown_at.is_some());
     Ok(())
 }
 
@@ -106,6 +125,7 @@ fn profile_update_uses_versions() -> Result<(), StoreError> {
             name: Some("New"),
             client_label: Some(None),
             notes: Some("hello"),
+            ..ProfileUpdate::default()
         },
         1,
     )?;
@@ -188,7 +208,7 @@ fn upgrade_from_v1_backs_up_and_moves_profiles_into_a_workspace() -> Result<(), 
     let path = dir.path().join("local.db");
     make_v1(&path)?;
     let store = LocalStore::open(&path)?;
-    assert_eq!(store.schema_version()?, 2);
+    assert_eq!(store.schema_version()?, SCHEMA_VERSION);
     assert!(
         dir.path().join("local.db.v1.bak").is_file(),
         "backup written before upgrading"
@@ -238,7 +258,7 @@ fn failed_migration_keeps_the_previous_database_and_can_recover() -> Result<(), 
 
     // Recovery action 1: retry succeeds once the cause is gone.
     let store = LocalStore::open(&path)?;
-    assert_eq!(store.schema_version()?, 2);
+    assert_eq!(store.schema_version()?, SCHEMA_VERSION);
     drop(store);
 
     // Recovery action 2: restoring the pre-upgrade backup returns to the exact v1 state.
@@ -295,6 +315,8 @@ fn runtimes_and_timings() -> Result<(), StoreError> {
         verified_at: None,
         path: "/x".into(),
         status: "quarantined".into(),
+        distribution: Some("chrome-for-testing".into()),
+        executable: Some("chrome/chrome".into()),
     })?;
     assert_eq!(store.list_runtimes()?[0].status, "quarantined");
     for ms in [10.0, 20.0, 30.0, 40.0, 1000.0] {
@@ -330,5 +352,170 @@ fn auth_transactions_are_one_time() -> Result<(), StoreError> {
         store.consume_auth_transaction("expired-state-000000000")?,
         Err(AuthTxError::Expired)
     );
+    Ok(())
+}
+
+/// A v2 database (milestone 02) with a tracked running browser upgrades to v3 with an active run.
+#[test]
+fn upgrade_from_v2_converts_tracked_processes_into_runs() -> Result<(), StoreError> {
+    let dir = tmp();
+    let path = dir.path().join("local.db");
+    {
+        let mut conn = Connection::open(&path)?;
+        let tx = conn.transaction()?;
+        (migrations::MIGRATIONS[0].2)(&tx)?;
+        (migrations::MIGRATIONS[1].2)(&tx)?;
+        tx.execute(
+            "insert into workspaces (id, name) values ('wsp_01J9ZSEED0A010000000000000', 'W')",
+            [],
+        )?;
+        tx.execute(
+            "insert into profiles (id, workspace_id, name, search_text)
+             values ('prf_01J9ZSEED0A010000000000000', 'wsp_01J9ZSEED0A010000000000000', 'Legacy', 'legacy')",
+            [],
+        )?;
+        tx.execute(
+            "insert into processes (profile_id, pid, process_start_time, executable)
+             values ('prf_01J9ZSEED0A010000000000000', 777, 1700000000, '/rt/chrome')",
+            [],
+        )?;
+        tx.pragma_update(None, "user_version", 2)?;
+        tx.commit()?;
+    }
+    let store = LocalStore::open(&path)?;
+    assert!(dir.path().join("local.db.v2.bak").is_file());
+    let runs = store.active_runs()?;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].pid, 777);
+    assert_eq!(runs[0].identity.start_time, Some(1_700_000_000));
+    let p = store
+        .get_profile(&runs[0].profile_id)?
+        .ok_or(StoreError::NotFound)?;
+    assert_eq!(p.state, RunState::Running);
+    assert_eq!(p.data_dir_ref, p.id.as_str());
+    assert_eq!(p.camera, PermissionDefault::Ask);
+    assert!(p.start_urls.is_empty());
+    Ok(())
+}
+
+fn store_with_profile() -> Result<(tempfile::TempDir, LocalStore, ProfileId), StoreError> {
+    let dir = tmp();
+    let store = LocalStore::open(&dir.path().join("local.db"))?;
+    let ws = store.create_workspace("W")?;
+    let p = id(5);
+    store.insert_profile(NewProfile {
+        id: &p,
+        workspace_id: Some(&ws.id),
+        name: "P",
+        client_label: None,
+        folder_label: None,
+    })?;
+    Ok((dir, store, p))
+}
+
+#[test]
+fn profile_settings_are_typed_and_versioned() -> Result<(), StoreError> {
+    let (_d, store, p) = store_with_profile()?;
+    let urls = vec![
+        "https://a.test/".to_string(),
+        "https://b.test/x".to_string(),
+    ];
+    let updated = store.update_profile(
+        &p,
+        ProfileUpdate {
+            client_colour: Some(Some("#7c3aed")),
+            start_urls: Some(&urls),
+            download_dir: Some(Some("/downloads/a")),
+            camera: Some(PermissionDefault::Block),
+            location: Some(PermissionDefault::Allow),
+            ..ProfileUpdate::default()
+        },
+        1,
+    )?;
+    assert_eq!(updated.client_colour.as_deref(), Some("#7c3aed"));
+    assert_eq!(updated.start_urls, urls);
+    assert_eq!(updated.camera, PermissionDefault::Block);
+    assert_eq!(updated.microphone, PermissionDefault::Ask);
+    assert_eq!(updated.version, 2);
+    // The database itself rejects malformed colours.
+    assert!(
+        store
+            .update_profile(
+                &p,
+                ProfileUpdate {
+                    client_colour: Some(Some("red")),
+                    ..ProfileUpdate::default()
+                },
+                2,
+            )
+            .is_err()
+    );
+    let cleared = store.update_profile(
+        &p,
+        ProfileUpdate {
+            client_colour: Some(None),
+            download_dir: Some(None),
+            ..ProfileUpdate::default()
+        },
+        2,
+    )?;
+    assert_eq!((cleared.client_colour, cleared.download_dir), (None, None));
+    Ok(())
+}
+
+#[test]
+fn crash_counter_and_audit_log() -> Result<(), StoreError> {
+    let (_d, store, p) = store_with_profile()?;
+    let ident = runs::StartIdentity::default();
+    for _ in 0..2 {
+        let run = store.begin_run(&p, 1, &ident, None, RunState::Starting)?;
+        store.end_run(
+            &run,
+            runs::RunOutcome::Crashed,
+            Some(-11),
+            RunState::Crashed,
+            Some("CRASHED"),
+        )?;
+    }
+    let crashed = store.get_profile(&p)?.ok_or(StoreError::NotFound)?;
+    assert_eq!((crashed.crash_count, crashed.state), (2, RunState::Crashed));
+    assert_eq!(crashed.last_error.as_deref(), Some("CRASHED"));
+    let run = store.begin_run(&p, 2, &ident, None, RunState::Starting)?;
+    assert_eq!(
+        store.get_profile(&p)?.and_then(|x| x.last_error),
+        None,
+        "a new start clears the error"
+    );
+    store.end_run(
+        &run,
+        runs::RunOutcome::Clean,
+        Some(0),
+        RunState::Stopped,
+        None,
+    )?;
+    store.end_run(
+        &run,
+        runs::RunOutcome::Crashed,
+        None,
+        RunState::Crashed,
+        None,
+    )?;
+    let p2 = store.get_profile(&p)?.ok_or(StoreError::NotFound)?;
+    assert_eq!(
+        (p2.crash_count, p2.state),
+        (0, RunState::Stopped),
+        "ending twice is a no-op"
+    );
+    assert_eq!(store.runs_for(&p, 10)?.len(), 3);
+
+    store.audit(Some(&p), "start", "ok", Some(&run), None)?;
+    store.audit(Some(&p), "crash", "crashed", None, Some("EXITED_EARLY"))?;
+    assert!(
+        store.audit(Some(&p), "visit", "ok", None, None).is_err(),
+        "unknown actions rejected"
+    );
+    let log = store.list_audit(Some(&p), 10)?;
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].action, "crash");
     Ok(())
 }

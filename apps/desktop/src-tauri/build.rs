@@ -20,6 +20,10 @@ const COMMANDS: &[&str] = &[
     "resolve_quit",
     "open_external",
     "remove_local_data",
+    "get_profile_status",
+    "recover_profile",
+    "install_runtime",
+    "select_profile_download_directory",
 ];
 
 fn main() {

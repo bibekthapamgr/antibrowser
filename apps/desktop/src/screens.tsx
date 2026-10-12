@@ -1,6 +1,14 @@
 import { ClientBadge } from '@pb/ui';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import type { AppView, Backend, ProfileView, RuntimeStatus, SettingValue } from './backend/types.ts';
+import type {
+  AppView,
+  Backend,
+  Permission,
+  ProfileStatus,
+  ProfileView,
+  RuntimeStatus,
+  SettingValue,
+} from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { Cell, Dialog, formatBytes, useDebounced, useElementHeight, VirtualList } from './components.tsx';
 
@@ -134,13 +142,17 @@ export function ProfilesScreen(props: {
   }, [backend, debounced, props.refreshKey, notify]);
 
   const toggle = async (p: ProfileView) => {
+    const action = primaryAction(p);
     try {
-      if (p.status === 'closed') {
+      if (action === 'open') {
         await backend.profiles.launch(p.id);
         notify(`Opening ${p.name}…`);
-      } else {
+      } else if (action === 'close') {
         await backend.profiles.stop(p.id);
         notify(`Closing ${p.name}…`);
+      } else if (action === 'force') {
+        await backend.profiles.stop(p.id, true);
+        notify(`Force closing ${p.name}…`);
       }
     } catch (e) {
       notify(errorMessage(e), 'error');
@@ -226,7 +238,7 @@ export function ProfilesScreen(props: {
                   <Cell className="trow__name">{p.name}</Cell>
                   <Cell>
                     {p.client_label ? (
-                      <ClientBadge label={p.client_label} />
+                      <ClientBadge label={p.client_label} colour={p.client_colour} />
                     ) : (
                       <span className="muted">—</span>
                     )}
@@ -239,13 +251,14 @@ export function ProfilesScreen(props: {
                       type="button"
                       tabIndex={-1}
                       className="pb-button"
-                      disabled={p.status === 'stopping'}
+                      data-variant={primaryAction(p) === 'force' ? 'danger' : undefined}
+                      disabled={primaryAction(p) === 'wait'}
                       onClick={(e) => {
                         e.stopPropagation();
                         void toggle(p);
                       }}
                     >
-                      {p.status === 'closed' ? 'Open' : 'Close'}
+                      {ACTION_LABEL[primaryAction(p)]}
                       <span className="pb-sr-only"> {p.name}</span>
                     </button>
                   </Cell>
@@ -261,6 +274,7 @@ export function ProfilesScreen(props: {
           key={selected.id}
           backend={backend}
           profile={selected}
+          refreshKey={props.refreshKey}
           notify={notify}
           onToggle={toggle}
           onSaved={(p) => {
@@ -285,14 +299,65 @@ export function ProfilesScreen(props: {
   );
 }
 
+type Action = 'open' | 'close' | 'force' | 'wait';
+const ACTION_LABEL: Record<Action, string> = {
+  open: 'Open',
+  close: 'Close',
+  force: 'Force close',
+  wait: 'Wait…',
+};
+
+function primaryAction(p: ProfileView): Action {
+  switch (p.state) {
+    case 'stopped':
+    case 'crashed':
+      return 'open';
+    case 'starting':
+    case 'running':
+      return 'close';
+    case 'stopping':
+      return p.force_available ? 'force' : 'wait';
+    default:
+      return 'wait';
+  }
+}
+
+/** Plain-language text for the machine codes stored in `last_error` (never shown raw). */
+export const LAST_ERROR: Record<string, string> = {
+  CRASHED: 'The browser closed unexpectedly.',
+  EXITED_EARLY: 'The browser closed right after starting.',
+  START_INTERRUPTED: 'The last start was interrupted because the manager closed. Open it again.',
+  CRASHED_WHILE_MANAGER_CLOSED: 'The browser closed unexpectedly while the manager was closed.',
+  RECOVERY_INTERRUPTED: 'A recovery was interrupted. Run it again.',
+  PROFILE_DATA_UNREADABLE: 'This profile’s browser data looks damaged.',
+  SLOW_START: 'The browser took unusually long to start.',
+  LOW_DISK_SPACE: 'There was not enough free disk space.',
+  BACKUP_FAILED: 'A safety copy could not be made.',
+  SPAWN_FAILED: 'The browser program could not be started.',
+  NO_BACKUP: 'There is no backup to restore.',
+  BACKUP_IO_ERROR: 'The backup could not be read or written.',
+};
+
 function StatusText({ p }: { p: ProfileView }) {
-  if (p.status === 'closed') return <span className="muted">Closed</span>;
-  if (p.status === 'stopping') return <span className="warn">Closing…</span>;
-  return (
-    <span className="ok" title={p.adopted ? 'Opened before the manager restarted' : undefined}>
-      Open{p.adopted ? ' · kept open while the manager was closed' : ''}
-    </span>
-  );
+  switch (p.state) {
+    case 'stopped':
+      return <span className="muted">Closed</span>;
+    case 'starting':
+      return <span className="warn">Opening…</span>;
+    case 'stopping':
+      return <span className="warn">{p.force_available ? 'Not responding' : 'Closing…'}</span>;
+    case 'crashed':
+      return <span className="error">Closed unexpectedly</span>;
+    case 'recovering':
+      return <span className="warn">Recovering…</span>;
+    default:
+      return (
+        <span className="ok" title={p.adopted ? 'Opened before the manager restarted' : undefined}>
+          {p.window_open ? 'Open' : 'Running (no window)'}
+          {p.adopted ? ' · kept open while the manager was closed' : ''}
+        </span>
+      );
+  }
 }
 
 function CreateProfileDialog(props: {
@@ -340,39 +405,142 @@ function CreateProfileDialog(props: {
   );
 }
 
+const PERMISSIONS: [keyof ProfileView['permissions'], string][] = [
+  ['camera', 'Camera'],
+  ['microphone', 'Microphone'],
+  ['location', 'Location'],
+];
+const PERMISSION_LABEL: Record<Permission, string> = {
+  ask: 'Ask each time',
+  block: 'Block',
+  allow: 'Allow',
+};
+
+function when(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
 function ProfileSettings(props: {
   backend: Backend;
   profile: ProfileView;
+  refreshKey: number;
   notify: Notify;
   onToggle: (p: ProfileView) => void;
   onSaved: (p: ProfileView) => void;
   onClose: () => void;
 }) {
-  const { profile: p } = props;
+  const { backend, notify } = props;
+  const [status, setStatus] = useState<ProfileStatus | null>(null);
+  const p = status?.profile ?? props.profile;
   const [name, setName] = useState(p.name);
   const [client, setClient] = useState(p.client_label ?? '');
+  const [colour, setColour] = useState<string | null>(p.client_colour);
+  const [urls, setUrls] = useState(p.start_urls.join('\n'));
+  const [perms, setPerms] = useState(p.permissions);
   const [notes, setNotes] = useState(p.notes);
   const [error, setError] = useState<string | null>(null);
+  const [confirmFresh, setConfirmFresh] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => headingRef.current?.focus(), []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey reloads status on profile events
+  useEffect(() => {
+    let live = true;
+    backend.profiles
+      .status(props.profile.id)
+      .then((s) => live && setStatus(s))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [backend, props.profile.id, props.refreshKey]);
+
+  const reload = async () => {
+    const s = await backend.profiles.status(p.id);
+    setStatus(s);
+    props.onSaved(s.profile);
+  };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    const startUrls = urls
+      .split('\n')
+      .map((u) => u.trim())
+      .filter(Boolean);
     try {
-      const saved = await props.backend.profiles.update(p.id, {
+      const saved = await backend.profiles.update(p.id, {
         expectedVersion: p.version,
         ...(name !== p.name ? { name } : {}),
         ...(client.trim() === '' && p.client_label ? { clearClientLabel: true } : {}),
         ...(client.trim() !== '' && client !== p.client_label ? { clientLabel: client } : {}),
+        ...(colour === null && p.client_colour ? { clearClientColour: true } : {}),
+        ...(colour !== null && colour !== p.client_colour ? { clientColour: colour } : {}),
+        ...(startUrls.join('\n') !== p.start_urls.join('\n') ? { startUrls } : {}),
+        ...(perms.camera !== p.permissions.camera ? { camera: perms.camera } : {}),
+        ...(perms.microphone !== p.permissions.microphone ? { microphone: perms.microphone } : {}),
+        ...(perms.location !== p.permissions.location ? { location: perms.location } : {}),
         ...(notes !== p.notes ? { notes } : {}),
       });
       props.onSaved(saved);
-      props.notify('Profile settings saved.');
+      setStatus((s) => (s ? { ...s, profile: saved } : s));
+      notify(
+        p.state === 'stopped' || p.state === 'crashed'
+          ? 'Profile settings saved.'
+          : 'Profile settings saved. They apply the next time the profile opens.',
+      );
     } catch (err) {
       setError(errorMessage(err));
     }
   };
+
+  const recover = async (action: 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now') => {
+    try {
+      await backend.profiles.recover(p.id, action);
+      notify(
+        {
+          reopen: `Opening ${p.name}…`,
+          restore_backup: 'Restoring the last good copy…',
+          start_fresh: 'Starting with empty browser data…',
+          backup_now: 'Making a backup…',
+        }[action],
+      );
+    } catch (err) {
+      notify(errorMessage(err), 'error');
+    }
+  };
+
+  const chooseDownloads = async () => {
+    try {
+      const r = await backend.profiles.selectDownloadDirectory(p.id);
+      if (r.path) {
+        await reload();
+        notify('Download folder saved.');
+      }
+    } catch (err) {
+      notify(errorMessage(err), 'error');
+    }
+  };
+
+  const useDefaultDownloads = async () => {
+    try {
+      const saved = await backend.profiles.update(p.id, {
+        expectedVersion: p.version,
+        clearDownloadDir: true,
+      });
+      props.onSaved(saved);
+      setStatus((s) => (s ? { ...s, profile: saved } : s));
+    } catch (err) {
+      notify(errorMessage(err), 'error');
+    }
+  };
+
+  const action = primaryAction(p);
+  const closed = p.state === 'stopped' || p.state === 'crashed';
+  const backup = status?.backup ?? null;
+  const problem = p.last_error ? (LAST_ERROR[p.last_error] ?? 'Something went wrong last time.') : null;
 
   return (
     <aside
@@ -398,18 +566,72 @@ function ProfileSettings(props: {
         <dd>
           <StatusText p={p} />
         </dd>
-        <dt>Storage</dt>
-        <dd>Separate cookies, site storage and cache on this device.</dd>
+        <dt>Browser</dt>
+        <dd>{p.runtime_version ?? 'Not opened yet'}</dd>
+        <dt>Last opened</dt>
+        <dd>{when(p.last_started_at)}</dd>
+        <dt>Last closed normally</dt>
+        <dd>{when(p.last_clean_shutdown_at)}</dd>
+        <dt>Backup</dt>
+        <dd>{backup ? new Date(backup.created_at_unix * 1000).toLocaleString() : 'None yet'}</dd>
       </dl>
+      {problem && (
+        <p className="warn" role="status">
+          {problem}
+          {p.crash_count > 1 ? ` (${p.crash_count} times in a row)` : ''}
+        </p>
+      )}
       <button
         type="button"
         className="pb-button"
-        data-variant={p.status === 'closed' ? 'primary' : undefined}
-        disabled={p.status === 'stopping'}
+        data-variant={action === 'open' ? 'primary' : action === 'force' ? 'danger' : undefined}
+        disabled={action === 'wait'}
         onClick={() => props.onToggle(p)}
       >
-        {p.status === 'closed' ? 'Open profile' : 'Close profile'}
+        {{ open: 'Open profile', close: 'Close profile', force: 'Force close', wait: 'Please wait…' }[action]}
       </button>
+      {action === 'force' && (
+        <p className="muted small">
+          The browser did not close when asked. Force closing ends it immediately; pages may lose unsaved
+          work.
+        </p>
+      )}
+
+      {closed && (
+        <fieldset>
+          <legend>Recover</legend>
+          {p.state === 'crashed' && (
+            <p className="small">
+              {status?.suggested_recovery === 'restore_backup'
+                ? 'This profile keeps closing unexpectedly. Restoring the last good copy is recommended.'
+                : status?.suggested_recovery === 'start_fresh'
+                  ? 'There is no backup. You can start this profile with empty browser data.'
+                  : 'You can open it again. If it keeps failing, restore the last good copy.'}
+            </p>
+          )}
+          <div className="row">
+            <button
+              type="button"
+              className="pb-button"
+              disabled={!backup}
+              onClick={() => recover('restore_backup')}
+            >
+              Restore last good copy
+            </button>
+            <button type="button" className="pb-button" onClick={() => setConfirmFresh(true)}>
+              Start with empty data…
+            </button>
+            <button type="button" className="pb-button" onClick={() => recover('backup_now')}>
+              Back up now
+            </button>
+          </div>
+          <p className="muted small">
+            Recovery never deletes the current data: it is moved aside first. Sign-ins may need to be
+            repeated.
+          </p>
+        </fieldset>
+      )}
+
       <form className="stack" onSubmit={save} aria-label="Edit profile">
         <label>
           Name
@@ -419,9 +641,53 @@ function ProfileSettings(props: {
           Client
           <input maxLength={120} value={client} onChange={(e) => setClient(e.target.value)} />
         </label>
+        <div className="row">
+          <label className="choice">
+            <input
+              type="color"
+              aria-label="Client colour"
+              value={colour ?? '#7c3aed'}
+              onChange={(e) => setColour(e.target.value.toLowerCase())}
+            />
+            Client colour {colour ? '' : '(automatic)'}
+          </label>
+          {colour && (
+            <button type="button" className="pb-button" onClick={() => setColour(null)}>
+              Use automatic colour
+            </button>
+          )}
+        </div>
+        <label>
+          Start pages (one address per line, up to 10)
+          <textarea
+            rows={3}
+            value={urls}
+            placeholder="https://"
+            spellCheck={false}
+            onChange={(e) => setUrls(e.target.value)}
+          />
+        </label>
+        <fieldset>
+          <legend>Website permissions</legend>
+          {PERMISSIONS.map(([key, label]) => (
+            <label key={key}>
+              {label}
+              <select
+                value={perms[key]}
+                onChange={(e) => setPerms({ ...perms, [key]: e.target.value as Permission })}
+              >
+                {(Object.keys(PERMISSION_LABEL) as Permission[]).map((v) => (
+                  <option key={v} value={v}>
+                    {PERMISSION_LABEL[v]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </fieldset>
         <label>
           Notes
-          <textarea maxLength={2000} rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <textarea maxLength={2000} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
         {error && (
           <p role="alert" className="error">
@@ -432,10 +698,52 @@ function ProfileSettings(props: {
           Save changes
         </button>
       </form>
+
+      <fieldset>
+        <legend>Downloads</legend>
+        <p className="mono small">{p.download_dir ?? 'Same as the app setting'}</p>
+        <div className="row">
+          <button type="button" className="pb-button" onClick={chooseDownloads}>
+            Choose folder…
+          </button>
+          {p.download_dir && (
+            <button type="button" className="pb-button" onClick={useDefaultDownloads}>
+              Use app setting
+            </button>
+          )}
+        </div>
+      </fieldset>
+
       <p className="muted small">
         Separate profiles keep stored website data apart. They do not make profiles look like different
         devices or networks to websites.
       </p>
+      {confirmFresh && (
+        <Dialog
+          role="alertdialog"
+          title="Start with empty browser data?"
+          description="The current browser data is moved aside (not deleted) and the profile opens like new. You will need to sign in to websites again."
+          onClose={() => setConfirmFresh(false)}
+          initialFocus="[data-cancel]"
+        >
+          <div className="row row--end">
+            <button type="button" className="pb-button" data-cancel onClick={() => setConfirmFresh(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="pb-button"
+              data-variant="danger"
+              onClick={() => {
+                setConfirmFresh(false);
+                void recover('start_fresh');
+              }}
+            >
+              Start with empty data
+            </button>
+          </div>
+        </Dialog>
+      )}
     </aside>
   );
 }
@@ -647,6 +955,16 @@ export function DownloadsScreen(props: { backend: Backend; refreshKey: number; n
   }, [backend, props.refreshKey, notify]);
   if (!status) return <p role="status">Loading…</p>;
 
+  const install = async (version: string) => {
+    try {
+      await backend.system.installRuntime(version);
+      notify('Downloading the browser…');
+      setStatus(await backend.system.runtimeStatus());
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  };
+
   const discard = async (id: string) => {
     try {
       await backend.system.recovery('discard_interrupted', id);
@@ -663,16 +981,7 @@ export function DownloadsScreen(props: { backend: Backend; refreshKey: number; n
 
       <div className="card">
         <h2>Browser runtime</h2>
-        {status.browser.configured ? (
-          <p>
-            <span className="ok">Ready</span> — development build ({status.browser.revision})
-          </p>
-        ) : (
-          <p>
-            <span className="warn">Not installed yet.</span> Profiles cannot be opened until a browser runtime
-            is installed. Runtime downloads arrive with the next update.
-          </p>
-        )}
+        <RuntimeSummary status={status} onInstall={install} />
         {status.installations.length > 0 && (
           <table className="simple">
             <caption className="pb-sr-only">Installed runtimes</caption>
@@ -756,7 +1065,72 @@ const OP_LABELS: Record<string, string> = {
   stop_profile: 'Closing a profile',
   close_all: 'Closing all profiles',
   verify_runtime: 'Checking the browser runtime',
+  install_runtime: 'Installing the browser',
+  recover_profile: 'Recovering a profile',
+  backup_profile: 'Backing up a profile',
 };
+
+function RuntimeSummary({
+  status,
+  onInstall,
+}: {
+  status: RuntimeStatus;
+  onInstall: (version: string) => void;
+}) {
+  const b = status.browser;
+  const m = b.manifest;
+  const installOp = status.operations.find((o) => o.kind === 'install_runtime' && o.status === 'running');
+  return (
+    <>
+      {b.configured ? (
+        <p>
+          <span className="ok">Ready</span> —{' '}
+          {b.source === 'development_override' ? 'developer browser' : m?.distribution} {b.version ?? ''}
+        </p>
+      ) : b.manifest_status.status !== 'verified' ? (
+        <p>
+          <span className="warn">No approved browser in this build.</span>{' '}
+          {b.manifest_status.status === 'invalid'
+            ? 'The browser list failed its signature check, so nothing will be downloaded.'
+            : 'This development build was made before a signed browser list existed.'}
+        </p>
+      ) : m && !m.platform_supported ? (
+        <p>
+          <span className="warn">Not available for this computer.</span> This build has no browser for this
+          system.
+        </p>
+      ) : (
+        <div className="stack">
+          <p>
+            <span className="warn">Not installed yet.</span> Profiles open once the browser is installed.
+          </p>
+          {installOp || b.installing ? (
+            <progress aria-label="Installing the browser" value={installOp?.progress ?? undefined} max={1} />
+          ) : (
+            m && (
+              <button
+                type="button"
+                className="pb-button"
+                data-variant="primary"
+                onClick={() => onInstall(m.version)}
+              >
+                Install browser {m.version}
+                {m.size_bytes ? ` (${formatBytes(m.size_bytes)} download)` : ''}
+              </button>
+            )
+          )}
+        </div>
+      )}
+      {m && (
+        <p className="muted small">
+          {m.distribution} {m.version}, {m.channel}. The download is checked against a signed list before it
+          is used.
+          {m.customer_distribution ? '' : ' Internal testing build: not for customers.'}
+        </p>
+      )}
+    </>
+  );
+}
 
 // ------------------------------------------------------------------------------------------------ diagnostics
 
@@ -959,36 +1333,60 @@ export function CrashPrompt(props: {
 export function QuitPrompt(props: {
   backend: Backend;
   running: number;
+  /** Profiles that did not close when asked (shown after "Close all and quit" timed out). */
+  unresponsive: number;
   onClose: () => void;
   notify: Notify;
 }) {
-  const choose = async (choice: 'cancel' | 'leave_running' | 'close_all') => {
+  type Choice = 'cancel' | 'leave_running' | 'close_all' | 'force_close_all';
+  const choose = async (choice: Choice) => {
     try {
       await props.backend.system.resolveQuit(choice);
       if (choice === 'close_all') props.notify('Closing all profiles, then quitting…');
+      if (choice === 'force_close_all') props.notify('Force closing the remaining profiles, then quitting…');
     } catch (e) {
       props.notify(errorMessage(e), 'error');
     }
     props.onClose();
   };
   const n = props.running;
+  const stuck = props.unresponsive;
   return (
     <Dialog
       role="alertdialog"
-      title={`${n} profile${n === 1 ? ' is' : 's are'} still open`}
-      description="Quitting the manager does not have to close your profiles. Open profiles are picked up again the next time you start the manager."
+      title={
+        stuck > 0
+          ? `${stuck} profile${stuck === 1 ? ' is' : 's are'} not responding`
+          : `${n} profile${n === 1 ? ' is' : 's are'} still open`
+      }
+      description={
+        stuck > 0
+          ? 'They did not close when asked. Force closing ends them immediately; pages may lose unsaved work.'
+          : 'Quitting the manager does not have to close your profiles. Open profiles are picked up again the next time you start the manager.'
+      }
       onClose={() => choose('cancel')}
       initialFocus="[data-cancel]"
     >
       <div className="stack">
-        <button
-          type="button"
-          className="pb-button"
-          data-variant="primary"
-          onClick={() => choose('close_all')}
-        >
-          Close all profiles and quit
-        </button>
+        {stuck > 0 ? (
+          <button
+            type="button"
+            className="pb-button"
+            data-variant="danger"
+            onClick={() => choose('force_close_all')}
+          >
+            Force close and quit
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="pb-button"
+            data-variant="primary"
+            onClick={() => choose('close_all')}
+          >
+            Close all profiles and quit
+          </button>
+        )}
         <button type="button" className="pb-button" onClick={() => choose('leave_running')}>
           Leave profiles open and quit
         </button>

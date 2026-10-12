@@ -1,6 +1,6 @@
 [package]
 name = "pb-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Desktop manager shell (Tauri 2). Renders only trusted, bundled manager UI; browsing happens in separate Chromium processes."
 edition.workspace = true
 rust-version.workspace = true
@@ -33,6 +33,9 @@ url = "2"
 
 [dev-dependencies]
 rusqlite.workspace = true
+ed25519-dalek = "3"
+hex.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tauri = { version = "2", features = ["test", "tray-icon", "image-png"] }
 tempfile.workspace = true
 

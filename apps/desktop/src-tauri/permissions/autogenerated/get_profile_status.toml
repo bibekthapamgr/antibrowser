@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-profile-status"
+description = "Enables the get_profile_status command without any pre-configured scope."
+commands.allow = ["get_profile_status"]
+
+[[permission]]
+identifier = "deny-get-profile-status"
+description = "Denies the get_profile_status command without any pre-configured scope."
+commands.deny = ["get_profile_status"]

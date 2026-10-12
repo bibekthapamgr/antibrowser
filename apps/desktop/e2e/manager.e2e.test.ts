@@ -153,6 +153,24 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
   { name: 'crash-recovery', demo: 'crash' },
   { name: 'database-recovery', demo: 'migration' },
   {
+    name: 'profile-crashed-recovery',
+    demo: 'crashed',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await p.waitForSelector('.drawer fieldset legend');
+    },
+  },
+  {
+    name: 'profile-not-responding',
+    demo: 'stuck',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Close profile');
+      await p.waitForFunction(() => document.querySelector('.drawer')?.textContent?.includes('Force close'));
+    },
+  },
+  { name: 'downloads-install-browser', demo: 'noruntime', nav: 'Downloads and updates' },
+  {
     name: 'quit-with-running-profiles',
     demo: 'running',
     prepare: async (p) => {
@@ -163,6 +181,29 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     },
   },
 ];
+
+async function clickRow(page: Page, name: string) {
+  const rows = await page.$$('.trow');
+  for (const r of rows) {
+    if ((await r.$eval('.trow__name', (el) => el.textContent?.trim())) === name) {
+      await r.click();
+      await page.waitForSelector('.drawer');
+      return;
+    }
+  }
+  throw new Error(`no row ${name}`);
+}
+
+async function clickButton(page: Page, scope: string, label: string) {
+  const buttons = await page.$$(`${scope} button`);
+  for (const b of buttons) {
+    if ((await b.evaluate((el) => el.textContent?.trim())) === label) {
+      await b.click();
+      return;
+    }
+  }
+  throw new Error(`no button ${label} in ${scope}`);
+}
 
 describe.each([
   ['light', false],
@@ -236,6 +277,65 @@ describe('quit flow', () => {
     expect(body).toMatch(/1 profile/);
     const buttons = await dialog?.$$eval('button', (b) => b.map((x) => x.textContent?.trim()));
     expect(buttons?.length).toBeGreaterThanOrEqual(3);
+    await page.keyboard.press('Escape');
+    await page.close();
+  });
+});
+
+describe('profile lifecycle (milestone 03)', () => {
+  it('opens and closes a profile, showing each state', async () => {
+    const page = await open('');
+    await clickRow(page, 'Ads QA');
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForFunction(() => document.querySelector('.drawer dd')?.textContent?.includes('Open'));
+    await clickButton(page, '.drawer', 'Close profile');
+    await page.waitForFunction(() => document.querySelector('.drawer dd')?.textContent?.includes('Closed'));
+    await page.close();
+  });
+
+  it('offers a force close only after the browser did not respond', async () => {
+    const page = await open('stuck');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Close profile');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer')?.textContent?.includes('Not responding'),
+    );
+    await clickButton(page, '.drawer', 'Force close');
+    await page.waitForFunction(() => document.querySelector('.drawer dd')?.textContent?.includes('Closed'));
+    await page.close();
+  });
+
+  it('restores a crashed profile from its last good copy', async () => {
+    const page = await open('crashed');
+    await clickRow(page, 'Shop admin');
+    expect(await text(page, '.drawer')).toMatch(/closed unexpectedly/i);
+    await clickButton(page, '.drawer', 'Restore last good copy');
+    await page.waitForFunction(() => document.querySelector('.drawer dd')?.textContent?.trim() === 'Closed');
+    await page.close();
+  });
+
+  it('installs the approved browser with progress, then profiles can open', async () => {
+    const page = await open('noruntime');
+    await goTo(page, 'Downloads and updates');
+    const install = await page.waitForSelector('button[data-variant=primary]');
+    expect(await install?.evaluate((b) => b.textContent)).toMatch(/Install browser \d+/);
+    await install?.click();
+    await page.waitForFunction(() => document.querySelector('.card')?.textContent?.includes('Ready'), {
+      timeout: 10_000,
+    });
+    await page.close();
+  });
+
+  it('quit prompt offers a force close when profiles did not respond', async () => {
+    const page = await open('running');
+    await page.evaluate(() =>
+      (
+        window as unknown as { __pbDemo: { simulateQuitRequest(n: number): void } }
+      ).__pbDemo.simulateQuitRequest(1),
+    );
+    const dialog = await page.waitForSelector('[role=alertdialog]');
+    const labels = await dialog?.$$eval('button', (b) => b.map((x) => x.textContent?.trim()));
+    expect(labels).toContain('Force close and quit');
     await page.keyboard.press('Escape');
     await page.close();
   });

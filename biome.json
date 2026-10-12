@@ -9,7 +9,9 @@
       "!**/gen",
       "!spikes/.out",
       "!docs/openapi.json",
-      "!docs/ipc-schema.json"
+      "!docs/ipc-schema.json",
+      "!runtimes/manifest.json",
+      "!runtimes/manifest.json.sig"
     ]
   },
   "formatter": {

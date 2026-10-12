@@ -5,10 +5,13 @@
 //! 3. the profile is not already running;
 //! 4. the browser executable comes from trusted configuration, never from the request;
 //! 5. directories resolve inside the profiles root and are not symlinks;
-//! 6. an optional start URL is http(s) only.
+//! 6. start URLs are http(s) only (at most 10) and are passed after `--`, so they can never become switches;
+//! 7. extra switches are accepted only from a fixed allowlist used by the manager's own test configuration
+//!    (headless CI runs); nothing from the UI ever becomes a switch.
 //!
-//! Only then is the `Launcher` called. The argument list is fixed: this crate does not alter browser
-//! fingerprinting signals. See docs/security-model.md.
+//! Only then is the `Launcher` called. The process is started from a structured argument list (never a shell
+//! string), the Chromium sandbox is never disabled, and no remote-debugging switch is ever added. This crate does
+//! not alter browser fingerprinting signals. See docs/security-model.md.
 
 use crate::id::ProfileId;
 use crate::layout::{LayoutError, ProfileDirs, ProfilesRoot};
@@ -26,6 +29,8 @@ pub enum LaunchError {
     BrowserNotConfigured,
     #[error("start URL must be http or https")]
     BadStartUrl,
+    #[error("switch is not allowed")]
+    DisallowedSwitch,
     #[error("profile directory rejected: {0}")]
     Layout(#[from] LayoutError),
     #[error("failed to start browser: {0}")]
@@ -40,6 +45,7 @@ impl LaunchError {
             Self::AlreadyRunning => "ALREADY_RUNNING",
             Self::BrowserNotConfigured => "BROWSER_NOT_CONFIGURED",
             Self::BadStartUrl => "BAD_START_URL",
+            Self::DisallowedSwitch => "DISALLOWED_SWITCH",
             Self::Layout(_) => "PROFILE_DIRECTORY_REJECTED",
             Self::Spawn(_) => "SPAWN_FAILED",
         }
@@ -73,7 +79,29 @@ pub struct LaunchSpec {
 
 pub struct LaunchRequest<'a> {
     pub profile_id: &'a ProfileId,
-    pub start_url: Option<&'a str>,
+    pub start_urls: &'a [String],
+    /// Extra switches from the manager's own configuration; each must be in [`ALLOWED_EXTRA_SWITCHES`].
+    pub switches: &'a [String],
+}
+
+pub const MAX_START_URLS: usize = 10;
+
+/// Switches the manager's test configuration may add (headless CI). Notably absent: `--no-sandbox` and any
+/// remote-debugging switch.
+pub const ALLOWED_EXTRA_SWITCHES: &[&str] = &[
+    "--headless=new",
+    "--ozone-platform=headless",
+    "--disable-gpu",
+    "--use-mock-keychain",
+    "--password-store=basic",
+];
+
+pub fn valid_start_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && url.len() > 8
+        && url.len() <= 2048
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
 /// Facts about the profile that the caller looks up in its local store.
@@ -96,14 +124,17 @@ pub fn prepare_launch(
     }
     let browser = browser.ok_or(LaunchError::BrowserNotConfigured)?;
     browser.validate()?;
-    if let Some(url) = request.start_url {
-        let lower = url.to_ascii_lowercase();
-        let ok = (lower.starts_with("https://") || lower.starts_with("http://"))
-            && url.len() <= 2048
-            && !url.chars().any(char::is_control);
-        if !ok {
-            return Err(LaunchError::BadStartUrl);
-        }
+    if request.start_urls.len() > MAX_START_URLS
+        || !request.start_urls.iter().all(|u| valid_start_url(u))
+    {
+        return Err(LaunchError::BadStartUrl);
+    }
+    if !request
+        .switches
+        .iter()
+        .all(|s| ALLOWED_EXTRA_SWITCHES.contains(&s.as_str()))
+    {
+        return Err(LaunchError::DisallowedSwitch);
     }
 
     let dirs = root.ensure(request.profile_id)?;
@@ -113,9 +144,10 @@ pub fn prepare_launch(
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
     ];
-    if let Some(url) = request.start_url {
+    args.extend(request.switches.iter().map(OsString::from));
+    if !request.start_urls.is_empty() {
         args.push("--".into()); // everything after is a URL, never a switch
-        args.push(url.into());
+        args.extend(request.start_urls.iter().map(OsString::from));
     }
     Ok(LaunchSpec {
         profile_id: request.profile_id.clone(),
@@ -222,7 +254,11 @@ mod tests {
             },
             LaunchRequest {
                 profile_id: &id(),
-                start_url: Some("https://example.test/"),
+                start_urls: &[
+                    "https://example.test/".into(),
+                    "https://second.test/a".into(),
+                ],
+                switches: &["--headless=new".into()],
             },
         )?;
         let args: Vec<String> = spec
@@ -231,8 +267,15 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(args[0].starts_with("--user-data-dir=") && args[0].ends_with("user-data"));
-        assert_eq!(args[args.len() - 2], "--");
-        assert_eq!(args[args.len() - 1], "https://example.test/");
+        assert_eq!(args[args.len() - 3], "--");
+        assert_eq!(args[args.len() - 2], "https://example.test/");
+        assert!(args.contains(&"--headless=new".to_string()));
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("remote-debugging") || a == "--no-sandbox"),
+            "no debug endpoint, sandbox stays on"
+        );
         Ok(())
     }
 
@@ -288,7 +331,8 @@ mod tests {
                 state,
                 LaunchRequest {
                     profile_id: &id(),
-                    start_url: url,
+                    start_urls: &url.map(|u: &str| vec![u.to_string()]).unwrap_or_default(),
+                    switches: &[],
                 },
             )
             .err()
@@ -299,6 +343,47 @@ mod tests {
             !root.dirs(&id()).root.exists(),
             "no directory may be created for a rejected launch"
         );
+    }
+
+    #[test]
+    fn only_allowlisted_switches_are_accepted() {
+        let (_tmp, root, browser) = setup();
+        for bad in [
+            "--no-sandbox",
+            "--remote-debugging-port=9222",
+            "--remote-debugging-pipe",
+            "--load-extension=/x",
+        ] {
+            let err = prepare_launch(
+                &root,
+                Some(&browser),
+                ProfileState {
+                    exists: true,
+                    running: false,
+                },
+                LaunchRequest {
+                    profile_id: &id(),
+                    start_urls: &[],
+                    switches: &[bad.to_string()],
+                },
+            );
+            assert!(matches!(err, Err(LaunchError::DisallowedSwitch)), "{bad}");
+        }
+        let too_many: Vec<String> = (0..11).map(|i| format!("https://e.test/{i}")).collect();
+        let err = prepare_launch(
+            &root,
+            Some(&browser),
+            ProfileState {
+                exists: true,
+                running: false,
+            },
+            LaunchRequest {
+                profile_id: &id(),
+                start_urls: &too_many,
+                switches: &[],
+            },
+        );
+        assert!(matches!(err, Err(LaunchError::BadStartUrl)));
     }
 
     #[test]
@@ -318,7 +403,8 @@ mod tests {
                 },
                 LaunchRequest {
                     profile_id: &id(),
-                    start_url: None,
+                    start_urls: &[],
+                    switches: &[],
                 },
             );
             assert!(matches!(err, Err(LaunchError::BrowserNotConfigured)));

@@ -23,11 +23,15 @@ export function tauriBackend(): Backend {
       create: (name, clientLabel) => call('create_profile', clientLabel ? { name, clientLabel } : { name }),
       update: (profileId, c) => call('update_profile', { profileId, ...c }),
       launch: (profileId) => call('launch_profile', { profileId }),
-      stop: (profileId) => call('stop_profile', { profileId }),
-      closeAll: () => call('close_all_profiles', {}),
+      stop: (profileId, force) => call('stop_profile', force ? { profileId, force } : { profileId }),
+      closeAll: (force) => call('close_all_profiles', force ? { force } : {}),
+      status: (profileId) => call('get_profile_status', { profileId }),
+      recover: (profileId, action) => call('recover_profile', { profileId, action }),
+      selectDownloadDirectory: (profileId) => call('select_profile_download_directory', { profileId }),
     },
     system: {
       runtimeStatus: () => call('get_runtime_status', {}),
+      installRuntime: (version) => call('install_runtime', { version }),
       updateSetting: (key, value, expectedVersion) =>
         call(
           'update_setting',

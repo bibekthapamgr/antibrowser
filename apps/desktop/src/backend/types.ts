@@ -11,6 +11,7 @@ import type {
   EventName,
   EventPayload,
   IpcError,
+  ProfileStatus,
   ProfileView,
   RuntimeStatus,
   SettingValue,
@@ -22,11 +23,16 @@ export type {
   AppView,
   IpcError,
   Operation,
+  ProfileStatus,
   ProfileView,
+  RunState,
   RuntimeStatus,
   SettingValue,
   Workspace,
 } from '@pb/contracts/ipc';
+
+export type Permission = 'ask' | 'block' | 'allow';
+export type RecoverAction = 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now';
 
 export interface ProfileUpdate {
   expectedVersion: number;
@@ -34,6 +40,13 @@ export interface ProfileUpdate {
   clientLabel?: string;
   clearClientLabel?: boolean;
   notes?: string;
+  clientColour?: string;
+  clearClientColour?: boolean;
+  startUrls?: string[];
+  clearDownloadDir?: boolean;
+  camera?: Permission;
+  microphone?: Permission;
+  location?: Permission;
 }
 
 export interface WorkspaceRepository {
@@ -47,12 +60,17 @@ export interface ProfileRepository {
   create(name: string, clientLabel?: string): Promise<ProfileView>;
   update(id: string, changes: ProfileUpdate): Promise<ProfileView>;
   launch(id: string): Promise<Started>;
-  stop(id: string): Promise<Started>;
-  closeAll(): Promise<Started>;
+  /** Graceful close; `force` is the explicit force close offered after a timeout. */
+  stop(id: string, force?: boolean): Promise<Started>;
+  closeAll(force?: boolean): Promise<Started>;
+  status(id: string): Promise<ProfileStatus>;
+  recover(id: string, action: RecoverAction): Promise<Started>;
+  selectDownloadDirectory(id: string): Promise<{ path: string | null }>;
 }
 
 export interface SystemRepository {
   runtimeStatus(): Promise<RuntimeStatus>;
+  installRuntime(version: string): Promise<Started>;
   updateSetting(key: string, value: unknown, expectedVersion?: number): Promise<SettingValue>;
   selectDownloadDirectory(): Promise<{ path: string | null }>;
   diagnostics(): Promise<Record<string, unknown>>;
@@ -62,7 +80,7 @@ export interface SystemRepository {
     action: 'dismiss_crash' | 'retry_open' | 'restore_backup' | 'discard_interrupted',
     target?: string,
   ): Promise<void>;
-  resolveQuit(choice: 'cancel' | 'leave_running' | 'close_all'): Promise<void>;
+  resolveQuit(choice: 'cancel' | 'leave_running' | 'close_all' | 'force_close_all'): Promise<void>;
   openExternal(url: string): Promise<void>;
   removeLocalData(confirm: string): Promise<void>;
 }

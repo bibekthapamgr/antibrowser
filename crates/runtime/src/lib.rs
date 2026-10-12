@@ -1,20 +1,29 @@
-//! Browser runtime crate (milestone 01 foundation; full lifecycle in milestone 03).
+//! Browser runtime crate: profile identity and directory layout (01), validated launch specs, the run-state
+//! machine, per-profile locks, process-tree discovery, Chromium preference writing and last-good backups (03).
 //!
 //! Boundary: this crate isolates *stored browser data* by giving each profile its own Chromium
 //! user-data directory. It does not, and must not claim to, change device or network signals.
 
+pub mod backup;
 pub mod id;
 pub mod inspect;
 pub mod launch;
 pub mod layout;
+pub mod lock;
+pub mod prefs;
+pub mod procs;
+pub mod state;
 
 pub use id::{
     DeviceId, InvalidDeviceId, InvalidProfileId, InvalidWorkspaceId, ProfileId, WorkspaceId,
     random_hex,
 };
-pub use inspect::{ProcessInfo, ProcessInspector, SystemInspector};
+pub use inspect::{ProcRecord, ProcessInfo, ProcessInspector, SystemInspector};
 pub use launch::{
-    BrowserInstall, LaunchError, LaunchRequest, LaunchSpec, Launcher, ProfileState, Spawned,
-    SystemLauncher, prepare_launch,
+    ALLOWED_EXTRA_SWITCHES, BrowserInstall, LaunchError, LaunchRequest, LaunchSpec, Launcher,
+    MAX_START_URLS, ProfileState, Spawned, SystemLauncher, prepare_launch, valid_start_url,
 };
 pub use layout::{LayoutError, ProfileDirs, ProfilesRoot};
+pub use lock::ProfileLock;
+pub use prefs::{BrowserPrefs, PermissionDefault};
+pub use state::{RunEvent, RunState};

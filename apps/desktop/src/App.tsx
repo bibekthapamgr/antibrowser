@@ -32,7 +32,7 @@ export function App({ backend }: { backend: Backend }) {
   const [view, setView] = useState<View>('profiles');
   const [refreshKey, setRefreshKey] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [quitRunning, setQuitRunning] = useState<number | null>(null);
+  const [quit, setQuit] = useState<{ running: number; unresponsive: number } | null>(null);
   const toastSeq = useRef(0);
   const reported = useRef(false);
 
@@ -78,16 +78,24 @@ export function App({ backend }: { backend: Backend }) {
       else if (op.kind === 'stop_profile') notify('Profile closed.');
       else if (op.kind === 'launch_profile') notify('Profile opened.');
       else if (op.kind === 'close_all') notify('All profiles closed.');
+      else if (op.kind === 'install_runtime') notify('The browser is installed.');
+      else if (op.kind === 'recover_profile') notify('Profile recovered.');
+      else if (op.kind === 'backup_profile') notify('Backup saved.');
     });
     const offChanged = backend.on('profiles-changed', (p) => {
       setRefreshKey((k) => k + 1);
       setApp((a) => (a ? { ...a, running_count: p.running } : a));
     });
-    const offQuit = backend.on('quit-requested', (p) => setQuitRunning(p.running));
+    const offQuit = backend.on('quit-requested', (p) => setQuit(p));
+    const offWarning = backend.on('warning', (w) => {
+      if (w.code === 'LOW_DISK_SPACE')
+        notify('Your disk is almost full. Close profiles soon so their data can be saved safely.', 'error');
+    });
     return () => {
       offOp();
       offChanged();
       offQuit();
+      offWarning();
     };
   }, [backend, notify]);
 
@@ -198,12 +206,13 @@ export function App({ backend }: { backend: Backend }) {
           onDiagnostics={() => setView('diagnostics')}
         />
       )}
-      {quitRunning !== null && (
+      {quit !== null && (
         <QuitPrompt
           backend={backend}
-          running={quitRunning}
+          running={quit.running}
+          unresponsive={quit.unresponsive}
           notify={notify}
-          onClose={() => setQuitRunning(null)}
+          onClose={() => setQuit(null)}
         />
       )}
       {live}

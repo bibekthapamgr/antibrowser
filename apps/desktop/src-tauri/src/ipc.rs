@@ -82,6 +82,65 @@ pub const INTERNAL: IpcError = IpcError::new(
     "Something went wrong. Details are in the diagnostics.",
 );
 
+pub const UNKNOWN_PROFILE: IpcError = IpcError::new(
+    "UNKNOWN_PROFILE",
+    "This profile does not exist on this device.",
+);
+pub const PROFILE_BUSY: IpcError = IpcError::new(
+    "PROFILE_BUSY",
+    "This profile is busy (backup or recovery in progress). Try again in a moment.",
+);
+pub const PROFILE_STOPPING: IpcError = IpcError::new(
+    "PROFILE_STOPPING",
+    "This profile is still closing. Try again when it has closed.",
+);
+pub const PROFILE_STARTING: IpcError = IpcError::new(
+    "PROFILE_STARTING",
+    "This profile is still preparing to open. Try again in a moment.",
+);
+pub const PROFILE_IN_USE: IpcError = IpcError::new(
+    "PROFILE_IN_USE",
+    "Another browser program is using this profile's folder. Close it first.",
+);
+pub const PROFILE_DATA_UNREADABLE: IpcError = IpcError::new(
+    "PROFILE_DATA_UNREADABLE",
+    "This profile's browser data looks damaged. Use Recover to restore the last good copy.",
+);
+pub const PROFILE_NEWER_THAN_RUNTIME: IpcError = IpcError::new(
+    "PROFILE_NEWER_THAN_RUNTIME",
+    "This profile was last opened by a newer browser version. Install that version to open it.",
+);
+pub const NOT_RECOVERABLE: IpcError =
+    IpcError::new("NOT_RECOVERABLE", "Close the profile before recovering it.");
+pub const RUNTIME_NOT_INSTALLED: IpcError = IpcError::new(
+    "RUNTIME_NOT_INSTALLED",
+    "The browser is not installed yet. Install it from Downloads and updates.",
+);
+pub const RUNTIME_UNAVAILABLE: IpcError = IpcError::new(
+    "RUNTIME_UNAVAILABLE",
+    "This build has no verified browser list for this computer.",
+);
+pub const RUNTIME_NOT_IN_MANIFEST: IpcError = IpcError::new(
+    "RUNTIME_NOT_IN_MANIFEST",
+    "That browser version is not approved for this build.",
+);
+pub const INSTALL_IN_PROGRESS: IpcError = IpcError::new(
+    "INSTALL_IN_PROGRESS",
+    "A browser install is already in progress.",
+);
+pub const LOW_DISK_SPACE: IpcError = IpcError::new(
+    "LOW_DISK_SPACE",
+    "Not enough free disk space. Free some space and try again.",
+);
+pub const INVALID_COLOUR: IpcError =
+    IpcError::new("INVALID_COLOUR", "Colour must look like #7c3aed.");
+pub const INVALID_PERMISSION: IpcError = IpcError::new(
+    "INVALID_PERMISSION",
+    "Permission must be ask, block or allow.",
+);
+pub const NO_BACKUP: IpcError =
+    IpcError::new("NO_BACKUP", "There is no backup of this profile yet.");
+
 impl From<LaunchError> for IpcError {
     fn from(e: LaunchError) -> Self {
         let message = match e {
@@ -89,6 +148,7 @@ impl From<LaunchError> for IpcError {
             LaunchError::AlreadyRunning => "This profile is already open.",
             LaunchError::BrowserNotConfigured => "The browser runtime is not installed.",
             LaunchError::BadStartUrl => "Start address must begin with http:// or https://.",
+            LaunchError::DisallowedSwitch => "That browser option is not allowed.",
             LaunchError::Layout(_) => "The profile folder failed a safety check.",
             LaunchError::Spawn(_) => "The browser could not be started.",
         };

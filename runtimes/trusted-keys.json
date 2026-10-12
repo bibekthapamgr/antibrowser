@@ -1,0 +1,10 @@
+{
+  "keys": [
+    {
+      "key_id": "pb-runtime-2026-10",
+      "public_key": "81bd8bea1896bf5ee86e54e421bb08df728708c821730d60c8e834dcf1883b2c",
+      "created": "2026-10-12",
+      "note": "Runtime manifest signing key. Private half: GitHub Actions secret RUNTIME_MANIFEST_SIGNING_KEY (owner-generated). Rotate by adding a new key here, signing with it, then removing the old one in a later release."
+    }
+  ]
+}

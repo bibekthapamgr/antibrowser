@@ -50,7 +50,28 @@ fn artifact_for(bytes: &[u8]) -> RuntimeArtifact {
             .map(|b| format!("{b:02x}"))
             .collect(),
         size_bytes: bytes.len() as u64,
+        format: "zip".into(),
+        executable: "chrome/chrome".into(),
+        macos_codesign: None,
     }
+}
+
+fn zip_with_links(files: &[(&str, &[u8])], links: &[(&str, &str)]) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut w = zip::ZipWriter::new(&mut buf);
+        for (name, target) in links {
+            w.add_symlink(*name, *target, SimpleFileOptions::default())
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        for (name, data) in files {
+            w.start_file(*name, SimpleFileOptions::default().unix_permissions(0o755))
+                .unwrap_or_else(|e| panic!("{e}"));
+            w.write_all(data).unwrap_or_else(|e| panic!("{e}"));
+        }
+        w.finish().unwrap_or_else(|e| panic!("{e}"));
+    }
+    buf.into_inner()
 }
 
 struct Fixture {
@@ -91,6 +112,7 @@ fn installs_a_verified_archive_atomically() -> Result<(), InstallError> {
         &mut |p| stages.push(p.stage),
     )?;
     assert!(installed.path.join("chrome/chrome").is_file());
+    assert_eq!(installed.executable, installed.path.join("chrome/chrome"));
     assert!(stages.contains(&Stage::Extracting) && stages.last() == Some(&Stage::Finalizing));
     assert!(
         installer.interrupted()?.is_empty(),
@@ -274,5 +296,98 @@ fn interrupted_installs_are_detected_and_can_be_discarded() -> Result<(), Instal
         "153.0.1",
         &mut |_| {},
     )?;
+    Ok(())
+}
+
+#[test]
+fn a_missing_executable_fails_the_install() {
+    let bytes = zip_bytes(&[("chrome/other", b"x")]);
+    let f = fixture(&bytes);
+    let installer = Installer {
+        root: f.root.clone(),
+        space: &PLENTY,
+    };
+    let err = installer.install(
+        &LocalFile(f.archive.clone()),
+        &artifact_for(&bytes),
+        "1.0.0.0",
+        &mut |_| {},
+    );
+    assert!(
+        matches!(err, Err(InstallError::MissingExecutable)),
+        "{err:?}"
+    );
+    assert!(
+        installer
+            .interrupted()
+            .map(|i| i.is_empty())
+            .unwrap_or(false)
+    );
+}
+
+#[test]
+fn escaping_or_absolute_links_and_writes_through_links_are_refused() {
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("absolute", zip_with_links(&[], &[("chrome/l", "/etc")])),
+        ("escaping", zip_with_links(&[], &[("chrome/l", "../../x")])),
+        (
+            "write through link",
+            zip_with_links(&[("chrome/l/evil", b"x")], &[("chrome/l", "sub")]),
+        ),
+    ];
+    for (label, bytes) in cases {
+        let f = fixture(&bytes);
+        let installer = Installer {
+            root: f.root.clone(),
+            space: &PLENTY,
+        };
+        let err = installer.install(
+            &LocalFile(f.archive.clone()),
+            &artifact_for(&bytes),
+            "1.0.0.0",
+            &mut |_| {},
+        );
+        assert!(
+            matches!(err, Err(InstallError::UnsafeEntry(_))),
+            "{label}: {err:?}"
+        );
+    }
+}
+
+/// macOS app bundles contain relative links inside frameworks; they must install intact.
+#[cfg(unix)]
+#[test]
+fn bundle_internal_links_are_preserved() -> Result<(), InstallError> {
+    let fw = "chrome/App.app/Contents/Frameworks/F.framework";
+    let bytes = zip_with_links(
+        &[
+            ("chrome/chrome", b"#!binary"),
+            (&format!("{fw}/Versions/A/F"), b"lib"),
+        ],
+        &[
+            (&format!("{fw}/Versions/Current"), "A"),
+            (&format!("{fw}/F"), "Versions/Current/F"),
+        ],
+    );
+    let f = fixture(&bytes);
+    let installer = Installer {
+        root: f.root.clone(),
+        space: &PLENTY,
+    };
+    let installed = installer.install(
+        &LocalFile(f.archive.clone()),
+        &artifact_for(&bytes),
+        "1.0.0.0",
+        &mut |_| {},
+    )?;
+    let link = installed.path.join(format!("{fw}/F"));
+    assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+    assert_eq!(fs::read(&link)?, b"lib");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        fs::metadata(&installed.executable)?.permissions().mode() & 0o111,
+        0o111,
+        "executable bit preserved"
+    );
     Ok(())
 }

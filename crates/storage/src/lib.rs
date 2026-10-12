@@ -9,10 +9,11 @@
 //! during writes. Every list query is bounded.
 
 pub mod migrations;
+pub mod runs;
 pub mod settings;
 
 use migrations::{MigrationFailure, SCHEMA_VERSION};
-use pb_runtime::{DeviceId, ProfileId, WorkspaceId, random_hex};
+use pb_runtime::{DeviceId, PermissionDefault, ProfileId, RunState, WorkspaceId, random_hex};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
@@ -67,6 +68,26 @@ pub struct LocalProfile {
     pub created_at: String,
     pub updated_at: String,
     pub running_pid: Option<u32>,
+    pub active_run_id: Option<String>,
+    /// `#rrggbb`
+    pub client_colour: Option<String>,
+    pub start_urls: Vec<String>,
+    pub download_dir: Option<String>,
+    pub camera: PermissionDefault,
+    pub microphone: PermissionDefault,
+    pub location: PermissionDefault,
+    /// Browser version that last ran this profile (forward upgrades only).
+    pub runtime_version: Option<String>,
+    /// Profile directory relative to the profiles root; must equal the id (verified on use).
+    pub data_dir_ref: String,
+    pub state: RunState,
+    pub last_started_at: Option<String>,
+    pub last_clean_shutdown_at: Option<String>,
+    pub schema_version: i64,
+    pub crash_count: u32,
+    pub last_error: Option<String>,
+    pub last_backup_at: Option<String>,
+    pub backup_runtime_version: Option<String>,
 }
 
 pub struct NewProfile<'a> {
@@ -83,16 +104,12 @@ pub struct ProfileUpdate<'a> {
     pub name: Option<&'a str>,
     pub client_label: Option<Option<&'a str>>,
     pub notes: Option<&'a str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct TrackedProcess {
-    pub profile_id: ProfileId,
-    pub pid: u32,
-    /// OS process start time (seconds since epoch) used to detect PID reuse.
-    pub process_start_time: Option<u64>,
-    pub executable: Option<String>,
-    pub started_at: String,
+    pub client_colour: Option<Option<&'a str>>,
+    pub start_urls: Option<&'a [String]>,
+    pub download_dir: Option<Option<&'a str>>,
+    pub camera: Option<PermissionDefault>,
+    pub microphone: Option<PermissionDefault>,
+    pub location: Option<PermissionDefault>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -112,6 +129,9 @@ pub struct RuntimeInstallation {
     pub verified_at: Option<String>,
     pub path: String,
     pub status: String,
+    pub distribution: Option<String>,
+    /// Executable path relative to `path`.
+    pub executable: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -269,8 +289,8 @@ impl LocalStore {
     // ------------------------------------------------------------------ profiles
     pub fn insert_profile(&self, p: NewProfile<'_>) -> Result<LocalProfile, StoreError> {
         self.w()?.execute(
-            "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text)
-             values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')))",
+            "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text, data_dir_ref)
+             values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')), ?1)",
             params![p.id.as_str(), p.workspace_id.map(WorkspaceId::as_str), p.name, p.client_label, p.folder_label],
         )?;
         self.get_profile(p.id)?.ok_or(StoreError::Corrupt)
@@ -282,8 +302,8 @@ impl LocalStore {
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare(
-                "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text)
-                 values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')))",
+                "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text, data_dir_ref)
+                 values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')), ?1)",
             )?;
             for p in rows {
                 stmt.execute(params![
@@ -340,11 +360,22 @@ impl LocalStore {
         changes: ProfileUpdate<'_>,
         expected_version: i64,
     ) -> Result<LocalProfile, StoreError> {
+        let start_urls = changes
+            .start_urls
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|_| StoreError::Corrupt)?;
         let updated = self.w()?.execute(
             "update profiles set
                name = coalesce(?3, name),
                client_label = case when ?4 then ?5 else client_label end,
                notes = coalesce(?6, notes),
+               client_colour = case when ?7 then ?8 else client_colour end,
+               start_urls = coalesce(?9, start_urls),
+               download_dir = case when ?10 then ?11 else download_dir end,
+               perm_camera = coalesce(?12, perm_camera),
+               perm_microphone = coalesce(?13, perm_microphone),
+               perm_location = coalesce(?14, perm_location),
                search_text = lower(coalesce(?3, name) || ' ' || coalesce(case when ?4 then ?5 else client_label end, '')
                                    || ' ' || coalesce(folder_label, '')),
                version = version + 1,
@@ -356,7 +387,15 @@ impl LocalStore {
                 changes.name,
                 changes.client_label.is_some(),
                 changes.client_label.flatten(),
-                changes.notes
+                changes.notes,
+                changes.client_colour.is_some(),
+                changes.client_colour.flatten(),
+                start_urls,
+                changes.download_dir.is_some(),
+                changes.download_dir.flatten(),
+                changes.camera.map(PermissionDefault::as_str),
+                changes.microphone.map(PermissionDefault::as_str),
+                changes.location.map(PermissionDefault::as_str),
             ],
         )?;
         if updated == 0 {
@@ -374,53 +413,6 @@ impl LocalStore {
             params![workspace.map(WorkspaceId::as_str)],
             |r| r.get::<_, i64>(0),
         )? as u64)
-    }
-
-    // ------------------------------------------------------------------ processes
-    pub fn record_process(
-        &self,
-        id: &ProfileId,
-        pid: u32,
-        process_start_time: Option<u64>,
-        executable: Option<&str>,
-    ) -> Result<(), StoreError> {
-        self.w()?.execute(
-            "insert into processes (profile_id, pid, process_start_time, executable) values (?1, ?2, ?3, ?4)
-             on conflict (profile_id) do update set pid = excluded.pid, process_start_time = excluded.process_start_time,
-               executable = excluded.executable, started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
-            params![id.as_str(), pid, process_start_time.map(|t| t as i64), executable],
-        )?;
-        Ok(())
-    }
-
-    pub fn clear_process(&self, id: &ProfileId) -> Result<(), StoreError> {
-        self.w()?.execute(
-            "delete from processes where profile_id = ?1",
-            params![id.as_str()],
-        )?;
-        Ok(())
-    }
-
-    pub fn list_processes(&self) -> Result<Vec<TrackedProcess>, StoreError> {
-        let conn = self.r()?;
-        let mut stmt = conn.prepare_cached(
-            "select profile_id, pid, process_start_time, executable, started_at from processes order by started_at limit 1000",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            let id: String = r.get(0)?;
-            Ok(ProfileId::parse(&id).map(|profile_id| TrackedProcess {
-                profile_id,
-                pid: r.get(1).unwrap_or_default(),
-                process_start_time: r.get::<_, Option<i64>>(2).ok().flatten().map(|t| t as u64),
-                executable: r.get(3).ok().flatten(),
-                started_at: r.get(4).unwrap_or_default(),
-            }))
-        })?;
-        rows.map(|r| {
-            r.map_err(StoreError::from)
-                .and_then(|x| x.map_err(|_| StoreError::Corrupt))
-        })
-        .collect()
     }
 
     // ------------------------------------------------------------------ device
@@ -534,11 +526,12 @@ impl LocalStore {
     // ------------------------------------------------------------------ runtime installations
     pub fn upsert_runtime(&self, r: &RuntimeInstallation) -> Result<(), StoreError> {
         self.w()?.execute(
-            "insert into runtime_installations (version, platform, digest, verified_at, path, status)
-             values (?1, ?2, ?3, ?4, ?5, ?6)
+            "insert into runtime_installations (version, platform, digest, verified_at, path, status, distribution, executable)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              on conflict (version, platform) do update set digest = excluded.digest, verified_at = excluded.verified_at,
-               path = excluded.path, status = excluded.status, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
-            params![r.version, r.platform, r.digest, r.verified_at, r.path, r.status],
+               path = excluded.path, status = excluded.status, distribution = excluded.distribution,
+               executable = excluded.executable, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            params![r.version, r.platform, r.digest, r.verified_at, r.path, r.status, r.distribution, r.executable],
         )?;
         Ok(())
     }
@@ -546,8 +539,8 @@ impl LocalStore {
     pub fn list_runtimes(&self) -> Result<Vec<RuntimeInstallation>, StoreError> {
         let conn = self.r()?;
         let mut stmt = conn.prepare_cached(
-            "select version, platform, digest, verified_at, path, status from runtime_installations
-             order by updated_at desc limit 50",
+            "select version, platform, digest, verified_at, path, status, distribution, executable
+             from runtime_installations order by updated_at desc limit 50",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(RuntimeInstallation {
@@ -557,6 +550,8 @@ impl LocalStore {
                 verified_at: r.get(3)?,
                 path: r.get(4)?,
                 status: r.get(5)?,
+                distribution: r.get(6)?,
+                executable: r.get(7)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -652,8 +647,11 @@ fn sha256_hex(s: &str) -> String {
 
 const SELECT_PROFILE: &str =
     "select p.id, p.workspace_id, p.name, p.client_label, p.folder_label, p.notes, p.version,
-       p.created_at, p.updated_at, pr.pid
-     from profiles p left join processes pr on pr.profile_id = p.id";
+       p.created_at, p.updated_at, r.pid, r.run_id,
+       p.client_colour, p.start_urls, p.download_dir, p.perm_camera, p.perm_microphone, p.perm_location,
+       p.runtime_version, p.data_dir_ref, p.state, p.last_started_at, p.last_clean_shutdown_at, p.schema_version,
+       p.crash_count, p.last_error, p.last_backup_at, p.backup_runtime_version
+     from profiles p left join process_runs r on r.profile_id = p.id and r.ended_at is null";
 
 fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfile, StoreError>> {
     let id: String = row.get(0)?;
@@ -666,7 +664,21 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfi
         Some(Ok(w)) => Some(w),
         Some(Err(_)) => return Ok(Err(StoreError::Corrupt)),
     };
+    let perm = |i: usize| -> rusqlite::Result<Option<PermissionDefault>> {
+        Ok(PermissionDefault::parse(&row.get::<_, String>(i)?))
+    };
+    let (Some(camera), Some(microphone), Some(location)) = (perm(14)?, perm(15)?, perm(16)?) else {
+        return Ok(Err(StoreError::Corrupt));
+    };
+    let Some(state) = RunState::parse(&row.get::<_, String>(19)?) else {
+        return Ok(Err(StoreError::Corrupt));
+    };
+    let Ok(start_urls) = serde_json::from_str::<Vec<String>>(&row.get::<_, String>(12)?) else {
+        return Ok(Err(StoreError::Corrupt));
+    };
+    let data_dir_ref: Option<String> = row.get(18)?;
     Ok(Ok(LocalProfile {
+        data_dir_ref: data_dir_ref.unwrap_or_else(|| id.to_string()),
         id,
         workspace_id,
         name: row.get(2)?,
@@ -677,6 +689,22 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfi
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
         running_pid: row.get(9)?,
+        active_run_id: row.get(10)?,
+        client_colour: row.get(11)?,
+        start_urls,
+        download_dir: row.get(13)?,
+        camera,
+        microphone,
+        location,
+        runtime_version: row.get(17)?,
+        state,
+        last_started_at: row.get(20)?,
+        last_clean_shutdown_at: row.get(21)?,
+        schema_version: row.get(22)?,
+        crash_count: row.get::<_, i64>(23)?.max(0) as u32,
+        last_error: row.get(24)?,
+        last_backup_at: row.get(25)?,
+        backup_runtime_version: row.get(26)?,
     }))
 }
 
