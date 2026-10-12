@@ -83,7 +83,8 @@ See [docs/spikes/README.md](spikes/README.md). Run as a **non-root** user so the
 ```bash
 scp scripts/deploy/vps-setup.sh root@<server>:/root/
 ssh root@<server> 'bash /root/vps-setup.sh'      # first run prints the deploy key to add on GitHub
-ssh root@<server> 'bash /root/vps-setup.sh'      # second run deploys; re-run any time to update
+ssh root@<server> 'bash /root/vps-setup.sh'      # second run deploys
+# later updates, on the server: \cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh
 ssh -N -L 8080:127.0.0.1:8080 root@<server>      # then http://127.0.0.1:8080/v1/health on your machine
 ```
 The server runs with `APP_ENV=dev` and development tokens, so the API must stay private until OIDC login exists (milestone 06).

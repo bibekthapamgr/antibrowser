@@ -288,7 +288,8 @@ step "Done"
 cat <<EOF
     Code:      $APP_DIR ($(as_pb git -C "$APP_DIR" log -1 --format=%h))
     Services:  systemctl status pb-api pb-worker    |  logs: journalctl -u pb-api -f
-    Update:    bash $0   (pulls main, migrates, tests, restarts)
+    Update:    \\cp -f $APP_DIR/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh
+               (refreshes this script, pulls main, migrates, tests, restarts; \\cp skips the "overwrite?" prompt)
 
     Use the API from your Mac (new Terminal tab, keep it open):
       ssh -N -L $API_PORT:127.0.0.1:$API_PORT root@<this-server>
