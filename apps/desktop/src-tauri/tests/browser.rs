@@ -228,6 +228,24 @@ fn env() -> Option<Env> {
     })
 }
 
+/// Never leave a browser running after a test, even a failed one (a leftover browser would keep CI log pipes open
+/// and leak into the next test).
+impl Drop for Env {
+    fn drop(&mut self) {
+        let Ok(store) = self.state.store() else {
+            return;
+        };
+        for id in self.state.supervisor.running_ids() {
+            let _ = self.state.supervisor.force_stop(&store, &id);
+        }
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while self.state.supervisor.running_count() > 0 && Instant::now() < deadline {
+            self.state.poll_once();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
 impl Env {
     fn profile(&self, name: &str) -> ProfileId {
         let v = self

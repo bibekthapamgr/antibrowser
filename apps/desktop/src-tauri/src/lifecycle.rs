@@ -2,7 +2,7 @@
 //! (milestone 03). Every step that can fail before a process exists is checked first, in this order:
 //!
 //! 1. the profile is not already starting/running (a repeated click returns the existing launch) or closing;
-//! 2. it is not busy with a backup or recovery, and its stored directory reference equals its id;
+//! 2. it is not busy with recovery (a routine backup is cancelled instead), and its directory reference equals its id;
 //! 3. a verified runtime is installed (or a debug/test override is configured);
 //! 4. there is enough free disk space;
 //! 5. the profile lock can be taken (serializes launches across threads and processes);
@@ -42,6 +42,14 @@ pub const MIN_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const WARN_FREE_BYTES: u64 = 256 * 1024 * 1024;
 /// A new last-good backup is taken after a clean close when the previous one is older than this.
 pub const BACKUP_INTERVAL: Duration = Duration::from_secs(24 * 3600);
+/// How long a launch waits for a cancelled routine backup to release the profile.
+pub const BACKUP_CANCEL_WAIT: Duration = Duration::from_secs(5);
+
+/// A background backup in progress (routine after a clean close, or requested with `backup_now`).
+pub struct BackupJob {
+    pub cancel: Arc<AtomicBool>,
+    pub op: String,
+}
 
 #[derive(Serialize)]
 pub struct ProfileStatus {
@@ -84,8 +92,8 @@ impl AppState {
             Some(Err(_)) => return Err(ipc::PROFILE_STOPPING),
             None => {}
         }
-        // 2.
-        if self.supervisor.is_busy(profile_id) {
+        // 2. A routine backup never blocks the user: cancel it and wait briefly for it to let go.
+        if self.supervisor.is_busy(profile_id) && !self.cancel_backup(profile_id) {
             return Err(ipc::PROFILE_BUSY);
         }
         let profile = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
@@ -122,9 +130,12 @@ impl AppState {
             },
         )?;
         // 5.
-        let lock = ProfileLock::try_acquire(&spec.dirs.root)
-            .map_err(|_| ipc::INTERNAL)?
-            .ok_or(ipc::PROFILE_BUSY)?;
+        let mut lock = ProfileLock::try_acquire(&spec.dirs.root).map_err(|_| ipc::INTERNAL)?;
+        if lock.is_none() && self.supervisor.is_busy(profile_id) && self.cancel_backup(profile_id) {
+            // A routine backup started between steps 2 and 5 and has now been cancelled.
+            lock = ProfileLock::try_acquire(&spec.dirs.root).map_err(|_| ipc::INTERNAL)?;
+        }
+        let lock = lock.ok_or(ipc::PROFILE_BUSY)?;
         // 6.
         let snapshot = self.supervisor.inspector().snapshot();
         if let Some(main) = procs::browser_mains(&snapshot, &spec.dirs.user_data).first() {
@@ -231,6 +242,7 @@ impl AppState {
                 &spec.dirs.user_data,
                 previous_version.as_deref(),
                 &free_space,
+                None,
             ) {
                 Ok(_) => {
                     let _ = store.record_backup(id, previous_version.as_deref());
@@ -604,17 +616,34 @@ impl AppState {
             }
         }
         let store = self.store().ok()?;
-        if !self.supervisor.try_busy(profile_id) {
-            return None;
-        }
+        let cancel = Arc::new(AtomicBool::new(false));
         let dirs = self.root.dirs(profile_id);
-        let Ok(Some(lock)) = ProfileLock::try_acquire(&dirs.root) else {
-            self.supervisor.clear_busy(profile_id);
-            return None;
+        let (op, lock) = {
+            // Marking the profile busy, locking it and registering the job happen together, so anyone who sees
+            // the profile busy with a backup finds the job (see `cancel_backup` and `running_backup`).
+            let mut jobs = self.backups_running.lock().ok()?;
+            if let Some(job) = jobs.get(profile_id) {
+                return force.then(|| job.op.clone());
+            }
+            if !self.supervisor.try_busy(profile_id) {
+                return None;
+            }
+            let Ok(Some(lock)) = ProfileLock::try_acquire(&dirs.root) else {
+                self.supervisor.clear_busy(profile_id);
+                return None;
+            };
+            let op = self
+                .ops
+                .start(OpKind::BackupProfile, Some(profile_id.to_string()));
+            jobs.insert(
+                profile_id.clone(),
+                BackupJob {
+                    cancel: cancel.clone(),
+                    op: op.clone(),
+                },
+            );
+            (op, lock)
         };
-        let op = self
-            .ops
-            .start(OpKind::BackupProfile, Some(profile_id.to_string()));
         let this = self.clone();
         let id = profile_id.clone();
         let op_id = op.clone();
@@ -630,11 +659,20 @@ impl AppState {
                     &dirs.user_data,
                     runtime_version.as_deref(),
                     &free_space,
+                    Some(&cancel),
                 ) {
                     Ok(_) => {
                         let _ = store.record_backup(&id, runtime_version.as_deref());
                         let _ = store.audit(Some(&id), "backup", "created", None, None);
                         this.ops.succeed(&op_id);
+                    }
+                    Err(BackupError::Cancelled) => {
+                        let _ = store.audit(Some(&id), "backup", "cancelled", None, None);
+                        this.ops.fail(
+                            &op_id,
+                            "BACKUP_CANCELLED",
+                            "The backup was skipped because the profile was opened.",
+                        );
                     }
                     Err(e) => {
                         let _ = store.audit(Some(&id), "backup", "failed", None, Some(e.code()));
@@ -644,9 +682,41 @@ impl AppState {
                 }
             }
             drop(lock);
-            this.supervisor.clear_busy(&id);
+            this.end_backup(&id);
         });
         Some(op)
+    }
+
+    fn end_backup(&self, profile_id: &ProfileId) {
+        match self.backups_running.lock() {
+            Ok(mut jobs) => {
+                jobs.remove(profile_id);
+                self.supervisor.clear_busy(profile_id);
+            }
+            Err(_) => self.supervisor.clear_busy(profile_id),
+        }
+    }
+
+    /// Cancels a routine backup of `profile_id` and waits up to [`BACKUP_CANCEL_WAIT`] for it to release the
+    /// profile. Returns `true` when the profile is free, `false` when it stays busy with something that cannot
+    /// be cancelled (recovery) or the backup did not stop in time.
+    fn cancel_backup(&self, profile_id: &ProfileId) -> bool {
+        let flag = match self.backups_running.lock() {
+            Ok(jobs) => match jobs.get(profile_id) {
+                Some(job) => job.cancel.clone(),
+                None => return !self.supervisor.is_busy(profile_id),
+            },
+            Err(_) => return false,
+        };
+        flag.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + BACKUP_CANCEL_WAIT;
+        while self.supervisor.is_busy(profile_id) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        true
     }
 
     // ------------------------------------------------------------------------- runtime install

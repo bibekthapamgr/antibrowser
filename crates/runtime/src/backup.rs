@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Directory names excluded from copies (regenerable caches, crash dumps, model downloads).
 pub const EXCLUDED_DIRS: &[&str] = &[
@@ -55,6 +56,8 @@ pub enum BackupError {
     NoBackup,
     #[error("not enough disk space: {required} bytes required, {available} available")]
     LowDisk { required: u64, available: u64 },
+    #[error("the backup was cancelled")]
+    Cancelled,
     #[error("filesystem error: {0}")]
     Io(#[from] io::Error),
 }
@@ -64,6 +67,7 @@ impl BackupError {
         match self {
             Self::NoBackup => "NO_BACKUP",
             Self::LowDisk { .. } => "LOW_DISK_SPACE",
+            Self::Cancelled => "BACKUP_CANCELLED",
             Self::Io(_) => "BACKUP_IO_ERROR",
         }
     }
@@ -117,14 +121,31 @@ pub fn measure(src: &Path) -> io::Result<u64> {
 
 /// Copies a user-data directory, excluding caches/lock files and never following links.
 pub fn copy_tree(src: &Path, dst: &Path) -> io::Result<CopyStats> {
+    copy_tree_cancellable(src, dst, None)
+}
+
+/// [`copy_tree`] that stops with [`io::ErrorKind::Interrupted`] once `cancel` is set (checked before each entry).
+pub fn copy_tree_cancellable(
+    src: &Path,
+    dst: &Path,
+    cancel: Option<&AtomicBool>,
+) -> io::Result<CopyStats> {
     let mut stats = CopyStats::default();
-    copy_into(src, dst, &mut stats)?;
+    copy_into(src, dst, &mut stats, cancel)?;
     Ok(stats)
 }
 
-fn copy_into(src: &Path, dst: &Path, stats: &mut CopyStats) -> io::Result<()> {
+fn copy_into(
+    src: &Path,
+    dst: &Path,
+    stats: &mut CopyStats,
+    cancel: Option<&AtomicBool>,
+) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        }
         let entry = entry?;
         let ft = entry.file_type()?;
         let name = entry.file_name();
@@ -133,7 +154,7 @@ fn copy_into(src: &Path, dst: &Path, stats: &mut CopyStats) -> io::Result<()> {
             stats.skipped_links += 1;
         } else if ft.is_dir() {
             if !excluded(&name_s, true) {
-                copy_into(&entry.path(), &dst.join(&name), stats)?;
+                copy_into(&entry.path(), &dst.join(&name), stats, cancel)?;
             }
         } else if ft.is_file() && !excluded(&name_s, false) {
             stats.bytes += fs::copy(entry.path(), dst.join(&name))?;
@@ -191,13 +212,15 @@ impl Backups {
         Ok(())
     }
 
-    /// Takes a new last-good copy of a stopped, quiesced profile.
+    /// Takes a new last-good copy of a stopped, quiesced profile. Setting `cancel` abandons the copy (the previous
+    /// last-good copy stays in place) so that, for example, a launch request never waits for a routine backup.
     pub fn create(
         &self,
         profile: &str,
         user_data: &Path,
         runtime_version: Option<&str>,
         free_space: &dyn Fn(&Path) -> io::Result<u64>,
+        cancel: Option<&AtomicBool>,
     ) -> Result<BackupInfo, BackupError> {
         let dir = self.profile_dir(profile);
         fs::create_dir_all(&dir)?;
@@ -212,13 +235,21 @@ impl Backups {
             });
         }
         let tmp = dir.join(format!("tmp-{}", now_unix()));
-        let stats = match copy_tree(user_data, &tmp.join("user-data")) {
+        let stats = match copy_tree_cancellable(user_data, &tmp.join("user-data"), cancel) {
             Ok(s) => s,
             Err(e) => {
                 let _ = fs::remove_dir_all(&tmp);
-                return Err(e.into());
+                return Err(if e.kind() == io::ErrorKind::Interrupted {
+                    BackupError::Cancelled
+                } else {
+                    e.into()
+                });
             }
         };
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err(BackupError::Cancelled);
+        }
         let info = BackupInfo {
             created_at_unix: now_unix(),
             runtime_version: runtime_version.map(str::to_owned),
@@ -357,7 +388,7 @@ mod tests {
     #[test]
     fn backup_excludes_caches_and_locks() -> Result<(), BackupError> {
         let (_t, b, ud) = setup()?;
-        let info = b.create("prf_X", &ud, Some("155.0.0.1"), PLENTY)?;
+        let info = b.create("prf_X", &ud, Some("155.0.0.1"), PLENTY, None)?;
         let copy = b.root.join("prf_X/last-good/user-data");
         assert!(copy.join("Default/Cookies").is_file());
         assert!(
@@ -374,17 +405,33 @@ mod tests {
     #[test]
     fn low_disk_keeps_the_previous_backup() -> Result<(), BackupError> {
         let (_t, b, ud) = setup()?;
-        let first = b.create("prf_X", &ud, None, PLENTY)?;
-        let err = b.create("prf_X", &ud, None, &|_| Ok(1024));
+        let first = b.create("prf_X", &ud, None, PLENTY, None)?;
+        let err = b.create("prf_X", &ud, None, &|_| Ok(1024), None);
         assert!(matches!(err, Err(BackupError::LowDisk { .. })));
         assert_eq!(b.last_good("prf_X"), Some(first));
         Ok(())
     }
 
     #[test]
+    fn a_cancelled_backup_keeps_the_previous_copy() -> Result<(), BackupError> {
+        let (_t, b, ud) = setup()?;
+        let first = b.create("prf_X", &ud, None, PLENTY, None)?;
+        let cancel = AtomicBool::new(true);
+        let err = b.create("prf_X", &ud, None, PLENTY, Some(&cancel));
+        assert!(matches!(err, Err(BackupError::Cancelled)));
+        assert_eq!(b.last_good("prf_X"), Some(first));
+        let leftovers = fs::read_dir(b.root.join("prf_X"))?
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("tmp-"))
+            .count();
+        assert_eq!(leftovers, 0, "no partial copy left behind");
+        Ok(())
+    }
+
+    #[test]
     fn an_interrupted_backup_is_rolled_back_at_startup() -> Result<(), BackupError> {
         let (_t, b, ud) = setup()?;
-        b.create("prf_X", &ud, None, PLENTY)?;
+        b.create("prf_X", &ud, None, PLENTY, None)?;
         let dir = b.root.join("prf_X");
         // Crash between "move old aside" and "publish new": only old-* and tmp-* exist.
         fs::rename(dir.join("last-good"), dir.join("old-1"))?;
@@ -398,7 +445,7 @@ mod tests {
     #[test]
     fn restore_preserves_evidence_and_never_touches_the_backup() -> Result<(), BackupError> {
         let (_t, b, ud) = setup()?;
-        b.create("prf_X", &ud, None, PLENTY)?;
+        b.create("prf_X", &ud, None, PLENTY, None)?;
         // The profile is damaged after the backup.
         fs::write(ud.join("Default/Preferences"), b"{garbage")?;
         fs::remove_file(ud.join("Default/Cookies"))?;

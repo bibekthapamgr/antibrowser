@@ -106,10 +106,14 @@ jobs:
           PB_TEST_BROWSER_REQUIRED: "1"
           PB_TEST_SWITCHES: ${{ matrix.switches }}
         run: |
-          set -o pipefail
           cargo test --locked -p pb-desktop --test browser --no-run
+          # Written to a file, never a pipe: browsers inherit handles on Windows and would hold a pipe open.
+          status=0
           scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
-            scripts/ci/with-timeout.sh 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+            scripts/ci/with-timeout.sh 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture \
+            > "$RUNNER_TEMP/browser-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/browser-tests.log"
+          [ "$status" -eq 0 ] || exit "$status"
           passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | tail -1)
           mkdir -p out
           cp "${{ steps.rt.outputs.artifact }}" out/

@@ -21,6 +21,7 @@ use pb_update::RuntimeManifest;
 use pb_update::install::{FsSpace, Installer, Stage};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -80,6 +81,8 @@ pub struct AppState {
     pub started: Instant,
     pub(crate) ui_ready_recorded: AtomicBool,
     pub(crate) launch_lock: Mutex<()>,
+    /// Background backups in progress, so a launch request can cancel them and `backup_now` can join them.
+    pub(crate) backups_running: Mutex<HashMap<ProfileId, crate::lifecycle::BackupJob>>,
     pub(crate) installing: AtomicBool,
     pub(crate) poll_count: AtomicU64,
     pub(crate) low_disk_warned: AtomicBool,
@@ -229,6 +232,7 @@ impl AppState {
             started: Instant::now(),
             ui_ready_recorded: AtomicBool::new(false),
             launch_lock: Mutex::new(()),
+            backups_running: Mutex::new(HashMap::new()),
             installing: AtomicBool::new(false),
             poll_count: AtomicU64::new(0),
             low_disk_warned: AtomicBool::new(false),

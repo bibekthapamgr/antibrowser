@@ -1057,6 +1057,44 @@ fn unresponsive_profiles_are_offered_an_explicit_force_close() {
 }
 
 #[test]
+fn reopening_right_after_a_close_is_never_blocked_by_the_backup() {
+    let f = fixture();
+    let known = workspace_with_profile(&f);
+    for round in 0..5 {
+        let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+            .unwrap_or_else(|e| panic!("launch {round}: {e}"));
+        assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+        let stop = invoke(&f, "stop_profile", json!({ "profileId": known }))
+            .unwrap_or_else(|e| panic!("stop {round}: {e}"));
+        assert_eq!(wait_op(&f, &stop), OpStatus::Succeeded);
+        // A backup is running (the routine one after the clean close, or this one joins it) ...
+        let backup = invoke(
+            &f,
+            "recover_profile",
+            json!({ "profileId": known, "action": "backup_now" }),
+        );
+        // ... and the user opens the profile again straight away: the backup gives way.
+        let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+            .unwrap_or_else(|e| panic!("relaunch {round}: {e}"));
+        assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+        if let Ok(b) = backup {
+            let finished = wait_op(&f, &b);
+            assert!(matches!(finished, OpStatus::Succeeded | OpStatus::Failed));
+        }
+        let stop = invoke(&f, "stop_profile", json!({ "profileId": known }))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(wait_op(&f, &stop), OpStatus::Succeeded);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while status(&f, &known)["profile"]["state"] != json!("stopped")
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    assert_eq!(status(&f, &known)["profile"]["state"], json!("stopped"));
+}
+
+#[test]
 fn damaged_profiles_are_refused_and_recovered_without_losing_evidence() {
     let f = fixture();
     let known = workspace_with_profile(&f);

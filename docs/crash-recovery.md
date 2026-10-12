@@ -30,7 +30,7 @@ For support staff and users. Technical background: [ADR-0010](adr/0010-runtime-s
 | **Open again** | First crash | Starts normally. Chromium may offer to restore the previous pages. |
 | **Restore last good copy** | Repeated crashes (suggested after 3), or *browser data looks damaged* | Current data is moved to `evidence/` (never deleted), the last good copy is copied into a fresh folder. Changes since that copy are lost; sign-ins made since may need repeating. |
 | **Start with empty data…** | No backup exists and the profile cannot open | Current data moved to `evidence/`; the profile opens like new (settings, name and client stay). |
-| **Back up now** | Before risky work | Copies the closed profile now (otherwise automatic after a clean close, at most daily, and before a browser engine upgrade). |
+| **Back up now** | Before risky work | Copies the closed profile now (otherwise automatic after a clean close, at most daily, and before a browser engine upgrade). Opening the profile while a routine backup runs cancels that backup; the previous copy stays in place. |
 
 *This profile's browser data looks damaged* means Chromium's settings files cannot be read. The manager refuses to
 open it (Chromium would silently reset it) so the evidence is preserved; use **Restore last good copy**.

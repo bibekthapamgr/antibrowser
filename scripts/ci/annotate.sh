@@ -6,8 +6,11 @@
 set -uo pipefail
 title="$1"; shift
 log="$(mktemp)"
-"$@" 2>&1 | tee "$log"
-status=${PIPESTATUS[0]}
+# Output goes to a file, not a pipe: on Windows a browser started by the command inherits the standard handles,
+# and a pipe would stay open (hanging the step) for as long as that browser lives.
+"$@" > "$log" 2>&1
+status=$?
+cat "$log"
 if [ "$status" -ne 0 ]; then
   sed -e 's/\x1b\[[0-9;]*m//g' "$log" \
     | grep -E "^error(\[E[0-9]+\])?:|panicked at|^---- .* stdout ----|^test .* FAILED|^failures:|assertion|error: could not|ERR_|Error:|  --> | FAIL |×" \
