@@ -14,6 +14,14 @@ use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder};
 use tauri::webview::InvokeRequest;
 
+/// Origin of the bundled manager UI as Tauri serves it. Windows (WebView2) uses http://tauri.localhost;
+/// macOS and Linux use the tauri:// scheme. Requests from any other origin are treated as remote and denied
+/// by the capability ACL.
+#[cfg(windows)]
+const APP_ORIGIN: &str = "http://tauri.localhost";
+#[cfg(not(windows))]
+const APP_ORIGIN: &str = "tauri://localhost";
+
 #[derive(Default)]
 struct CountingLauncher {
     spawns: AtomicUsize,
@@ -85,9 +93,7 @@ fn invoke(f: &Fixture, cmd: &str, body: Value) -> Result<Value, Value> {
             cmd: cmd.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "tauri://localhost"
-                .parse()
-                .unwrap_or_else(|e| panic!("{e}")),
+            url: APP_ORIGIN.parse().unwrap_or_else(|e| panic!("{e}")),
             body: InvokeBody::Json(body),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
@@ -215,6 +221,30 @@ fn the_executable_cannot_be_chosen_by_the_webview() {
         Some(json!("ALREADY_RUNNING"))
     );
     assert_eq!(f.launcher.spawns.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn requests_from_a_remote_origin_are_denied() {
+    let f = fixture();
+    let remote = get_ipc_response(
+        &f.webview,
+        InvokeRequest {
+            cmd: "launch_profile".into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: "https://attacker.example/"
+                .parse()
+                .unwrap_or_else(|e| panic!("{e}")),
+            body: InvokeBody::Json(json!({ "profileId": f.known.as_str() })),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_string(),
+        },
+    );
+    assert!(
+        remote.is_err(),
+        "a page from another origin must not reach launch_profile"
+    );
+    assert_eq!(f.launcher.spawns.load(Ordering::SeqCst), 0);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Spike 01-5 — Launch IPC rejects invalid profile/path requests before any process starts
 
-**Result: passed** on 2026-10-12 (`cargo test -p pb-desktop`). Code: `apps/desktop/src-tauri/tests/ipc_spike.rs`.
+**Result: passed** on 2026-10-12 on Linux, macOS arm64 and Windows x64 CI (`cargo test -p pb-desktop`). Code: `apps/desktop/src-tauri/tests/ipc_spike.rs`.
 
 ## Method
 The tests build the real Tauri application with Tauri's mock runtime: the generated context, the real capability file (`capabilities/default.json`) and ACL, and the real argument deserialization. Requests are sent through `get_ipc_response` exactly as the webview would send them. The process launcher is replaced with a counter.
@@ -14,6 +14,7 @@ The tests build the real Tauri application with Tauri's mock runtime: the genera
 | Valid request that also sends `executable: "/bin/sh"` and `args` | Extra fields ignored; the trusted configured browser is launched | 1 (the trusted browser) | 1 |
 | Second launch of a running profile | `ALREADY_RUNNING` | still 1 | — |
 | Commands outside the capability (`plugin:shell|execute`, `plugin:fs|read_file`, `plugin:http|fetch`, unknown) | Tauri ACL | 0 | 0 |
+| Valid launch request sent from another origin (`https://attacker.example/`) | Tauri ACL (capability applies only to the bundled app origin: `tauri://localhost` on macOS/Linux, `http://tauri.localhost` on Windows) | 0 | 0 |
 | Labels like `../../escape` | Stored as display text; directory name is the generated id | 0 | 0 |
 
 Errors returned to the UI are a stable code plus a fixed message, never a path, SQL or OS error text.
