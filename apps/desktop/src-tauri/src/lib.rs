@@ -195,6 +195,19 @@ pub fn build_state(
     })
 }
 
+/// The app context (config, capabilities/ACL, assets). `generate_context!` must be expanded exactly once per
+/// crate: on macOS it embeds the Info.plist into a fixed linker section, so a second expansion (e.g. in tests)
+/// fails to compile. Tests reuse this function with the mock runtime.
+pub fn context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
+}
+
+/// The IPC handler for the manager window. Public so integration tests drive the same handler set.
+pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
+{
+    tauri::generate_handler![list_profiles, create_local_profile, launch_profile]
+}
+
 pub fn run() {
     let result = tauri::Builder::default()
         .setup(|app| {
@@ -203,17 +216,10 @@ pub fn run() {
             app.manage(state);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            list_profiles,
-            create_local_profile,
-            launch_profile
-        ])
-        .run(tauri::generate_context!());
+        .invoke_handler(handler())
+        .run(context());
     if let Err(e) = result {
         eprintln!("fatal: {e}");
         std::process::exit(1);
     }
 }
-
-#[cfg(test)]
-mod ipc_spike;

@@ -77,7 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: scripts/ci/annotate.sh "clippy (linux)" cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: scripts/ci/annotate.sh "rust tests (linux)" cargo test --workspace --locked
+      - run: scripts/ci/annotate.sh "rust tests (linux)" cargo test --workspace --locked --no-fail-fast
       - name: Local search latency baseline (informational)
         run: cargo test -p pb-storage --release --test search_latency -- --ignored --nocapture
 
@@ -117,4 +117,4 @@ jobs:
         run: scripts/ci/annotate.sh "build ${{ matrix.target }}" cargo build -p pb-desktop --release --locked
       - name: Rust tests on target OS
         shell: bash
-        run: scripts/ci/annotate.sh "rust tests ${{ matrix.target }}" cargo test --workspace --locked
+        run: scripts/ci/annotate.sh "rust tests ${{ matrix.target }}" cargo test --workspace --locked --no-fail-fast

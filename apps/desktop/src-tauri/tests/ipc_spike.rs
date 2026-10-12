@@ -4,11 +4,12 @@
 //! These tests drive the real Tauri IPC pipeline (mock runtime, real capability/ACL and argument
 //! deserialization) and count calls to the process launcher.
 
-use super::*;
-use pb_runtime::LaunchSpec;
+use pb_desktop_lib::{build_state, context, create_local_profile_impl, handler};
+use pb_runtime::{BrowserInstall, LaunchError, LaunchSpec, Launcher, ProfileId};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder};
 use tauri::webview::InvokeRequest;
@@ -59,12 +60,8 @@ fn fixture() -> Fixture {
 
     let app = mock_builder()
         .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            list_profiles,
-            create_local_profile,
-            launch_profile
-        ])
-        .build(tauri::generate_context!())
+        .invoke_handler(handler())
+        .build(context())
         .unwrap_or_else(|e| panic!("{e}"));
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()

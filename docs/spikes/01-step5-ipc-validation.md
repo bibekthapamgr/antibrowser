@@ -1,6 +1,6 @@
 # Spike 01-5 — Launch IPC rejects invalid profile/path requests before any process starts
 
-**Result: passed** on 2026-10-12 (`cargo test -p pb-desktop`). Code: `apps/desktop/src-tauri/src/ipc_spike.rs`.
+**Result: passed** on 2026-10-12 (`cargo test -p pb-desktop`). Code: `apps/desktop/src-tauri/tests/ipc_spike.rs`.
 
 ## Method
 The tests build the real Tauri application with Tauri's mock runtime: the generated context, the real capability file (`capabilities/default.json`) and ACL, and the real argument deserialization. Requests are sent through `get_ipc_response` exactly as the webview would send them. The process launcher is replaced with a counter.
