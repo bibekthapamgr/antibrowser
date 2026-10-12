@@ -9,6 +9,9 @@ const LIGHT = {
   muted: '#475569',
   accent: '#7C3AED',
   focus: '#7C3AED',
+  warn: '#B45309',
+  danger: '#B91C1C',
+  border: '#64748B',
 };
 const DARK = {
   bg: '#0B1120',
@@ -17,6 +20,9 @@ const DARK = {
   muted: '#94A3B8',
   accent: '#A78BFA',
   focus: '#C4B5FD',
+  warn: '#FBBF24',
+  danger: '#F87171',
+  border: '#7C8AA0',
 };
 
 describe('design token contrast', () => {
@@ -25,6 +31,13 @@ describe('design token contrast', () => {
       for (const surface of [t.bg, t.surface]) {
         expect(contrastRatio(t.text, surface)).toBeGreaterThanOrEqual(4.5);
         expect(contrastRatio(t.muted, surface)).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+    it(`${name}: status text (warning, error) meets AA and input borders meet 3:1`, () => {
+      for (const surface of [t.bg, t.surface]) {
+        expect(contrastRatio(t.warn, surface)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(t.danger, surface)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(t.border, surface)).toBeGreaterThanOrEqual(3);
       }
     });
     it(`${name}: focus ring and accent meet 3:1 against surfaces`, () => {

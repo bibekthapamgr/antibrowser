@@ -14,19 +14,12 @@
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'",
       "freezePrototype": true,
-      "capabilities": [
-        "default"
-      ]
+      "capabilities": ["default"]
     }
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg",
-      "nsis",
-      "msi"
-    ],
+    "targets": ["app", "dmg", "nsis", "msi"],
     "publisher": "Ten Tech Solutions LLC",
     "category": "Productivity",
     "shortDescription": "Multi-profile browser manager (internal build)",
@@ -51,9 +44,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "projectbrowser"
-        ]
+        "schemes": ["projectbrowser"]
       }
     }
   }

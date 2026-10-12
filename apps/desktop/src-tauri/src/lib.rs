@@ -194,7 +194,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            // Local (non-roaming) app data: browser profiles are large and device-bound, so they must not follow
+            // Windows roaming profiles. macOS: ~/Library/Application Support/<identifier>; Windows: %LOCALAPPDATA%.
+            let data_dir = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             // Exclusive lock on the data directory: one manager process writes local data at a time.
             let lock = std::fs::File::create(data_dir.join("manager.lock"))?;
@@ -276,7 +278,7 @@ pub fn run() {
     };
     app.run(|handle, event| {
         if let RunEvent::Exit = event
-            && let Ok(dir) = handle.path().app_data_dir()
+            && let Ok(dir) = handle.path().app_local_data_dir()
         {
             recovery::end_session(&dir);
         }

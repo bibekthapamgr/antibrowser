@@ -22,7 +22,9 @@
     "licenses": "node scripts/license-inventory.mjs",
     "spike:isolation": "pnpm --filter @pb/spikes run isolation",
     "spike:snapshot": "pnpm --filter @pb/spikes run snapshot",
-    "docs:permissions": "node scripts/permission-matrix.ts"
+    "docs:permissions": "node scripts/permission-matrix.ts",
+    "docs:ipc": "node scripts/ipc-schema.ts",
+    "test:e2e": "pnpm --filter @pb/desktop build && pnpm --filter @pb/desktop test:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

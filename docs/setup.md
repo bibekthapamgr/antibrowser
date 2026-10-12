@@ -52,6 +52,18 @@ PB_DEV_BROWSER=/path/to/chromium cargo run -p pb-desktop
 pnpm dev:desktop-ui                      # UI alone in a browser with demo data
 ```
 
+Demo modes for UI work: `?demo=fresh` (first run), `?demo=rows:10000` (large list), `?demo=crash`, `?demo=migration`, `?demo=running`.
+
+UI end-to-end tests (keyboard, axe accessibility, 900x600 resize, 2x scale, 10,000-row virtualization) run the production bundle in headless Chromium:
+
+```bash
+pnpm --filter @pb/desktop exec browsers install chrome-headless-shell@stable --path ~/.cache/pb-chrome
+PB_CHROME_PATH=<path printed above> pnpm test:e2e
+PB_SCREENSHOTS=1 PB_CHROME_PATH=... pnpm test:e2e     # also refreshes docs/design/*.png
+```
+
+Installers: `pnpm --filter @pb/desktop tauri build` locally, or the *desktop internal build* workflow (see [os-setup.md](os-setup.md)).
+
 ## 4. Checks (same as CI)
 
 ```bash
@@ -59,6 +71,7 @@ pnpm lint && pnpm typecheck && pnpm test      # tests use the separate pb_test d
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 pnpm licenses                                  # docs/licenses/summary.md
 pnpm openapi                                   # regenerates docs/openapi.json
+pnpm docs:ipc                                  # regenerates docs/ipc-schema.json
 ```
 
 ## 5. Spikes

@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "The only capability. The bundled manager window may call the app's own validated commands and listen to its events. No filesystem, shell, HTTP, dialog, opener or remote-URL permission is granted to the webview: native dialogs and link opening happen in Rust after validation.",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

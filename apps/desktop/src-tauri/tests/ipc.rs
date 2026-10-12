@@ -705,6 +705,16 @@ fn startup_timing_is_recorded_once_and_kept_separate_from_browsers() {
             .is_some_and(|c| c >= 1)
     );
     assert!(d["browsers"].get("main_process_rss_bytes").is_some());
+    assert_eq!(d["browsers"]["spawn_ms"]["count"], json!(0));
+
+    // Opening a profile adds a browser measurement and leaves manager start-up untouched.
+    let known = workspace_with_profile(&f);
+    let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let d = invoke(&f, "get_diagnostics", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(d["browsers"]["spawn_ms"]["count"], json!(1));
+    assert_eq!(d["manager"]["startup_ms"]["count"], json!(1));
     let text = d.to_string();
     if let Ok(home) = std::env::var("HOME")
         && home.len() > 1

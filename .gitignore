@@ -12,3 +12,4 @@ coverage/
 .local/
 spikes/.out/
 apps/desktop/src-tauri/gen/
+dist-installers/

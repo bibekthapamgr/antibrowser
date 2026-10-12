@@ -14,6 +14,7 @@ Status values: **Proposed** (needs the named owner's sign-off), **Accepted**, **
 | [0006](0006-supported-operating-systems.md) | Windows 11 x64 and macOS Apple Silicon first | Accepted | Product owner |
 | [0007](0007-toolchain-and-versions.md) | Pinned toolchain and package versions | Accepted | Technical lead |
 | [0008](0008-foundation-contract-decisions.md) | Interpretations made while implementing the 01 contracts | Accepted | Technical lead |
+| [0009](0009-desktop-shell-decisions.md) | Desktop shell: local workspaces, quit policy, deep links, keychain, installers | Accepted | Technical lead |
 
 ## Template
 

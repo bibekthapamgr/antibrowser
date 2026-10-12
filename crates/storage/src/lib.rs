@@ -21,7 +21,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-pub const MAX_PAGE: u32 = 100;
+/// Upper bound for one local profile listing. The manager renders the list virtualized, so a whole workspace
+/// (target: 10,000 profiles) fits in one bounded query; cloud APIs keep their own smaller page size.
+pub const MAX_LIST: u32 = 10_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -305,14 +307,14 @@ impl LocalStore {
             .transpose()
     }
 
-    /// Bounded, ordered search over name/client/folder labels within a workspace. `limit` is clamped to 1..=100.
+    /// Bounded, ordered search over name/client/folder labels within a workspace. `limit` is clamped to 1..=[`MAX_LIST`].
     pub fn search_profiles(
         &self,
         workspace: Option<&WorkspaceId>,
         query: Option<&str>,
         limit: u32,
     ) -> Result<Vec<LocalProfile>, StoreError> {
-        let limit = limit.clamp(1, MAX_PAGE);
+        let limit = limit.clamp(1, MAX_LIST);
         let conn = self.r()?;
         let needle = query
             .map(str::trim)

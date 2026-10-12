@@ -9,7 +9,8 @@ log="$(mktemp)"
 "$@" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 if [ "$status" -ne 0 ]; then
-  grep -E "^error(\[E[0-9]+\])?:|panicked at|^---- .* stdout ----|^test .* FAILED|^failures:|assertion|error: could not|ERR_|Error:|  --> " "$log" \
+  sed -e 's/\x1b\[[0-9;]*m//g' "$log" \
+    | grep -E "^error(\[E[0-9]+\])?:|panicked at|^---- .* stdout ----|^test .* FAILED|^failures:|assertion|error: could not|ERR_|Error:|  --> | FAIL |×" \
     | grep -v "^error: test failed" | head -40 > "$log.sel" || true
   # Group lines into at most 10 annotations (GitHub's per-step limit).
   split -l 4 -a 2 "$log.sel" "$log.part." 2>/dev/null || true

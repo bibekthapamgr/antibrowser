@@ -61,6 +61,35 @@ jobs:
           git diff --exit-code docs/openapi.json
       - name: Frontend bundles build
         run: pnpm --filter @pb/desktop build && pnpm --filter @pb/web-admin build
+      - name: IPC schema document is up to date
+        run: |
+          pnpm run docs:ipc
+          git diff --exit-code docs/ipc-schema.json
+
+  ui-e2e:
+    name: manager UI (keyboard, accessibility, resize, scale)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Install headless Chromium for UI tests
+        working-directory: apps/desktop
+        run: |
+          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
+          echo "$out"
+          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+      - name: UI tests against the production bundle
+        env:
+          # Ubuntu 24.04 blocks unprivileged user namespaces; the page under test is our own local bundle.
+          PB_CHROME_NO_SANDBOX: "1"
+          PB_SCREENSHOTS: "1"
+        run: scripts/ci/annotate.sh "ui e2e" pnpm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ui-screenshots, path: docs/design/*.png, if-no-files-found: ignore }
 
   rust:
     name: fmt, clippy, tests (Rust, Linux)

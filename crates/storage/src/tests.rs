@@ -149,7 +149,8 @@ fn limits_are_clamped() -> Result<(), StoreError> {
         })
         .collect();
     store.insert_profiles(&rows)?;
-    assert_eq!(store.search_profiles(None, None, 10_000)?.len(), 100);
+    assert_eq!(store.search_profiles(None, None, 100)?.len(), 100);
+    assert_eq!(store.search_profiles(None, None, u32::MAX)?.len(), 150);
     assert_eq!(store.search_profiles(None, None, 0)?.len(), 1);
     Ok(())
 }

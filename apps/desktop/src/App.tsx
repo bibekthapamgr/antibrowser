@@ -1,258 +1,212 @@
-import { ClientBadge } from '@pb/ui';
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, isIpcError, type LocalProfile } from './api.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AppView, Backend } from './backend/types.ts';
+import { errorMessage } from './backend/types.ts';
+import { LiveRegion } from './components.tsx';
+import {
+  CrashPrompt,
+  DatabaseRecovery,
+  DiagnosticsScreen,
+  DownloadsScreen,
+  ProfilesScreen,
+  QuitPrompt,
+  SettingsScreen,
+  Welcome,
+} from './screens.tsx';
 
-const WORKSPACES = [{ id: 'local', name: 'This device', note: 'Local profiles' }];
-const NAV = ['Profiles', 'Clients', 'Activity', 'Settings'] as const;
+type View = 'profiles' | 'downloads' | 'diagnostics' | 'settings';
+const NAV: [View, string][] = [
+  ['profiles', 'Profiles'],
+  ['downloads', 'Downloads and updates'],
+  ['diagnostics', 'Diagnostics'],
+  ['settings', 'Settings'],
+];
 
-export function App() {
-  const [workspace, setWorkspace] = useState('local');
-  const [query, setQuery] = useState('');
-  const [profiles, setProfiles] = useState<LocalProfile[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
-  const [creating, setCreating] = useState(false);
+interface Toast {
+  id: number;
+  text: string;
+  tone: 'info' | 'error';
+}
 
-  const refresh = useCallback(async (q: string) => {
-    try {
-      setProfiles(await api.listProfiles(q));
-    } catch (e) {
-      setStatus({ kind: 'error', text: isIpcError(e) ? e.message : 'Could not load profiles.' });
-    }
+export function App({ backend }: { backend: Backend }) {
+  const [app, setApp] = useState<AppView | null>(null);
+  const [view, setView] = useState<View>('profiles');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [quitRunning, setQuitRunning] = useState<number | null>(null);
+  const toastSeq = useRef(0);
+  const reported = useRef(false);
+
+  const notify = useCallback((text: string, tone: 'info' | 'error' = 'info') => {
+    const id = ++toastSeq.current;
+    setToasts((t) => [...t.slice(-3), { id, text, tone }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === 'error' ? 8000 : 4000);
   }, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => void refresh(query), 120);
-    return () => clearTimeout(t);
-  }, [query, refresh]);
-
-  const selected = useMemo(() => profiles.find((p) => p.id === selectedId) ?? null, [profiles, selectedId]);
-
-  const launch = async (p: LocalProfile) => {
-    setStatus(null);
+  const refresh = useCallback(async () => {
     try {
-      await api.launchProfile(p.id);
-      setStatus({ kind: 'info', text: `${p.name} opened.` });
-      await refresh(query);
+      setApp(await backend.workspaces.appState());
     } catch (e) {
-      setStatus({ kind: 'error', text: isIpcError(e) ? e.message : 'The profile could not be opened.' });
+      notify(errorMessage(e, 'Could not load the app state.'), 'error');
     }
-  };
+  }, [backend, notify]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Record manager startup time once the first real screen has rendered (kept separate from browser timings).
+  useEffect(() => {
+    if (app && !reported.current) {
+      reported.current = true;
+      requestAnimationFrame(() => void backend.system.reportUiReady().catch(() => undefined));
+    }
+  }, [app, backend]);
+
+  // Theme preference: system (default), light or dark.
+  const theme = app?.settings.find((s) => s.key === 'appearance.theme')?.value;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+    else delete root.dataset.theme;
+  }, [theme]);
+
+  useEffect(() => {
+    const offOp = backend.on('operation', (op) => {
+      if (op.status === 'running') return;
+      setRefreshKey((k) => k + 1);
+      if (op.status === 'failed') notify(op.message ?? 'The action failed.', 'error');
+      else if (op.kind === 'stop_profile') notify('Profile closed.');
+      else if (op.kind === 'launch_profile') notify('Profile opened.');
+      else if (op.kind === 'close_all') notify('All profiles closed.');
+    });
+    const offChanged = backend.on('profiles-changed', (p) => {
+      setRefreshKey((k) => k + 1);
+      setApp((a) => (a ? { ...a, running_count: p.running } : a));
+    });
+    const offQuit = backend.on('quit-requested', (p) => setQuitRunning(p.running));
+    return () => {
+      offOp();
+      offChanged();
+      offQuit();
+    };
+  }, [backend, notify]);
+
+  if (!app) {
+    return (
+      <p role="status" className="loading">
+        Loading…
+      </p>
+    );
+  }
+
+  const live = <LiveRegion messages={toasts} />;
+  if (app.store.status === 'failed') {
+    return (
+      <>
+        <DatabaseRecovery backend={backend} app={app} onRecovered={refresh} notify={notify} />
+        {live}
+      </>
+    );
+  }
+  if (app.first_run) {
+    return (
+      <>
+        <Welcome backend={backend} onDone={refresh} notify={notify} />
+        {live}
+      </>
+    );
+  }
 
   return (
     <div className="layout">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
       <aside className="sidebar" aria-label="Workspace and navigation">
         <label className="workspace">
-          <span className="pb-sr-only">Workspace</span>
-          <select value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
-            {WORKSPACES.map((w) => (
+          <span className="sidebar__label">Workspace</span>
+          <select
+            value={app.active_workspace_id ?? ''}
+            onChange={async (e) => {
+              try {
+                await backend.workspaces.setActiveWorkspace(e.target.value);
+                await refresh();
+                setRefreshKey((k) => k + 1);
+              } catch (err) {
+                notify(errorMessage(err), 'error');
+              }
+            }}
+          >
+            {app.workspaces.map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
               </option>
             ))}
           </select>
         </label>
-        <nav>
+        <nav aria-label="Main">
           <ul>
-            {NAV.map((item) => (
-              <li key={item}>
-                <a href={`#${item.toLowerCase()}`} aria-current={item === 'Profiles' ? 'page' : undefined}>
-                  {item}
-                </a>
+            {NAV.map(([id, label]) => (
+              <li key={id}>
+                <button
+                  type="button"
+                  className="nav-item"
+                  aria-current={view === id ? 'page' : undefined}
+                  onClick={() => {
+                    setView(id);
+                    if (id === 'settings') void refresh();
+                  }}
+                >
+                  {label}
+                </button>
               </li>
             ))}
           </ul>
         </nav>
-        <p className="sidebar__note">Engineering preview · local profiles only</p>
+        <div className="sidebar__status" role="status">
+          {app.running_count === 0
+            ? 'No profiles open'
+            : `${app.running_count} profile${app.running_count === 1 ? '' : 's'} open`}
+          <span className="sidebar__hint">Profiles can stay open when the manager is closed.</span>
+        </div>
+        <p className="sidebar__note">Internal build {app.app.version} · local profiles only</p>
       </aside>
 
-      <main className="main">
-        <header className="toolbar">
-          <h1>Profiles</h1>
-          <input
-            type="search"
-            placeholder="Search name or client"
-            aria-label="Search profiles"
-            value={query}
-            maxLength={200}
-            onChange={(e) => setQuery(e.target.value)}
+      <main className="main" id="main" tabIndex={-1}>
+        {view === 'profiles' && (
+          <ProfilesScreen
+            backend={backend}
+            refreshKey={refreshKey}
+            notify={notify}
+            runningCount={app.running_count}
           />
-          <button
-            type="button"
-            className="pb-button"
-            data-variant="primary"
-            onClick={() => setCreating(true)}
-          >
-            New profile
-          </button>
-        </header>
-
-        {status && (
-          <div
-            role={status.kind === 'error' ? 'alert' : 'status'}
-            className={`banner banner--${status.kind}`}
-          >
-            {status.text}
-          </div>
         )}
-
-        <table className="profiles">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Client</th>
-              <th scope="col">Status</th>
-              <th scope="col">
-                <span className="pb-sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((p) => (
-              <tr key={p.id} aria-selected={p.id === selectedId} onClick={() => setSelectedId(p.id)}>
-                <td>
-                  <button type="button" className="link" onClick={() => setSelectedId(p.id)}>
-                    {p.name}
-                  </button>
-                </td>
-                <td>
-                  {p.client_label ? <ClientBadge label={p.client_label} /> : <span className="muted">—</span>}
-                </td>
-                <td>
-                  {p.running_pid ? <span className="ok">Open</span> : <span className="muted">Closed</span>}
-                </td>
-                <td className="actions">
-                  <button
-                    type="button"
-                    className="pb-button"
-                    disabled={!!p.running_pid}
-                    onClick={() => void launch(p)}
-                  >
-                    Open
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {profiles.length === 0 && (
-              <tr>
-                <td colSpan={4} className="empty">
-                  No profiles match.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        {view === 'downloads' && (
+          <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
+        )}
+        {view === 'diagnostics' && <DiagnosticsScreen backend={backend} notify={notify} />}
+        {view === 'settings' && (
+          <SettingsScreen backend={backend} app={app} onChanged={refresh} notify={notify} />
+        )}
       </main>
 
-      {selected && <DetailDrawer profile={selected} onClose={() => setSelectedId(null)} onOpen={launch} />}
-      {creating && (
-        <CreateDialog
-          onCancel={() => setCreating(false)}
-          onCreated={async (p) => {
-            setCreating(false);
-            await refresh(query);
-            setSelectedId(p.id);
-          }}
+      {app.recovery.previous_session_crashed && (
+        <CrashPrompt
+          backend={backend}
+          app={app}
+          onDone={refresh}
+          onDiagnostics={() => setView('diagnostics')}
         />
       )}
-    </div>
-  );
-}
-
-function DetailDrawer(props: {
-  profile: LocalProfile;
-  onClose: () => void;
-  onOpen: (p: LocalProfile) => void;
-}) {
-  const { profile: p } = props;
-  return (
-    <aside className="drawer" aria-label={`Details for ${p.name}`}>
-      <header>
-        <h2>{p.name}</h2>
-        <button type="button" className="pb-button" onClick={props.onClose} aria-label="Close details">
-          ×
-        </button>
-      </header>
-      <dl>
-        <dt>Client</dt>
-        <dd>{p.client_label ? <ClientBadge label={p.client_label} /> : 'None'}</dd>
-        <dt>Status</dt>
-        <dd>{p.running_pid ? 'Open on this device' : 'Closed'}</dd>
-        <dt>Created</dt>
-        <dd>{new Date(p.created_at).toLocaleString()}</dd>
-        <dt>Storage</dt>
-        <dd>Separate cookies, site storage and cache on this device.</dd>
-      </dl>
-      <p className="muted small">
-        Separate profiles keep stored website data apart. They do not make profiles look like different
-        devices or networks to websites.
-      </p>
-      <button
-        type="button"
-        className="pb-button"
-        data-variant="primary"
-        disabled={!!p.running_pid}
-        onClick={() => props.onOpen(p)}
-      >
-        Open profile
-      </button>
-    </aside>
-  );
-}
-
-function CreateDialog(props: { onCancel: () => void; onCreated: (p: LocalProfile) => void }) {
-  const [name, setName] = useState('');
-  const [client, setClient] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const nameRef = useRef<HTMLInputElement>(null);
-  // Move focus into the dialog when it opens (keyboard and screen-reader users land on the first field).
-  useEffect(() => nameRef.current?.focus(), []);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      props.onCreated(await api.createLocalProfile(name, client));
-    } catch (err) {
-      setError(isIpcError(err) ? err.message : 'Could not create the profile.');
-    }
-  };
-  return (
-    <div className="scrim">
-      <form
-        className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="create-title"
-        onSubmit={submit}
-      >
-        <h2 id="create-title">New profile</h2>
-        <label>
-          Name
-          <input
-            required
-            maxLength={120}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            ref={nameRef}
-          />
-        </label>
-        <label>
-          Client (optional)
-          <input maxLength={120} value={client} onChange={(e) => setClient(e.target.value)} />
-        </label>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <div className="dialog__actions">
-          <button type="button" className="pb-button" onClick={props.onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="pb-button" data-variant="primary">
-            Create
-          </button>
-        </div>
-      </form>
+      {quitRunning !== null && (
+        <QuitPrompt
+          backend={backend}
+          running={quitRunning}
+          notify={notify}
+          onClose={() => setQuitRunning(null)}
+        />
+      )}
+      {live}
     </div>
   );
 }

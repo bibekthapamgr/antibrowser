@@ -413,8 +413,16 @@ impl AppState {
         let op = self
             .ops
             .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
+        let t0 = Instant::now();
         let spawned = match self.launcher.spawn(&spec) {
-            Ok(s) => s,
+            Ok(s) => {
+                // Browser process start is measured on its own, never folded into manager start-up time.
+                if let Ok(store) = self.store() {
+                    let _ = store
+                        .record_timing("browser_spawn_ms", t0.elapsed().as_secs_f64() * 1000.0);
+                }
+                s
+            }
             Err(e) => {
                 let err = IpcError::from(e);
                 self.ops.fail(&op, err.code, err.message);
@@ -636,6 +644,7 @@ impl AppState {
             "browsers": {
                 "running": self.supervisor.running_count(),
                 "main_process_rss_bytes": self.supervisor.browser_memory_bytes(),
+                "spawn_ms": summary("browser_spawn_ms"),
             },
             "system_memory_bytes": sys.total_memory(),
             "crash_reports": recovery::list_reports(&self.paths.data).len(),
