@@ -19,6 +19,13 @@ afterAll(async () => {
   await h.close();
 });
 
+/** Well-formed token with a bad signature, built at runtime so no token-shaped literal sits in the repo. */
+const forgedToken = () =>
+  [{ alg: 'HS256' }, { sub: 'usr_x' }]
+    .map((part) => Buffer.from(JSON.stringify(part)).toString('base64url'))
+    .concat(Buffer.from('invalid-signature').toString('base64url'))
+    .join('.');
+
 const auth = async (user: Parameters<Harness['token']>[0]) => ({
   authorization: `Bearer ${await h.token(user)}`,
 });
@@ -38,7 +45,7 @@ describe('API tenant isolation', () => {
     const res = await h.app.inject({
       method: 'GET',
       url: '/v1/me',
-      headers: { authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c3JfeCJ9.aW52YWxpZHNpZ25hdHVyZQ' },
+      headers: { authorization: `Bearer ${forgedToken()}` },
     });
     expect(res.statusCode).toBe(401);
   });

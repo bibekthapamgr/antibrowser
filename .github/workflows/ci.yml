@@ -26,6 +26,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+      - name: Report findings as annotations (values are never printed)
+        if: failure()
+        run: |
+          [ -f results.sarif ] || exit 0
+          jq -r '.runs[].results[] | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine),title=gitleaks \(.ruleId)::\(.ruleId) in \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' results.sarif | head -20
 
   js:
     name: lint, types, tests (TypeScript + PostgreSQL)
@@ -48,7 +53,7 @@ jobs:
         run: PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f infra/db/bootstrap-local.sql
       - run: pnpm run lint
       - run: pnpm run typecheck
-      - run: pnpm run test
+      - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
       - name: OpenAPI document is up to date
         run: |
           PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -c "select 1" >/dev/null
@@ -71,8 +76,8 @@ jobs:
       - run: rustup show active-toolchain   # installs the pinned toolchain from rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - run: scripts/ci/annotate.sh "clippy (linux)" cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: scripts/ci/annotate.sh "rust tests (linux)" cargo test --workspace --locked
       - name: Local search latency baseline (informational)
         run: cargo test -p pb-storage --release --test search_latency -- --ignored --nocapture
 
@@ -108,6 +113,8 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - name: Build manager (unsigned; signing is a milestone 02 gate)
-        run: cargo build -p pb-desktop --release --locked
+        shell: bash
+        run: scripts/ci/annotate.sh "build ${{ matrix.target }}" cargo build -p pb-desktop --release --locked
       - name: Rust tests on target OS
-        run: cargo test --workspace --locked
+        shell: bash
+        run: scripts/ci/annotate.sh "rust tests ${{ matrix.target }}" cargo test --workspace --locked
