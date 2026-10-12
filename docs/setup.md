@@ -75,6 +75,10 @@ PB_TEST_SWITCHES=--ozone-platform=headless,--disable-gpu,--password-store=basic 
 Debug builds of the manager can use a local browser with `PB_DEV_BROWSER=/path/to/chrome` (optionally
 `PB_DEV_BROWSER_VERSION`). Release builds only run the runtime from the signed manifest (docs/runtime-pipeline.md).
 
+Shortcut on macOS (Apple Silicon) or Linux: `scripts/dev/try-runtime.sh` downloads the Chrome for Testing build the
+pipeline tested, checks its pinned SHA-256, and opens the manager as a debug build using it (`pnpm tauri dev`);
+`scripts/dev/try-runtime.sh --tests` runs the real-browser tests instead. Run it as your normal user.
+
 ## 4. Checks (same as CI)
 
 ```bash
