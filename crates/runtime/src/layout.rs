@@ -9,6 +9,10 @@
 //!
 //! The directory name is the validated `ProfileId` and nothing else. After resolution the path is
 //! canonicalised and must remain a direct child of the canonical root; symlinks are refused.
+//!
+//! On Windows, `canonicalize` returns verbatim paths (`\\?\C:\...`). Chromium does not accept them as
+//! `--user-data-dir` (it cannot open the profile and waits on an error dialog), so canonical paths are converted back
+//! to the ordinary form whenever that form means exactly the same file ([`simplify_path`]).
 
 use crate::id::ProfileId;
 use std::io;
@@ -43,7 +47,7 @@ impl ProfilesRoot {
         if !path.is_absolute() {
             return Err(LayoutError::BadRoot);
         }
-        let canonical = path.canonicalize().map_err(|_| LayoutError::BadRoot)?;
+        let canonical = simplify_path(&path.canonicalize().map_err(|_| LayoutError::BadRoot)?);
         if !canonical.is_dir() {
             return Err(LayoutError::BadRoot);
         }
@@ -79,7 +83,7 @@ impl ProfilesRoot {
         for p in [&dirs.root, &dirs.user_data, &dirs.cache] {
             self.check_not_symlink(p)?;
         }
-        let canonical = dirs.root.canonicalize()?;
+        let canonical = simplify_path(&dirs.root.canonicalize()?);
         if canonical.parent() != Some(self.canonical.as_path()) {
             return Err(LayoutError::Escape);
         }
@@ -96,9 +100,81 @@ impl ProfilesRoot {
     }
 }
 
+/// Converts a Windows verbatim path (`\\?\C:\dir`, `\\?\UNC\server\share\dir`) to its ordinary form when
+/// the ordinary form names the same file: shorter than `MAX_PATH`, and no component that Windows would reinterpret
+/// (reserved device names, trailing dots or spaces). Anything else is returned unchanged. No-op on other platforms.
+pub fn simplify_path(path: &Path) -> PathBuf {
+    if cfg!(windows)
+        && let Some(simple) = path.to_str().and_then(simplify_verbatim)
+    {
+        return PathBuf::from(simple);
+    }
+    path.to_path_buf()
+}
+
+fn simplify_verbatim(s: &str) -> Option<String> {
+    let rest = s.strip_prefix(r"\\?\")?;
+    let (prefix_len, simple) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        (2, format!(r"\\{unc}"))
+    } else {
+        let b = rest.as_bytes();
+        if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
+            return None;
+        }
+        (3, rest.to_owned())
+    };
+    if simple.len() >= 260 || simple.contains('/') {
+        return None;
+    }
+    let reserved = |name: &str| {
+        let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+        matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        ) || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+    };
+    let ok = simple[prefix_len..]
+        .split('\\')
+        .filter(|c| !c.is_empty())
+        .all(|c| c != "." && c != ".." && !c.ends_with('.') && !c.ends_with(' ') && !reserved(c));
+    ok.then_some(simple)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verbatim_windows_paths_are_simplified_only_when_equivalent() {
+        assert_eq!(
+            simplify_verbatim(r"\\?\C:\Users\me\AppData\profiles").as_deref(),
+            Some(r"C:\Users\me\AppData\profiles")
+        );
+        assert_eq!(
+            simplify_verbatim(r"\\?\UNC\server\share\dir").as_deref(),
+            Some(r"\\server\share\dir")
+        );
+        for unchanged in [
+            r"C:\already\simple",
+            r"\\?\C:\dir\nul",
+            r"\\?\C:\dir\com1.txt",
+            r"\\?\C:\trailing.\x",
+            r"\\?\C:\trailing \x",
+            r"\\?\Volume{0b1e}\x",
+        ] {
+            assert_eq!(simplify_verbatim(unchanged), None, "{unchanged}");
+        }
+        let long = format!(r"\\?\C:\{}", "a\\".repeat(200));
+        assert_eq!(simplify_verbatim(&long), None);
+        if !cfg!(windows) {
+            assert_eq!(
+                simplify_path(Path::new(r"\\?\C:\x")),
+                PathBuf::from(r"\\?\C:\x")
+            );
+        }
+    }
 
     fn id() -> ProfileId {
         ProfileId::parse("prf_01J9ZSEED0A010000000000000").unwrap_or_else(|_| panic!("id"))

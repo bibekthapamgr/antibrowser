@@ -23,7 +23,7 @@ pub use launch::{
     ALLOWED_EXTRA_SWITCHES, BrowserInstall, LaunchError, LaunchRequest, LaunchSpec, Launcher,
     MAX_START_URLS, ProfileState, Spawned, SystemLauncher, prepare_launch, valid_start_url,
 };
-pub use layout::{LayoutError, ProfileDirs, ProfilesRoot};
+pub use layout::{LayoutError, ProfileDirs, ProfilesRoot, simplify_path};
 pub use lock::ProfileLock;
 pub use prefs::{BrowserPrefs, PermissionDefault};
 pub use state::{RunEvent, RunState};

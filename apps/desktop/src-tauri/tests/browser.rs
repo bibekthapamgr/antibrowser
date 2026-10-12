@@ -110,15 +110,15 @@ impl Server {
         )
     }
 
-    fn wait_report(&self, who: &str) -> Value {
+    fn wait_report(&self, who: &str) -> Option<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
         while Instant::now() < deadline {
             if let Some(v) = self.reports.lock().ok().and_then(|mut r| r.remove(who)) {
-                return v;
+                return Some(v);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        panic!("no report from {who} within 60 s");
+        None
     }
 }
 
@@ -281,7 +281,10 @@ impl Env {
             "launch {who}: {:?}",
             self.state.ops.get(&op.operation_id)
         );
-        let report = self.server.wait_report(who);
+        let report = self
+            .server
+            .wait_report(who)
+            .unwrap_or_else(|| panic!("no report from {who} within 60 s; {}", self.diagnose(id)));
         assert!(report.get("error").is_none(), "{who}: {report}");
         if mode != "read" && cfg!(not(any(windows, target_os = "macos"))) {
             // Linux closes with SIGTERM ("session ending"), which does not flush storage written moments ago;
@@ -309,6 +312,54 @@ impl Env {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(!self.state.supervisor.is_tracked(id), "run ended");
+    }
+
+    /// One line describing the profile's browser processes and folder (shown when a test fails, since CI logs
+    /// are often only available as annotations).
+    fn diagnose(&self, id: &ProfileId) -> String {
+        let ud = self.user_data(id);
+        let snapshot = self.state.supervisor.inspector().snapshot();
+        let mains = procs::browser_mains(&snapshot, &ud);
+        let procs: Vec<String> = snapshot
+            .iter()
+            .filter(|p| {
+                p.args.iter().any(|a| {
+                    a.starts_with("--user-data-dir=") && a.ends_with(&*ud.to_string_lossy())
+                })
+            })
+            .map(|p| {
+                let kind = p
+                    .args
+                    .iter()
+                    .find_map(|a| a.strip_prefix("--type="))
+                    .unwrap_or("browser");
+                format!("{}:{kind}", p.pid)
+            })
+            .collect();
+        let list = |dir: PathBuf| -> String {
+            std::fs::read_dir(dir)
+                .map(|r| {
+                    let mut v: Vec<String> = r
+                        .filter_map(Result::ok)
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect();
+                    v.sort();
+                    v.join(",")
+                })
+                .unwrap_or_else(|e| format!("<{e}>"))
+        };
+        let args = mains.first().map(|m| m.args.join(" ")).unwrap_or_default();
+        format!(
+            "user-data={} | processes=[{}] | main args=[{args}] | status={} | top=[{}] | Default=[{}]",
+            ud.display(),
+            procs.join(" "),
+            self.state
+                .profile_status(id)
+                .map(|s| serde_json::to_string(&s.profile).unwrap_or_default())
+                .unwrap_or_default(),
+            list(ud.clone()),
+            list(ud.join("Default")),
+        )
     }
 
     fn user_data(&self, id: &ProfileId) -> PathBuf {
@@ -484,7 +535,9 @@ fn repeated_launch_requests_start_one_browser() {
         env.wait(&ops[0], Duration::from_secs(60)),
         OpStatus::Succeeded
     );
-    env.server.wait_report("a-double");
+    env.server
+        .wait_report("a-double")
+        .unwrap_or_else(|| panic!("no report; {}", env.diagnose(&a)));
     std::thread::sleep(Duration::from_secs(1));
     assert_eq!(
         env.mains(&a).len(),

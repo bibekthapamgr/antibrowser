@@ -12,11 +12,15 @@ log="$(mktemp)"
 status=$?
 cat "$log"
 if [ "$status" -ne 0 ]; then
-  sed -e 's/\x1b\[[0-9;]*m//g' "$log" \
-    | grep -E "^error(\[E[0-9]+\])?:|panicked at|^---- .* stdout ----|^test .* FAILED|^failures:|assertion|error: could not|ERR_|Error:|  --> | FAIL |×" \
-    | grep -v "^error: test failed" | head -40 > "$log.sel" || true
+  clean="$log.clean"
+  sed -e 's/\x1b\[[0-9;]*m//g' -e 's/\r//g' "$log" > "$clean"
+  # Panics first, each with the line after it (the panic message), then other failure lines.
+  awk 'keep { print; keep = 0; next } /panicked at/ { print; keep = 1 }' "$clean" > "$log.sel" || true
+  grep -E "^error(\[E[0-9]+\])?:|^test .* FAILED|assertion|error: could not|ERR_|Error:|  --> | FAIL |×" "$clean" \
+    | grep -v "^error: test failed" >> "$log.sel" || true
+  head -40 "$log.sel" > "$log.top"
   # Group lines into at most 10 annotations (GitHub's per-step limit).
-  split -l 4 -a 2 "$log.sel" "$log.part." 2>/dev/null || true
+  split -l 2 -a 2 "$log.top" "$log.part." 2>/dev/null || true
   n=0
   for part in "$log".part.*; do
     [ -f "$part" ] || continue

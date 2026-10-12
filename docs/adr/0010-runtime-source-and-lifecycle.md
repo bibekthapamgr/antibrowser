@@ -51,6 +51,7 @@ The product owner chose Chrome for Testing for the internal alpha (2026-10-12).
    copies the stopped, quiesced profile to `backups/<id>/last-good` (caches and lock files excluded), replacing the
    previous copy only after the new one is complete. Restore moves the current data to `evidence/<id>/…` first (three
    kept) and never writes into the backup. Copies are refused below 512 MiB headroom; launches below 1 GiB free.
+   Opening a profile cancels a routine copy in progress (the previous copy stays); a launch never waits behind it.
 10. **Profile settings** go into Chromium's `Default/Preferences` while the profile is stopped and locked: profile
     name (shown in Chromium's profile menu), client colour (`browser.theme.user_color`, best effort), download folder,
     camera/microphone/location defaults. Start URLs are passed after `--` on the command line, because Chromium

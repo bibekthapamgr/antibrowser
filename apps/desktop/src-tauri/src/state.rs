@@ -652,8 +652,13 @@ impl AppState {
         {
             return Err(ipc::INVALID_DIRECTORY);
         }
-        let dir = std::fs::canonicalize(chosen).map_err(|_| ipc::INVALID_DIRECTORY)?;
-        let data = std::fs::canonicalize(&self.paths.data).map_err(|_| ipc::INTERNAL)?;
+        // Ordinary (non-verbatim) form on Windows: the path is written into Chromium's settings.
+        let dir = pb_runtime::simplify_path(
+            &std::fs::canonicalize(chosen).map_err(|_| ipc::INVALID_DIRECTORY)?,
+        );
+        let data = pb_runtime::simplify_path(
+            &std::fs::canonicalize(&self.paths.data).map_err(|_| ipc::INTERNAL)?,
+        );
         if !dir.is_dir() || dir.starts_with(&data) || data.starts_with(&dir) {
             return Err(ipc::INVALID_DIRECTORY);
         }
