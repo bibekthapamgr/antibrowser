@@ -996,7 +996,10 @@ fn profile_settings_are_validated_and_written_into_the_browser_profile() {
         prefs["download"]["default_directory"]
             .as_str()
             .map(PathBuf::from),
-        std::fs::canonicalize(&downloads).ok()
+        // Ordinary path form (never Windows' \\?\ verbatim form), since Chromium reads it.
+        std::fs::canonicalize(&downloads)
+            .ok()
+            .map(|p| pb_runtime::simplify_path(&p))
     );
 }
 

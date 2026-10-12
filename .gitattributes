@@ -1,0 +1,5 @@
+# Signed files must stay byte-exact on every OS: no line-ending conversion (a Windows checkout with
+# core.autocrlf would otherwise turn LF into CRLF and the embedded manifest would fail its signature check).
+runtimes/manifest.json -text
+runtimes/manifest.json.sig -text
+runtimes/trusted-keys.json -text

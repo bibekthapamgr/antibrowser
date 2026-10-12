@@ -15,6 +15,9 @@ regexes = [
   '''pb-local-only-password''',
   # Fake JWT used by the crash-report scrubber test (header {"alg":"HS256"}, payload {"sub":"1234567890"}, no real signature).
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.abcdef012345''',
+  # Forged token from the milestone 01 API test (history only; payload {"sub":"usr_x"}, signature is the text
+  # "invalidsignature"). Full-history scans (manual runs) still see it.
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c3JfeCJ9\.aW52YWxpZHNpZ25hdHVyZQ''',
 ]
 paths = [
   '''docs/openapi\.json''',
