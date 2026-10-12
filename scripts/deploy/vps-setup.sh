@@ -210,9 +210,9 @@ if [[ $RUN_TESTS == 1 ]]; then
       TEST_DATABASE_URL='postgres://pb_app:$APP_PW@127.0.0.1:5432/pb_test' \
       TEST_WORKER_DATABASE_URL='postgres://pb_worker:$WORKER_PW@127.0.0.1:5432/pb_test' \
       TEST_MIGRATION_DATABASE_URL='postgres://pb_owner:$OWNER_PW@127.0.0.1:5432/pb_test' \
-      pnpm run test" > /tmp/pb-tests.log 2>&1; then
+      NO_COLOR=1 FORCE_COLOR=0 pnpm run test" > /tmp/pb-tests.log 2>&1; then
     # pnpm prefixes each line with the package path, e.g. "services/api test:  Tests  25 passed (25)".
-    ok "$( (grep -oE 'Tests +[0-9]+ passed' /tmp/pb-tests.log || true) | awk '{s+=$2} END {print s+0" tests passed"}')"
+    ok "$( (sed 's/\x1b\[[0-9;]*m//g' /tmp/pb-tests.log | grep -oE 'Tests +[0-9]+ passed' || true) | awk '{s+=$2} END {print s+0" tests passed"}')"
   else
     grep -E "FAIL|×|Error" /tmp/pb-tests.log | head -20
     die "tests failed; full log: /tmp/pb-tests.log"
