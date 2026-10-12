@@ -18,7 +18,7 @@ code and does not make profiles look like different devices or networks.
 | 5. Graceful close with timeout, then explicit force close; wait for all writers before a copy | Done (Windows WM_CLOSE, macOS standard quit, Linux SIGTERM; force close offered after 10 s; copies only after the whole process tree exited; live databases never copied) |
 | 6. Last known-good state; actionable status after an interrupted start; no reopen loops | Done (daily last-good copy after a clean close and before an engine upgrade; crash/interrupted/damaged statuses with suggested recovery; the manager never reopens by itself) |
 | 7. Pinned manifests, compatibility test set, regular stable updates | Done (5 real-browser tests per platform gate the signing step; weekly run warns when behind upstream) |
-| 8. Portability spike with real cookie encryption; backup vs session-transfer matrix | Done for the CI matrix; see [portability-matrix.md](portability-matrix.md) |
+| 8. Portability spike with real cookie encryption; backup vs session-transfer matrix | Same-machine rows done (macOS, Linux: everything kept); cross-machine rows run automatically after Windows passes. v1 support matrix written: [portability-matrix.md](portability-matrix.md) |
 
 ## Native API and metadata
 | Required | Implemented as |
@@ -50,27 +50,36 @@ customised (as the handoff file allows). No command-line editor.
 ## Exit criteria
 | Criterion | Status |
 |---|---|
-| Controlled-origin tests prove no storage leakage between A and B | Passed on WINDOWS_STATUS, macOS arm64 and Linux x64 with Chrome for Testing 155.0.8059.39 |
-| Restart preserves A's state; a crash does not attach it to B | Same runs (incl. cookies after restart on Windows/macOS) |
+| Controlled-origin tests prove no storage leakage between A and B | **Passed on macOS arm64 and Linux x64** with Chrome for Testing 155.0.8059.39. **Windows x64 pending** (fix for the Windows failures pushed, not yet run; see below) |
+| Restart preserves A's state; a crash does not attach it to B | Same runs (incl. cookies after restart on macOS) |
 | Repeated double-click creates one run | Same runs (5 concurrent requests → one operation, one browser) + `ipc.rs` |
 | No debug endpoint exposed to the network | No remote-debugging switch can be passed; tests confirm no `DevToolsActivePort` and no such switch on the running browser |
-| Ten launch/close cycles keep a clean state across supported OS builds | Same runs (CI runner OS images). **Manual run on the owner's Windows 11 and macOS machines still to do** |
+| Ten launch/close cycles keep a clean state across supported OS builds | macOS arm64 and Linux x64 passed (CI runner OS images). **Windows pending; manual run on the owner's Windows 11 and macOS machines still to do** |
 
 ## Deliverables
 | Deliverable | Where |
 |---|---|
 | Runtime adapter | `crates/runtime` (launch, preferences, process tree, lock, backups) + `crates/update` (manifest, download, install) |
 | Process supervisor | `apps/desktop/src-tauri/src/supervisor.rs`, `lifecycle.rs` |
-| Version manifest | `runtimes/manifest.json` + `.sig` (MANIFEST_STATUS); `docs/version-manifest.md` |
+| Version manifest | Format, signing and verification done; **the signed `runtimes/manifest.json` + `.sig` for 155.0.8059.39 are not committed yet** because signing requires all three platforms to pass. Until then the manager shows "No approved browser in this build" (development builds can point at a local browser) |
 | Isolation test evidence | [isolation-evidence.md](isolation-evidence.md) |
 | Crash recovery guide | [crash-recovery.md](crash-recovery.md) |
 | Portability matrix | [portability-matrix.md](portability-matrix.md) |
 
 ## Test totals
-Rust 107 (runtime 31, storage 15, update 16, desktop 16 unit + 24 IPC integration + 5 real-browser); TypeScript 58
+Rust 108 (runtime 32, storage 15, update 16, desktop 16 unit + 24 IPC integration + 5 real-browser); TypeScript 58
 (incl. 15 desktop unit/contract); UI end-to-end 39.
 
+## What is still open
+| Item | Blocked on |
+|---|---|
+| Windows x64 real-browser run (fix for verbatim `\\?\` profile paths in commit 703ef1c) | GitHub Actions: "recent account payments have failed or your spending limit needs to be increased" (private repository; every workflow has been refused since 2026-10-12) |
+| Cross-machine portability rows | The Windows run (the matrix starts only when all three platforms pass) |
+| Signed runtime manifest for 155.0.8059.39 committed to `runtimes/` | The Windows run, then one pipeline run with `sign` ticked |
+
 ## Owner actions
+0. **GitHub billing:** Settings → Billing and plans → fix the payment method or raise the Actions spending limit,
+   then re-run *runtime pipeline* with `sign` ticked (or ask Claude to).
 1. **Manual check on your own machines:** open two profiles on Windows 11 and on your Mac, sign in to a site in one,
    confirm the other is signed out, close and reopen.
 2. **Before any customer or external user (team beta at 08 at the latest):** choose a redistributable, properly signed

@@ -10,8 +10,8 @@
 //! The directory name is the validated `ProfileId` and nothing else. After resolution the path is
 //! canonicalised and must remain a direct child of the canonical root; symlinks are refused.
 //!
-//! On Windows, `canonicalize` returns verbatim paths (`\\?\C:\...`). Chromium does not accept them as
-//! `--user-data-dir` (it cannot open the profile and waits on an error dialog), so canonical paths are converted back
+//! On Windows, `canonicalize` returns verbatim paths (`\\?\C:\...`). Chromium and many Windows programs do not
+//! handle that form (the suspected cause of the first Windows test failures), so canonical paths are converted back
 //! to the ordinary form whenever that form means exactly the same file ([`simplify_path`]).
 
 use crate::id::ProfileId;
