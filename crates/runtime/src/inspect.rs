@@ -127,13 +127,15 @@ impl ProcessInspector for SystemInspector {
         #[cfg(windows)]
         {
             // taskkill without /F posts WM_CLOSE to the process's windows: Chromium shuts down and flushes state.
+            // Only the browser main process is asked (no /T): its helper processes have no windows, and the browser
+            // ends them itself as part of an orderly shutdown.
             let system_root =
                 std::env::var_os("SYSTEMROOT").unwrap_or_else(|| "C:\\Windows".into());
             let taskkill = PathBuf::from(system_root)
                 .join("System32")
                 .join("taskkill.exe");
             std::process::Command::new(taskkill)
-                .args(["/PID", &pid.to_string(), "/T"])
+                .args(["/PID", &pid.to_string()])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

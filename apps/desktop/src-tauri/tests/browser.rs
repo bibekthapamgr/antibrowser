@@ -312,18 +312,60 @@ impl Env {
             .state
             .stop_profile(id, false)
             .unwrap_or_else(|e| panic!("stop: {e:?}"));
-        assert_eq!(
-            self.wait(&op.operation_id, Duration::from_secs(30)),
-            OpStatus::Succeeded,
-            "graceful close: {:?}",
-            self.state.ops.get(&op.operation_id)
-        );
+        if self.wait(&op.operation_id, Duration::from_secs(30)) != OpStatus::Succeeded {
+            panic!(
+                "graceful close: {:?}; {}; {}",
+                self.state.ops.get(&op.operation_id),
+                self.close_diagnosis(id),
+                self.diagnose(id)
+            );
+        }
         let deadline = Instant::now() + Duration::from_secs(20);
         while self.state.supervisor.is_tracked(id) && Instant::now() < deadline {
             self.state.poll_once();
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(!self.state.supervisor.is_tracked(id), "run ended");
+    }
+
+    /// Windows: what the OS says about a browser that did not close (session, window title), and whether a plain
+    /// close request (WM_CLOSE to the main process only) works when sent by hand.
+    fn close_diagnosis(&self, id: &ProfileId) -> String {
+        if !cfg!(windows) {
+            return String::new();
+        }
+        let Some(pid) = self.mains(id).first().copied() else {
+            return "no browser main process left".into();
+        };
+        let run = |program: &str, args: &[&str]| -> String {
+            std::process::Command::new(program)
+                .args(args)
+                .output()
+                .map(|o| {
+                    format!(
+                        "exit {} out=[{}] err=[{}]",
+                        o.status,
+                        String::from_utf8_lossy(&o.stdout)
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        String::from_utf8_lossy(&o.stderr)
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                })
+                .unwrap_or_else(|e| format!("<{e}>"))
+        };
+        let filter = format!("PID eq {pid}");
+        let tasklist = run("tasklist", &["/V", "/FO", "LIST", "/FI", &filter]);
+        let pid_s = pid.to_string();
+        let manual = run("taskkill", &["/PID", &pid_s]);
+        std::thread::sleep(Duration::from_secs(8));
+        let exited = !self.mains(id).contains(&pid);
+        format!(
+            "close diagnosis: tasklist=[{tasklist}] | manual taskkill (no /T)=[{manual}] | main exited 8 s later: {exited}"
+        )
     }
 
     /// One line describing the profile's browser processes and folder (shown when a test fails, since CI logs
