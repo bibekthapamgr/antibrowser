@@ -55,6 +55,7 @@ customised (as the handoff file allows). No command-line editor.
 | Repeated double-click creates one run | Same runs (5 concurrent requests → one operation, one browser) + `ipc.rs` |
 | No debug endpoint exposed to the network | No remote-debugging switch can be passed; tests confirm no `DevToolsActivePort` and no such switch on the running browser |
 | Ten launch/close cycles keep a clean state across supported OS builds | macOS arm64 and Linux x64 passed (CI runner OS images). **Windows pending; manual run on the owner's Windows 11 and macOS machines still to do** |
+| Manual check on the owner's Mac | 2026-10-13, MacBook (Apple Silicon), debug build with Chrome for Testing 155.0.8059.39 (`scripts/dev/try-runtime.sh`): two profiles each searched Google, were closed and reopened; each kept its own browsing history and neither saw the other's. Crash, double-click, settings and re-attach not yet checked by hand (covered by the CI tests on macOS) |
 
 ## Deliverables
 | Deliverable | Where |
@@ -80,8 +81,8 @@ Rust 108 (runtime 32, storage 15, update 16, desktop 16 unit + 24 IPC integratio
 ## Owner actions
 0. **GitHub billing:** Settings → Billing and plans → fix the payment method or raise the Actions spending limit,
    then re-run *runtime pipeline* with `sign` ticked (or ask Claude to).
-1. **Manual check on your own machines:** open two profiles on Windows 11 and on your Mac, sign in to a site in one,
-   confirm the other is signed out, close and reopen.
+1. **Manual check on Windows 11:** open two profiles, sign in to a site in one, confirm the other is signed out, close
+   and reopen (done on the Mac on 2026-10-13: history stayed separate and survived reopening).
 2. **Before any customer or external user (team beta at 08 at the latest):** choose a redistributable, properly signed
    runtime (ADR-0010 gate 2).
 3. Code-signing certificates from milestone 02 are still outstanding.
