@@ -75,3 +75,15 @@ See [docs/spikes/README.md](spikes/README.md). Run as a **non-root** user so the
 | Secrets | fixtures in repo | fixtures in repo | secret manager | secret manager |
 
 `packages/config` refuses to start staging/prod with dev auth, a repository fixture secret, a localhost database, or a bucket not suffixed with the environment name. Provisioning the staging/prod cloud accounts, IdP tenants and buckets is an owner action that cannot be done from the repository (see milestone-01-status.md).
+
+## Test server (Linux VPS)
+
+`scripts/deploy/vps-setup.sh` sets up a shared test server (RHEL-family or Debian/Ubuntu): Node 24 in `/opt/node`, PostgreSQL 18, a `pb` user with a read-only GitHub deploy key, random database passwords in `/etc/project-browser/api.env`, migrations, fixture tenants, the test suite, and `pb-api` / `pb-worker` systemd services bound to `127.0.0.1`. It does not change firewall or SSH settings.
+
+```bash
+scp scripts/deploy/vps-setup.sh root@<server>:/root/
+ssh root@<server> 'bash /root/vps-setup.sh'      # first run prints the deploy key to add on GitHub
+ssh root@<server> 'bash /root/vps-setup.sh'      # second run deploys; re-run any time to update
+ssh -N -L 8080:127.0.0.1:8080 root@<server>      # then http://127.0.0.1:8080/v1/health on your machine
+```
+The server runs with `APP_ENV=dev` and development tokens, so the API must stay private until OIDC login exists (milestone 06).
