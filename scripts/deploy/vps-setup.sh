@@ -90,7 +90,7 @@ else
   ok "installed $($NODE_ROOT/bin/node -v) at $ver_dir (checksum verified)"
 fi
 if [[ -x $NODE_ROOT/bin/corepack ]]; then
-  "$NODE_ROOT/bin/corepack" enable --install-directory "$NODE_ROOT/bin" pnpm
+  PATH="$NODE_ROOT/bin:$PATH" "$NODE_ROOT/bin/corepack" enable --install-directory "$NODE_ROOT/bin" pnpm
 else
   PATH="$NODE_ROOT/bin:$PATH" "$NODE_ROOT/bin/npm" install -g --silent pnpm@10.34.6
 fi
