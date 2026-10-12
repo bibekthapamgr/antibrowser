@@ -7,10 +7,10 @@ Checked 2026-10-12 against the roadmap (project instructions) and `01-Architectu
 | Step | Status | Evidence |
 |---|---|---|
 | 1. Monorepo with apps/desktop, apps/web-admin, services/api, services/worker, packages/contracts, packages/ui, packages/config, infra, docs/adr; Rust workspace owns runtime, storage, update crates; pinned Rust, Node, package manager | Done | Repository layout; `rust-toolchain.toml`, `.nvmrc`, `packageManager`, lockfiles; [ADR-0007](adr/0007-toolchain-and-versions.md) |
-| 2. Format/lint/type checks, clippy, secret scanning, dependency/license inventory; PR checks compile desktop targets and run tests | Done (CI defined; first GitHub run pending) | `.github/workflows/ci.yml` (Windows + macOS arm64 compile), `.gitleaks.toml`, `pnpm licenses` → [licenses/summary.md](licenses/summary.md): 591 packages, none outside the allow-list |
+| 2. Format/lint/type checks, clippy, secret scanning, dependency/license inventory; PR checks compile desktop targets and run tests | Done: CI green on GitHub 2026-10-12 (Node 24, PostgreSQL 18, Linux, Windows x64, macOS arm64) | `.github/workflows/ci.yml` (Windows + macOS arm64 compile), `.gitleaks.toml`, `pnpm licenses` → [licenses/summary.md](licenses/summary.md): 591 packages, none outside the allow-list |
 | 3. dev/staging/prod identities, databases, buckets; no prod secrets in fixtures; two seeded tenants | **Partly**: dev/test done; staging/prod are config-enforced but **not provisioned** | `infra/env/*.example`, `packages/config` refuses unsafe staging/prod config (5 tests); two fixture tenants seeded |
 | 4. Spike: two sandboxed Chromium instances, distinct directories, cookie/localStorage/IndexedDB isolation | Done (Linux harness); Windows/macOS re-run with chosen runtime pending | [spikes/01-step4](spikes/01-step4-storage-isolation.md): 6/6 checks pass |
-| 5. Spike: Tauri→Rust launch IPC rejects invalid profile/path before starting any process | Done | [spikes/01-step5](spikes/01-step5-ipc-validation.md): 18 malicious requests, 0 processes, 0 directories |
+| 5. Spike: Tauri→Rust launch IPC rejects invalid profile/path before starting any process | Done on Linux, Windows x64 and macOS arm64 (CI) | [spikes/01-step5](spikes/01-step5-ipc-validation.md): 18 malicious requests, 0 processes, 0 directories |
 | 6. Spike: closed-profile snapshot/restore same device and across a second device; record constraints | Same device done; **cross-device Windows/macOS pending** | [spikes/01-step6](spikes/01-step6-snapshot-restore.md); stop gate applied in [ADR-0002](adr/0002-profile-portability.md) |
 | 7. ADRs: runtime distribution, profile portability, encryption trust model, identity provider, regions, supported OS | Written; 0002/0006/0007/0008 accepted, **0001/0003/0005 proposed** (need sign-off) | [docs/adr](adr/README.md) |
 
@@ -41,7 +41,7 @@ Local search baseline: 10,000 rows, p95 2.13 ms (target <= 200 ms; sandbox VM, r
 1. **Choose the browser runtime** and ratify the security-update SLA (ADR-0001). Then re-run spikes 4 and 6 on Windows 11 and macOS arm64 with it.
 2. **Sign off ADR-0003** (key custody) and **ADR-0005** (region; needs expected customer locations).
 3. **Provision staging and prod**: cloud accounts, managed PostgreSQL 18, private buckets (`pb-snapshots-staging`, `pb-snapshots-prod`), OIDC tenants, secret manager entries.
-4. Push to a GitHub repository so CI runs once (confirms Node 24 and PostgreSQL 18, Windows/macOS compile).
+4. ~~Push to GitHub so CI runs~~ — done: `bibekthapamgr/antibrowser` (private), all jobs green. First-run fixes: Windows icon, single Tauri context expansion for macOS, Windows test manifest, platform app origin in IPC tests.
 5. Start Apple Developer Program enrollment (D-U-N-S) and Windows code signing; 02 requires signed internal builds.
 
 ## Requirements handed to later milestones
