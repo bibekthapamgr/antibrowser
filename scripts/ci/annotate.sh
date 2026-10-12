@@ -21,6 +21,7 @@ if [ "$status" -ne 0 ]; then
     msg=$(sed -e 's/%/%25/g' -e 's/\r//g' "$part" | awk '{printf "%s%%0A", $0}')
     echo "::error title=${title} (${n})::${msg}"
   done
-  [ "$n" -eq 0 ] && echo "::error title=${title}::failed with exit ${status}; last lines: $(tail -5 "$log" | tr '\n' ' ' | cut -c1-900)"
+  # Always show where the run stopped (a hang killed by a timeout leaves no failure lines).
+  echo "::error title=${title} (last lines)::exit ${status}; $(sed -e 's/\x1b\[[0-9;]*m//g' "$log" | tail -8 | tr '\n' ' ' | cut -c1-1500)"
 fi
 exit "$status"

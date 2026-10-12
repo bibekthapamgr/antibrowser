@@ -1,4 +1,4 @@
-# Security model (draft, milestones 01–02)
+# Security model (draft, milestones 01–03)
 
 This document states what the product protects, what it does not, and the disclosures customers must see. Milestone 12 turns it into a reviewed threat model.
 
@@ -6,14 +6,15 @@ This document states what the product protects, what it does not, and the disclo
 | Asset | Protection in place now | Planned |
 |---|---|---|
 | Tenant data in the API | Server-derived membership; non-members get 404; row-level security on every tenant table; response schemas strip unexpected fields; least-privilege DB roles | Pen test (12) |
-| Profile directories | Named only by validated id; symlinks refused; containment re-checked after creation | Exclusive OS lock per profile (03) |
-| Manager UI → native code | 19 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
+| Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them | Encrypted snapshots (07) |
+| Manager UI → native code | 23 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
 | External links and deep links | Only `https://github.com/…` help links open, and only in the system browser; deep links accepted only for the auth-callback shape bound to a one-time state | OIDC sign-in (06) |
 | Local database | WAL + foreign keys; all pending migrations in one transaction; a copy is taken before upgrading; a failed upgrade keeps the previous database and shows recovery actions | Encrypted local secrets (07) |
-| Runtime installs | Free-space check before writing; journal for interrupted installs; digest mismatch → quarantine; archive extraction refuses absolute paths, `..`, symlinks and zip bombs | Signed runtime manifests (12, ADR-0001) |
+| Browser runtime | Only the runtime in the Ed25519-signed manifest (owner key, verified against compiled-in public keys); download prefix compiled in; https only, size-capped; SHA-256 + size checked before extraction, mismatch → quarantine; extraction refuses absolute paths, `..`, escaping links, writes through links and zip bombs; executable and macOS code signature checked; free-space check; journal for interrupted installs. No executable path is accepted from the UI or settings in release builds | Over-the-air manifest updates and key revocation (12); redistributable runtime before customers (ADR-0010) |
 | Secrets on the device | OS keychain only; if unavailable, secret persistence is disabled (no file fallback) | 06–07 |
 | Crash data | Local only, opt-in flag off by default, home paths/user names/tokens scrubbed, at most 20 reports | Upload service (13) |
-| Browser processes | Launched with a minimal environment (no inherited tokens); fixed argument list; Chromium sandbox left on | Runtime update SLA (ADR-0001) |
+| Browser processes | Launched from a structured argument list with a minimal environment (no inherited tokens); start URLs only http(s) and after `--`; extra switches only from an allowlist used by tests (`--no-sandbox` and remote debugging are not in it); identified by pid + start time + executable; only a profile's own verified process tree is ever force-closed | Runtime update SLA (ADR-0001) |
+| Local audit log | Launch/stop/crash/recover/backup/install events with machine codes only — never URLs, titles, cookies or passwords; bounded to 5,000 entries | Server audit (06) |
 | Snapshots | Planned client-side encryption before upload (ADR-0003) | 07 |
 | Logs | Authorization, cookie and idempotency headers redacted; errors carry codes, not stack traces or SQL | OpenTelemetry pipeline with redaction (13) |
 
@@ -33,6 +34,16 @@ This document states what the product protects, what it does not, and the disclo
 - Rust: `apps/desktop/src-tauri/tests/ipc.rs` — wrong window, path traversal and malformed ids, 5 MB request, disallowed URLs, settings allowlist, download-folder validation, capability boundary for remote origins, manager kill during migration and during a runtime install.
 - UI: `apps/desktop/e2e/` runs the production bundle under the same CSP as the shell and fails on any CSP violation.
 - Contract: `apps/desktop/tests/contract.test.ts` fails if the TypeScript contract, generated permissions, capability file and Rust handler list disagree.
+
+## Milestone 03 boundary tests
+- Real Chromium (`apps/desktop/src-tauri/tests/browser.rs`, run per OS by the runtime pipeline): no storage leakage between profiles (cookies, localStorage, IndexedDB, Cache Storage, service workers), no `DevToolsActivePort` and no debug/sandbox switches, crash never attached to another profile, one browser per profile under concurrent launches.
+- Manifest: tampered bytes, unknown key, wrong key, URLs outside the compiled prefix and malformed fields are refused (`crates/update/src/tests.rs`); tampered downloads are quarantined (`tests/ipc.rs`).
+- Process safety: an unrelated process that reuses a pid is never adopted or signalled; a foreign executable using a profile folder is refused, not killed.
+
+## Known gaps after milestone 03
+- The runtime is Chrome for Testing, licensed for testing only: **not for customer distribution** (ADR-0010 gate).
+- Linux (development only) closes browsers with SIGTERM, which may drop cookie writes from the last ~30 seconds.
+- Extension data isolation follows from separate user-data folders but is exercised by tests only when extensions arrive (09).
 
 ## Known gaps after milestone 02
 - Installers are **unsigned** until the organization's Apple Developer ID and Windows code-signing certificates are added as repository secrets.

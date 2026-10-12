@@ -70,6 +70,7 @@ jobs:
   compat:
     name: compatibility (${{ matrix.platform }})
     needs: resolve
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -105,12 +106,14 @@ jobs:
           PB_TEST_SWITCHES: ${{ matrix.switches }}
         run: |
           set -o pipefail
+          cargo test --locked -p pb-desktop --test browser --no-run
           scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
-            cargo test --locked -p pb-desktop --test browser -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+            timeout 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
           passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | tail -1)
           mkdir -p out
           cp "${{ steps.rt.outputs.artifact }}" out/
           echo "{\"platform\":\"${{ matrix.platform }}\",\"result\":\"pass\",\"tests\":${passed:-0},\"run_url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > "out/compat-${{ matrix.platform }}.json"
+          echo "::notice title=compatibility ${{ matrix.platform }}::${passed:-0} real-browser tests passed with $PB_TEST_BROWSER_VERSION; artifact $(cat "${{ steps.rt.outputs.artifact }}")"
       - name: Portability spike, source side (sign in, close, copy; restore on this machine)
         shell: bash
         env:
@@ -121,7 +124,8 @@ jobs:
           export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
           export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.platform }}-same.json"
           scripts/ci/annotate.sh "portability create ${{ matrix.platform }}" \
-            cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+            timeout 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+          echo "::notice title=portability ${{ matrix.platform }} same machine::$(cat "$PB_PORTABILITY_RESULT")"
       - uses: actions/upload-artifact@v4
         with: { name: "runtime-meta-${{ matrix.platform }}", path: out/ }
       - uses: actions/upload-artifact@v4
@@ -130,6 +134,7 @@ jobs:
   portability:
     name: restore ${{ matrix.source }} on ${{ matrix.platform }}
     needs: [resolve, compat]
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -170,7 +175,8 @@ jobs:
           export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
           export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.source }}-to-${{ matrix.platform }}.json"
           scripts/ci/annotate.sh "portability verify" \
-            cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+            timeout 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+          echo "::notice title=portability ${{ matrix.source }} to ${{ matrix.platform }}::$(cat "$PB_PORTABILITY_RESULT")"
       - uses: actions/upload-artifact@v4
         with: { name: "portability-${{ matrix.source }}-to-${{ matrix.platform }}", path: out/ }
 
@@ -188,6 +194,7 @@ jobs:
       - run: |
           node scripts/runtime/portability-report.mjs results "${{ needs.resolve.outputs.version }}" > portability-matrix.md
           cat portability-matrix.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=portability matrix::$(grep '^|' portability-matrix.md | tail -n +3 | tr '\n' ';')"
       - uses: actions/upload-artifact@v4
         with: { name: portability-matrix, path: portability-matrix.md }
 
@@ -209,6 +216,10 @@ jobs:
           RUNTIME_MANIFEST_SIGNING_KEY: ${{ secrets.RUNTIME_MANIFEST_SIGNING_KEY }}
         run: node scripts/runtime/manifest.mjs sign runtimes/manifest.json pb-runtime-2026-10
       - run: node scripts/runtime/manifest.mjs verify runtimes/manifest.json runtimes/manifest.json.sig runtimes/trusted-keys.json
+      - name: Publish the signed manifest in the run log (the files are also an artifact)
+        run: |
+          echo "::notice title=runtime manifest::$(base64 -w0 runtimes/manifest.json)"
+          echo "::notice title=runtime manifest signature::$(cat runtimes/manifest.json.sig)"
       - run: |
           {
             echo "### Signed runtime manifest ${{ needs.resolve.outputs.version }}"

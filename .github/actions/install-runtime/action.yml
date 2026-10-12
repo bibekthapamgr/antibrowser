@@ -34,6 +34,18 @@ runs:
         echo "PB_TEST_BROWSER=$exe" >> "$GITHUB_ENV"
         echo "PB_TEST_BROWSER_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
         echo "artifact=$art" >> "$GITHUB_OUTPUT"
+    - name: Upstream code signature (macOS evidence)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        # Compare Apple's own extraction with ours, so a signature failure is attributed correctly.
+        mkdir -p "$RUNNER_TEMP/ditto" && ditto -x -k "$RUNNER_TEMP/runtime.zip" "$RUNNER_TEMP/ditto"
+        app=$(find "$RUNNER_TEMP/ditto" -maxdepth 2 -name '*.app' | head -1)
+        upstream=$(codesign --verify --deep --strict "$app" 2>&1 && echo valid || true)
+        ours_app=$(find "$RUNNER_TEMP/runtimes/installed" -maxdepth 3 -name '*.app' | head -1)
+        ours=$(codesign --verify --deep --strict "$ours_app" 2>&1 && echo valid || true)
+        authority=$(codesign -dv --verbose=2 "$app" 2>&1 | grep -E '^(Authority|TeamIdentifier|Signature)' | tr '\n' ' ')
+        echo "::notice title=macOS runtime signature::upstream(ditto): ${upstream:0:300} | installed: ${ours:0:300} | ${authority:0:300}"
     - name: Allow the Chromium sandbox (Ubuntu 24.04 restricts unprivileged user namespaces)
       if: runner.os == 'Linux'
       shell: bash

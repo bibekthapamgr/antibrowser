@@ -251,6 +251,7 @@ impl Env {
 
     /// Opens `id` on the test page and returns what the page reported.
     fn visit(&self, id: &ProfileId, mode: &str, who: &str, tag: &str) -> Value {
+        eprintln!("pb-step: open {who} ({mode})");
         let url = self.server.url(mode, who, tag);
         let op = self
             .state
@@ -264,15 +265,16 @@ impl Env {
         );
         let report = self.server.wait_report(who);
         assert!(report.get("error").is_none(), "{who}: {report}");
-        if mode == "write" && cfg!(not(any(windows, target_os = "macos"))) {
+        if mode != "read" && cfg!(not(any(windows, target_os = "macos"))) {
             // Linux closes with SIGTERM ("session ending"), which does not flush storage written moments ago;
             // give Chromium's own commit timers time to run. Windows/macOS use a normal quit that flushes.
-            std::thread::sleep(Duration::from_secs(8));
+            std::thread::sleep(Duration::from_secs(if mode == "write" { 8 } else { 5 }));
         }
         report
     }
 
     fn close(&self, id: &ProfileId) {
+        eprintln!("pb-step: close {id}");
         let op = self
             .state
             .stop_profile(id, false)

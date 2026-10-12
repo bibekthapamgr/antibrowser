@@ -1,5 +1,5 @@
 # 0001 — Browser runtime distribution
-Status: **Proposed**. Date: 2026-10-12. Owner: technical lead + browser/security owner. Blocks: milestone 03.
+Status: **Proposed**; the engineering-alpha choice is superseded by [ADR-0010](0010-runtime-source-and-lifecycle.md) (Chrome for Testing via a signed manifest). The team-beta/paid-launch distribution and security SLA below remain open. Date: 2026-10-12. Owner: technical lead + browser/security owner.
 
 ## Context
 The roadmap requires a "maintained Chromium stable distribution, pinned per release", separate processes and directories, and dedicated browser-security maintenance capacity. Chromium ships security fixes frequently; a pinned build that is not updated quickly becomes the product's largest security liability. Building Chromium from source needs very large CI machines and a dedicated owner; the suggested team has one Rust/browser engineer.

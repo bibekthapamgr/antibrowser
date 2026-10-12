@@ -197,23 +197,53 @@ impl Launcher for SystemLauncher {
 
 /// Minimal environment for the browser: the manager's secrets/tokens are never inherited.
 fn safe_env() -> Vec<(String, String)> {
-    const ALLOW: &[&str] = &[
-        "PATH",
-        "HOME",
-        "USERPROFILE",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "TEMP",
-        "TMP",
-        "SYSTEMROOT",
-        "LANG",
-        "LC_ALL",
-        "DISPLAY",
-        "WAYLAND_DISPLAY",
-        "XDG_RUNTIME_DIR",
-    ];
-    std::env::vars()
-        .filter(|(k, _)| ALLOW.contains(&k.as_str()))
+    safe_env_from(std::env::vars())
+}
+
+/// Variables a browser needs to run; nothing else (tokens, proxies set for the manager, debug flags) is passed.
+/// Windows variable names are case-insensitive (`SystemRoot`, `Path`), so names are compared in upper case.
+const ALLOWED_ENV: &[&str] = &[
+    // all platforms
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TMPDIR",
+    "USER",
+    "LOGNAME",
+    // Linux display
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    // Windows: without SystemRoot, networking and system DLL loading fail
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "COMMONPROGRAMFILES",
+    "ALLUSERSPROFILE",
+    "PUBLIC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+];
+
+fn safe_env_from(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    vars.filter(|(k, _)| ALLOWED_ENV.contains(&k.to_ascii_uppercase().as_str()))
         .collect()
 }
 
@@ -343,6 +373,22 @@ mod tests {
             !root.dirs(&id()).root.exists(),
             "no directory may be created for a rejected launch"
         );
+    }
+
+    #[test]
+    fn environment_is_minimal_and_case_insensitive() {
+        let vars = [
+            ("SystemRoot", "C:\\Windows"),
+            ("Path", "C:\\Windows\\System32"),
+            ("HOME", "/Users/a"),
+            ("PB_API_TOKEN", "secret"),
+            ("HTTPS_PROXY", "http://manager-only"),
+            ("RUST_LOG", "debug"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        let kept: Vec<String> = safe_env_from(vars).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(kept, ["SystemRoot", "Path", "HOME"]);
     }
 
     #[test]

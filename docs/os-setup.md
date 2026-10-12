@@ -1,4 +1,4 @@
-# OS setup notes (milestone 02)
+# OS setup notes (milestones 02–03)
 
 Supported targets for internal builds (ADR-0006): **Windows 11 x64** and **macOS 13+ on Apple Silicon**. Linux builds compile in CI for development only.
 
@@ -35,7 +35,20 @@ Only do this for builds whose checksum matches `SHA256SUMS` from the workflow ru
 | Manager database, browser profiles, crash reports | `%LOCALAPPDATA%\dev.projectbrowser.manager\` | `~/Library/Application Support/dev.projectbrowser.manager/` |
 | Secrets (later milestones) | Windows Credential Manager, service `dev.projectbrowser.manager` | Keychain, service `dev.projectbrowser.manager` |
 
-Inside the data directory: `local.db` (SQLite, WAL), `local.db.v<N>.bak` (copy taken before a schema upgrade), `profiles/<prf_…>/` (one Chromium user-data directory per profile), `runtimes/` (verified browser runtimes), `crash-reports/` (scrubbed, local only), `session.json` (clean-exit marker), `manager.lock`.
+Inside the data directory: `local.db` (SQLite, WAL), `local.db.v<N>.bak` (copy taken before a schema upgrade), `profiles/<prf_…>/user-data` (one Chromium user-data directory per profile) with `cache/` and `manager.lock` beside it, `runtimes/installed/<version>-<platform>/` (verified browser runtime; `staging/` and `quarantine/` for interrupted and rejected downloads), `backups/<prf_…>/last-good/` (last good copy of each profile), `evidence/<prf_…>/` (data moved aside by a recovery, newest three kept), `crash-reports/` (scrubbed, local only), `session.json` (clean-exit marker), `manager.lock`.
+
+## Browser runtime (milestone 03)
+- Open **Downloads and updates → Install browser**. The manager downloads the Chrome for Testing build pinned in this
+  release (about 160 MB) straight from Google's server, checks its size and SHA-256 against the signed list built into
+  the app, and only then unpacks it. A mismatch is quarantined, never opened.
+- Chrome for Testing shows a bar saying it is for automated testing. That is expected in the internal alpha
+  (ADR-0010); customer builds will use a different browser source.
+- **macOS:** closing a profile sends the normal *Quit* request to that browser. If macOS asks whether
+  *Project Browser* may control the browser, choose **OK**; otherwise closing falls back to a faster signal that can
+  lose the last few seconds of website changes. If macOS asks whether the browser may use its *Safe Storage*
+  keychain item (Chromium encrypts cookies with it), choose **Always Allow**.
+- **Windows:** closing a profile closes its windows normally (like clicking ×).
+- Profiles cannot be opened with less than 1 GiB of free disk space.
 
 Browser profiles contain cookies and site data in plaintext while in use (see security-model.md, disclosure 1). Use OS disk encryption (BitLocker / FileVault).
 
