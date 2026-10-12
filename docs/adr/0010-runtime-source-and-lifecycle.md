@@ -57,6 +57,15 @@ The product owner chose Chrome for Testing for the internal alpha (2026-10-12).
     MAC-protects its startup-page preferences. There is no command-line editor; extra switches exist only for the
     manager's own test configuration and are allow-listed (`--no-sandbox` and remote debugging are not allowed).
 
+## Pipeline findings (2026-10-12, Chrome for Testing 155.0.8059.39)
+- **macOS:** the upstream `Google Chrome for Testing.app` is ad-hoc signed and fails `codesign --verify --deep --strict`
+  ("code has no resources but signature indicates they must be present") both when extracted by Apple's `ditto` and
+  by the manager's installer, so the extraction is faithful and the upstream bundle is the cause. The pipeline
+  therefore records `macos_codesign: none`; integrity rests on the pinned SHA-256 and size of the archive. A
+  customer-grade runtime must be properly signed (gate 2 above).
+- **Linux:** SIGTERM takes Chromium's "session ending" path; storage written in the last seconds can be lost. Linux is
+  a development platform only.
+
 ## Consequences
 - Every manager release carries one pinned runtime; updating it is: run the pipeline (sign=true) → commit the two
   files → release the manager. Milestone 12 adds over-the-air manifest updates.

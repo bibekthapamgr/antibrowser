@@ -47,7 +47,7 @@ Fixture users: `acmeOwner`, `acmeOperator`, `acmeViewer`, `betaOwner` (`services
 ```bash
 pnpm --filter @pb/desktop build          # bundle the trusted UI
 cargo run -p pb-desktop                  # opens the manager window
-# optional, debug builds only: point at a local Chromium build for launching profiles
+# optional, debug builds only: use a local Chromium instead of installing the pinned runtime
 PB_DEV_BROWSER=/path/to/chromium cargo run -p pb-desktop
 pnpm dev:desktop-ui                      # UI alone in a browser with demo data
 ```
@@ -63,6 +63,17 @@ PB_SCREENSHOTS=1 PB_CHROME_PATH=... pnpm test:e2e     # also refreshes docs/desi
 ```
 
 Installers: `pnpm --filter @pb/desktop tauri build` locally, or the *desktop internal build* workflow (see [os-setup.md](os-setup.md)).
+
+Real-browser tests (milestone 03: isolation, crash, double launch, ten cycles, portability) need a Chromium and a
+non-root user (the Chromium sandbox stays on):
+
+```bash
+PB_TEST_BROWSER=/path/to/chrome PB_TEST_BROWSER_VERSION=155.0.8059.39 \
+PB_TEST_SWITCHES=--ozone-platform=headless,--disable-gpu,--password-store=basic \
+  cargo test -p pb-desktop --test browser -- --test-threads=1
+```
+Debug builds of the manager can use a local browser with `PB_DEV_BROWSER=/path/to/chrome` (optionally
+`PB_DEV_BROWSER_VERSION`). Release builds only run the runtime from the signed manifest (docs/runtime-pipeline.md).
 
 ## 4. Checks (same as CI)
 

@@ -34,7 +34,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: runtime-pipeline-${{ github.ref }}
+  # A push never cancels a manual (signing) run, and vice versa.
+  group: runtime-pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:
@@ -108,7 +109,7 @@ jobs:
           set -o pipefail
           cargo test --locked -p pb-desktop --test browser --no-run
           scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
-            timeout 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+            scripts/ci/with-timeout.sh 1500 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
           passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | tail -1)
           mkdir -p out
           cp "${{ steps.rt.outputs.artifact }}" out/
@@ -124,7 +125,7 @@ jobs:
           export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
           export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.platform }}-same.json"
           scripts/ci/annotate.sh "portability create ${{ matrix.platform }}" \
-            timeout 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+            scripts/ci/with-timeout.sh 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
           echo "::notice title=portability ${{ matrix.platform }} same machine::$(cat "$PB_PORTABILITY_RESULT")"
       - uses: actions/upload-artifact@v4
         with: { name: "runtime-meta-${{ matrix.platform }}", path: out/ }
@@ -175,7 +176,7 @@ jobs:
           export PB_PORTABILITY_DIR="$RUNNER_TEMP/portable"
           export PB_PORTABILITY_RESULT="$GITHUB_WORKSPACE/out/portability-${{ matrix.source }}-to-${{ matrix.platform }}.json"
           scripts/ci/annotate.sh "portability verify" \
-            timeout 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
+            scripts/ci/with-timeout.sh 900 cargo test --locked -p pb-desktop --test browser portability_spike -- --test-threads=1 --nocapture
           echo "::notice title=portability ${{ matrix.source }} to ${{ matrix.platform }}::$(cat "$PB_PORTABILITY_RESULT")"
       - uses: actions/upload-artifact@v4
         with: { name: "portability-${{ matrix.source }}-to-${{ matrix.platform }}", path: out/ }
