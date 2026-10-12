@@ -85,3 +85,11 @@ Rust 108 (runtime 32, storage 15, update 16, desktop 16 unit + 24 IPC integratio
 2. **Before any customer or external user (team beta at 08 at the latest):** choose a redistributable, properly signed
    runtime (ADR-0010 gate 2).
 3. Code-signing certificates from milestone 02 are still outstanding.
+
+## Handed to later milestones
+- 04: profile manager screens at scale (bulk actions, filters) on top of the lifecycle commands.
+- 05: proxies and environment settings (no command-line editor; new switches go through the allow-list).
+- 07: encrypted cloud snapshots reuse the last-good copy rules (closed profile, caches and locks excluded).
+- 08: handoff must tell the receiving user to sign in to sites again on another device (portability matrix).
+- 12: over-the-air runtime manifest updates and key revocation through signed update metadata.
+- Before team beta / 14: replace Chrome for Testing with a redistributable, properly signed runtime (ADR-0010 gate 2).
