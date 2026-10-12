@@ -1,0 +1,31 @@
+{
+  "name": "project-browser",
+  "private": true,
+  "description": "Project Browser monorepo (brand undecided). Milestone 01: architecture and engineering foundation.",
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm -r --parallel run typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 run test",
+    "db:migrate": "pnpm --filter @pb/api run db:migrate",
+    "db:seed": "pnpm --filter @pb/api run db:seed",
+    "db:reset": "pnpm --filter @pb/api run db:reset",
+    "dev:api": "pnpm --filter @pb/api run dev",
+    "dev:worker": "pnpm --filter @pb/worker run dev",
+    "dev:desktop-ui": "pnpm --filter @pb/desktop run dev",
+    "openapi": "pnpm --filter @pb/api run openapi",
+    "licenses": "node scripts/license-inventory.mjs",
+    "spike:isolation": "pnpm --filter @pb/spikes run isolation",
+    "spike:snapshot": "pnpm --filter @pb/spikes run snapshot",
+    "docs:permissions": "node scripts/permission-matrix.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "typescript": "7.0.2"
+  }
+}

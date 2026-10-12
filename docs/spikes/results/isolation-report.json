@@ -1,0 +1,82 @@
+{
+  "spike": "01-step-4-storage-isolation",
+  "origin": "http://127.0.0.1:42503",
+  "environment": {
+    "browser_executable": "/opt/pb-chromium/chromium",
+    "browser_version": "HeadlessChrome/153.0.8010.0",
+    "headless": "shell",
+    "extra_args": ["--disable-gpu"],
+    "sandbox": "enabled (no --no-sandbox; non-root user; Chromium refuses to start without a usable sandbox)",
+    "platform": "linux-x64",
+    "os": "Linux 6.18.44-fc-v114 x86_64",
+    "node": "v22.22.0",
+    "run_at": "2026-10-12T05:49:45.309Z"
+  },
+  "checks": [
+    {
+      "name": "two concurrent browser processes",
+      "pass": true,
+      "detail": {
+        "pidA": 15332,
+        "pidB": 15333
+      }
+    },
+    {
+      "name": "A can read its own cookie/localStorage/IndexedDB",
+      "pass": true,
+      "detail": {
+        "cookie": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+        "localStorage": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+        "indexedDB": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06"
+      }
+    },
+    {
+      "name": "B cannot read A values (cookie, localStorage, IndexedDB)",
+      "pass": true,
+      "detail": {
+        "cookie": null,
+        "localStorage": null,
+        "indexedDB": null
+      }
+    },
+    {
+      "name": "B never sends A cookie to the origin",
+      "pass": true,
+      "detail": ["", ""]
+    },
+    {
+      "name": "A still sees only its own values after B writes",
+      "pass": true,
+      "detail": {
+        "cookie": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+        "localStorage": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+        "indexedDB": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06"
+      }
+    },
+    {
+      "name": "values persist per directory across restarts",
+      "pass": true,
+      "detail": {
+        "persistedA": {
+          "cookie": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+          "localStorage": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06",
+          "indexedDB": "A-9bb100b8-5ef3-45b2-8f23-4d40d1a5fb06"
+        },
+        "persistedB": {
+          "cookie": "B-d567695d-c7c1-44a4-9b33-275a1bef4f67",
+          "localStorage": "B-d567695d-c7c1-44a4-9b33-275a1bef4f67",
+          "indexedDB": "B-d567695d-c7c1-44a4-9b33-275a1bef4f67"
+        }
+      }
+    }
+  ],
+  "observations": [
+    {
+      "name": "second process on a directory already in use",
+      "result": "a second process started on the same directory",
+      "consequence": "The browser does not protect the directory. The manager must hold an exclusive per-profile lock before launch (milestone 03)."
+    }
+  ],
+  "passed": true,
+  "scope_note": "Proves separation of stored browser data (cookies, localStorage, IndexedDB) between user-data directories. It does not test, and the product must not claim, that profiles appear as different devices or networks."
+}

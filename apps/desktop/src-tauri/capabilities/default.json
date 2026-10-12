@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The only capability: the bundled manager window may list, create and launch local profiles. No filesystem, shell, HTTP or remote-URL permissions are granted to the webview.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default",
+    "allow-list-profiles",
+    "allow-create-local-profile",
+    "allow-launch-profile"
+  ]
+}

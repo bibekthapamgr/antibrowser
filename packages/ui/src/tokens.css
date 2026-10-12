@@ -1,0 +1,160 @@
+/*
+ * Project Browser design tokens (milestone 01). Brand is a placeholder: navy, violet, slate background.
+ * Light and dark themes; follow the OS unless the app sets data-theme.
+ */
+:root {
+  --pb-navy: #111827;
+  --pb-violet: #7c3aed;
+  --pb-violet-strong: #6d28d9;
+  --pb-bg: #f8fafc;
+
+  --pb-surface: #ffffff;
+  --pb-surface-muted: #f1f5f9;
+  --pb-text: #111827;
+  --pb-text-muted: #475569;
+  --pb-border: #e2e8f0;
+  --pb-accent: var(--pb-violet);
+  --pb-accent-text: #ffffff;
+  --pb-danger: #b91c1c;
+  --pb-success: #15803d;
+  --pb-focus: #7c3aed;
+  --pb-sidebar: var(--pb-navy);
+  --pb-sidebar-text: #e2e8f0;
+
+  --pb-radius: 8px;
+  --pb-space-1: 4px;
+  --pb-space-2: 8px;
+  --pb-space-3: 12px;
+  --pb-space-4: 16px;
+  --pb-space-6: 24px;
+  --pb-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --pb-font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+  --pb-text-sm: 13px;
+  --pb-text-md: 14px;
+  --pb-text-lg: 18px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pb-bg: #0b1120;
+    --pb-surface: #111827;
+    --pb-surface-muted: #1f2937;
+    --pb-text: #f1f5f9;
+    --pb-text-muted: #94a3b8;
+    --pb-border: #273244;
+    --pb-accent: #a78bfa;
+    --pb-accent-text: #111827;
+    --pb-danger: #f87171;
+    --pb-success: #4ade80;
+    --pb-focus: #c4b5fd;
+    --pb-sidebar: #060a14;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --pb-bg: #0b1120;
+  --pb-surface: #111827;
+  --pb-surface-muted: #1f2937;
+  --pb-text: #f1f5f9;
+  --pb-text-muted: #94a3b8;
+  --pb-border: #273244;
+  --pb-accent: #a78bfa;
+  --pb-accent-text: #111827;
+  --pb-danger: #f87171;
+  --pb-success: #4ade80;
+  --pb-focus: #c4b5fd;
+  --pb-sidebar: #060a14;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--pb-bg);
+  color: var(--pb-text);
+  font-family: var(--pb-font);
+  font-size: var(--pb-text-md);
+  line-height: 1.45;
+}
+
+/* Visible, consistent keyboard focus everywhere (never removed without a replacement). */
+:focus-visible {
+  outline: 2px solid var(--pb-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must override component transitions */
+    transition: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must override component animations */
+    animation: none !important;
+  }
+}
+
+.pb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-height: 32px;
+  padding: 0 var(--pb-space-3);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-text);
+  font: inherit;
+  cursor: pointer;
+}
+.pb-button:hover {
+  background: var(--pb-surface-muted);
+}
+.pb-button[data-variant="primary"] {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-accent-text);
+}
+.pb-button[data-variant="primary"]:hover {
+  filter: brightness(0.95);
+}
+.pb-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--pb-border);
+  background: var(--pb-surface-muted);
+  font-size: var(--pb-text-sm);
+  color: var(--pb-text);
+}
+.pb-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}

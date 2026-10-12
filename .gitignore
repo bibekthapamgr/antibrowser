@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+!infra/env/*.example
+.DS_Store
+# local runtime data, never committed
+.local/
+spikes/.out/
+apps/desktop/src-tauri/gen/

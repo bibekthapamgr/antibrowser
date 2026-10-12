@@ -1,0 +1,21 @@
+title = "Project Browser secret scanning"
+
+[extend]
+useDefault = true
+
+# Only documented LOCAL FIXTURES are allow-listed, by exact value. packages/config refuses to start
+# staging/prod if any of these values appears in the environment.
+[allowlist]
+description = "Local development fixtures (never valid outside dev/test)"
+regexes = [
+  '''dev-only-insecure-fixture-secret-change-me''',
+  '''pb_(owner|app|worker)_dev''',
+  '''ci-superuser-only''',
+  '''local-superuser-only''',
+  '''pb-local-only-password''',
+]
+paths = [
+  '''docs/openapi\.json''',
+  '''pnpm-lock\.yaml''',
+  '''Cargo\.lock''',
+]

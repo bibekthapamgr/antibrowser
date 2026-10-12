@@ -1,0 +1,2707 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Project Browser control-plane API",
+    "version": "0.1.0",
+    "description": "Milestone 01 skeleton. Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic concurrency, Idempotency-Key on lease acquisition and snapshot commit."
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {}
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ready": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ready"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "display_name",
+                    "memberships"
+                  ],
+                  "properties": {
+                    "user_id": {
+                      "type": "string",
+                      "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "display_name": {
+                      "type": "string"
+                    },
+                    "memberships": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "org_id",
+                          "org_name",
+                          "role"
+                        ],
+                        "properties": {
+                          "org_id": {
+                            "type": "string",
+                            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "org_name": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "enum": [
+                              "owner",
+                              "admin",
+                              "manager",
+                              "operator",
+                              "viewer"
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/devices": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "platform"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "platform": {
+                    "enum": [
+                      "windows-x64",
+                      "macos-arm64",
+                      "macos-x64",
+                      "linux-x64"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "platform",
+                    "created_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "platform": {
+                      "enum": [
+                        "windows-x64",
+                        "macos-arm64",
+                        "macos-x64",
+                        "linux-x64"
+                      ]
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "org_id",
+                          "name",
+                          "client_label",
+                          "folder_label",
+                          "notes",
+                          "version",
+                          "created_at",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "org_id": {
+                            "type": "string",
+                            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          },
+                          "client_label": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 120
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "folder_label": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 120
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "notes": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          },
+                          "updated_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "maxItems": 100
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "client_label": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "folder_label": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "org_id",
+                    "name",
+                    "client_label",
+                    "folder_label",
+                    "notes",
+                    "version",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "org_id": {
+                      "type": "string",
+                      "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "client_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "folder_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "org_id",
+                    "name",
+                    "client_label",
+                    "folder_label",
+                    "notes",
+                    "version",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "org_id": {
+                      "type": "string",
+                      "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "client_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "folder_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "profiles"
+        ],
+        "description": "Requires If-Match: \"<version>\" or body.expected_version. Stale versions return 409.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "client_label": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "folder_label": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false,
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "org_id",
+                    "name",
+                    "client_label",
+                    "folder_label",
+                    "notes",
+                    "version",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "org_id": {
+                      "type": "string",
+                      "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "client_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "folder_label": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/lease": {
+      "get": {
+        "tags": [
+          "leases"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "lease"
+                  ],
+                  "properties": {
+                    "lease": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "profile_id",
+                            "holder_device_id",
+                            "holder_user_id",
+                            "fencing_token",
+                            "acquired_at",
+                            "expires_at"
+                          ],
+                          "properties": {
+                            "profile_id": {
+                              "type": "string",
+                              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "holder_device_id": {
+                              "type": "string",
+                              "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "holder_user_id": {
+                              "type": "string",
+                              "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "fencing_token": {
+                              "type": "string"
+                            },
+                            "acquired_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            "expires_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "leases"
+        ],
+        "description": "Acquire the profile lease for a device. Requires Idempotency-Key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "device_id"
+                ],
+                "properties": {
+                  "device_id": {
+                    "type": "string",
+                    "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "ttl_seconds": {
+                    "type": "integer",
+                    "minimum": 30,
+                    "maximum": 600,
+                    "default": 120
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile_id",
+                    "holder_device_id",
+                    "holder_user_id",
+                    "fencing_token",
+                    "acquired_at",
+                    "expires_at"
+                  ],
+                  "properties": {
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_device_id": {
+                      "type": "string",
+                      "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_user_id": {
+                      "type": "string",
+                      "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "fencing_token": {
+                      "type": "string"
+                    },
+                    "acquired_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile_id",
+                    "holder_device_id",
+                    "holder_user_id",
+                    "fencing_token",
+                    "acquired_at",
+                    "expires_at"
+                  ],
+                  "properties": {
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_device_id": {
+                      "type": "string",
+                      "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_user_id": {
+                      "type": "string",
+                      "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "fencing_token": {
+                      "type": "string"
+                    },
+                    "acquired_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/lease/renew": {
+      "post": {
+        "tags": [
+          "leases"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fencing_token"
+                ],
+                "properties": {
+                  "fencing_token": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$"
+                  },
+                  "ttl_seconds": {
+                    "type": "integer",
+                    "minimum": 30,
+                    "maximum": 600,
+                    "default": 120
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile_id",
+                    "holder_device_id",
+                    "holder_user_id",
+                    "fencing_token",
+                    "acquired_at",
+                    "expires_at"
+                  ],
+                  "properties": {
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_device_id": {
+                      "type": "string",
+                      "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "holder_user_id": {
+                      "type": "string",
+                      "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "fencing_token": {
+                      "type": "string"
+                    },
+                    "acquired_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/lease/release": {
+      "post": {
+        "tags": [
+          "leases"
+        ],
+        "description": "Release with the current fencing token. Releasing an already-released lease is a no-op.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fencing_token"
+                ],
+                "properties": {
+                  "fencing_token": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Commit an encrypted snapshot manifest. Requires Idempotency-Key and the live fencing token.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fencing_token",
+                  "sha256",
+                  "size_bytes",
+                  "platform",
+                  "browser_revision",
+                  "encryption"
+                ],
+                "properties": {
+                  "fencing_token": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "size_bytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "platform": {
+                    "enum": [
+                      "windows-x64",
+                      "macos-arm64",
+                      "macos-x64",
+                      "linux-x64"
+                    ]
+                  },
+                  "browser_revision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "encryption": {
+                    "type": "object",
+                    "required": [
+                      "scheme",
+                      "key_id"
+                    ],
+                    "properties": {
+                      "scheme": {
+                        "type": "string",
+                        "enum": [
+                          "aes-256-gcm-chunked-v1"
+                        ]
+                      },
+                      "key_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "profile_id",
+                    "object_key",
+                    "sha256",
+                    "size_bytes",
+                    "platform",
+                    "browser_revision",
+                    "fencing_token",
+                    "created_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "object_key": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    },
+                    "platform": {
+                      "type": "string"
+                    },
+                    "browser_revision": {
+                      "type": "string"
+                    },
+                    "fencing_token": {
+                      "type": "string"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "profile_id",
+                    "object_key",
+                    "sha256",
+                    "size_bytes",
+                    "platform",
+                    "browser_revision",
+                    "fencing_token",
+                    "created_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "object_key": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "size_bytes": {
+                      "type": "integer"
+                    },
+                    "platform": {
+                      "type": "string"
+                    },
+                    "browser_revision": {
+                      "type": "string"
+                    },
+                    "fencing_token": {
+                      "type": "string"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "RATE_LIMITED",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ]
+}

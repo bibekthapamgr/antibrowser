@@ -1,0 +1,20 @@
+[package]
+name = "pb-storage"
+version = "0.1.0"
+description = "Local device metadata store (SQLite WAL, single writer, bounded queries). Not an authorization authority."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pb-runtime.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

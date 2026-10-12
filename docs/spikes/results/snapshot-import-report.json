@@ -1,0 +1,42 @@
+{
+  "spike": "01-step-6-snapshot-cross-device-import",
+  "passed": true,
+  "expected": {
+    "cookie": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5",
+    "localStorage": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5",
+    "indexedDB": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5"
+  },
+  "restored": {
+    "cookie": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5",
+    "localStorage": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5",
+    "indexedDB": "snap-e837c759-7a48-4e94-9784-30b7667f2cf5"
+  },
+  "exported_on": {
+    "browser_executable": "/opt/pb-chromium/chromium",
+    "browser_version": "HeadlessChrome/153.0.8010.0",
+    "headless": "shell",
+    "extra_args": ["--disable-gpu"],
+    "sandbox": "enabled (no --no-sandbox; non-root user; Chromium refuses to start without a usable sandbox)",
+    "platform": "linux-x64",
+    "os": "Linux 6.18.44-fc-v114 x86_64",
+    "node": "v22.22.0",
+    "run_at": "2026-10-12T05:50:39.268Z"
+  },
+  "imported_on": {
+    "browser_executable": "/opt/pb-chromium/chromium",
+    "browser_version": "",
+    "headless": "shell",
+    "extra_args": ["--disable-gpu"],
+    "sandbox": "enabled (no --no-sandbox; non-root user; Chromium refuses to start without a usable sandbox)",
+    "platform": "linux-x64",
+    "os": "Linux 6.18.44-fc-v114 x86_64",
+    "node": "v22.22.0",
+    "run_at": "2026-10-12T05:50:39.788Z"
+  },
+  "encryption_after_restore": {
+    "cookies_db": "Default/Cookies",
+    "plaintext_value_column_empty": true,
+    "encrypted_value_prefix": "v10"
+  },
+  "interpretation": "Stored data survived this device/OS combination. Re-run for every supported pair before relying on it."
+}

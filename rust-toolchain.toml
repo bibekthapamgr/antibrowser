@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned to the compiler this foundation was verified with. Bump deliberately (see docs/version-manifest.md).
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

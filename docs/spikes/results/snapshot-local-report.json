@@ -1,0 +1,58 @@
+{
+  "spike": "01-step-6-snapshot-same-device",
+  "passed": true,
+  "expected": {
+    "cookie": "snap-00514c59-defa-49bc-aefd-c319f032159e",
+    "localStorage": "snap-00514c59-defa-49bc-aefd-c319f032159e",
+    "indexedDB": "snap-00514c59-defa-49bc-aefd-c319f032159e"
+  },
+  "restored": {
+    "cookie": "snap-00514c59-defa-49bc-aefd-c319f032159e",
+    "localStorage": "snap-00514c59-defa-49bc-aefd-c319f032159e",
+    "indexedDB": "snap-00514c59-defa-49bc-aefd-c319f032159e"
+  },
+  "snapshot": {
+    "files": 33,
+    "user_data_bytes": 179672,
+    "archive_bytes": 7285,
+    "excluded": [
+      "Singleton*",
+      "lockfile",
+      "LOCK",
+      "*/Cache",
+      "*/Code Cache",
+      "*/GPUCache",
+      "*/DawnCache",
+      "*/DawnGraphiteCache",
+      "*/DawnWebGPUCache",
+      "GrShaderCache",
+      "GraphiteDawnCache",
+      "ShaderCache",
+      "Crashpad",
+      "BrowserMetrics*",
+      "component_crx_cache",
+      "*/Service Worker/CacheStorage"
+    ]
+  },
+  "timings_ms": {
+    "snapshot": 33,
+    "restore": 14,
+    "create_profile": 283
+  },
+  "encryption": {
+    "cookies_db": "Default/Cookies",
+    "plaintext_value_column_empty": true,
+    "encrypted_value_prefix": "v10"
+  },
+  "environment": {
+    "browser_executable": "/opt/pb-chromium/chromium",
+    "browser_version": "HeadlessChrome/153.0.8010.0",
+    "headless": "shell",
+    "extra_args": ["--disable-gpu"],
+    "sandbox": "enabled (no --no-sandbox; non-root user; Chromium refuses to start without a usable sandbox)",
+    "platform": "linux-x64",
+    "os": "Linux 6.18.44-fc-v114 x86_64",
+    "node": "v22.22.0",
+    "run_at": "2026-10-12T05:50:31.896Z"
+  }
+}

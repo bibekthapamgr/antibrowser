@@ -1,0 +1,23 @@
+{
+  "name": "@pb/spikes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Milestone 01 feasibility spikes: storage isolation (step 4) and closed-profile snapshot/restore (step 6)",
+  "scripts": {
+    "isolation": "node src/isolation.ts",
+    "snapshot": "node src/snapshot.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "echo 'spikes run explicitly: pnpm spike:isolation / pnpm spike:snapshot'"
+  },
+  "dependencies": {
+    "puppeteer-core": "25.13.0"
+  },
+  "optionalDependencies": {
+    "@sparticuz/chromium": "153.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
