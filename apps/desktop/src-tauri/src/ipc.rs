@@ -280,6 +280,70 @@ pub const INVALID_WINDOW_SIZE: IpcError = IpcError::new(
 pub const INVALID_PRESET: IpcError =
     IpcError::new("INVALID_PRESET", "Preset names are at most 40 characters.");
 
+// ----------------------------------------------------------------------------- account and organizations (06)
+pub const CLOUD_NOT_CONFIGURED: IpcError = IpcError::new(
+    "CLOUD_NOT_CONFIGURED",
+    "Add your organization server's address in Account first.",
+);
+pub const CLOUD_BAD_SERVER: IpcError = IpcError::new(
+    "CLOUD_BAD_SERVER",
+    "Enter the server address starting with https:// (http is accepted only for this computer).",
+);
+pub const CLOUD_SIGNED_OUT: IpcError =
+    IpcError::new("CLOUD_SIGNED_OUT", "Sign in to use organizations.");
+pub const CLOUD_OFFLINE: IpcError = IpcError::new(
+    "CLOUD_OFFLINE",
+    "The organization server cannot be reached. Check your connection and try again.",
+);
+pub const CLOUD_UNAVAILABLE: IpcError = IpcError::new(
+    "CLOUD_UNAVAILABLE",
+    "The organization server is not answering right now. Try again in a moment.",
+);
+pub const CLOUD_TLS: IpcError = IpcError::new(
+    "CLOUD_TLS",
+    "The server's security certificate could not be verified.",
+);
+pub const CLOUD_BAD_RESPONSE: IpcError = IpcError::new(
+    "CLOUD_BAD_RESPONSE",
+    "The server sent an answer this app does not understand.",
+);
+pub const CLOUD_NOT_ALLOWED: IpcError =
+    IpcError::new("CLOUD_NOT_ALLOWED", "That request is not available here.");
+pub const SIGN_IN_UNAVAILABLE: IpcError = IpcError::new(
+    "SIGN_IN_UNAVAILABLE",
+    "The sign-in service cannot be reached. Check your connection and try again.",
+);
+pub const SIGN_IN_MISCONFIGURED: IpcError = IpcError::new(
+    "SIGN_IN_MISCONFIGURED",
+    "Sign-in is not set up correctly on this server. Contact your administrator.",
+);
+pub const SIGN_IN_ISSUER_MISMATCH: IpcError = IpcError::new(
+    "SIGN_IN_ISSUER_MISMATCH",
+    "The sign-in answer came from an unexpected service and was ignored.",
+);
+pub const SIGN_IN_CANCELLED: IpcError =
+    IpcError::new("SIGN_IN_CANCELLED", "Sign-in was cancelled.");
+pub const SIGN_IN_REFUSED: IpcError = IpcError::new(
+    "SIGN_IN_REFUSED",
+    "The sign-in service did not complete the sign-in. Try again.",
+);
+pub const SIGN_IN_FAILED: IpcError = IpcError::new(
+    "SIGN_IN_FAILED",
+    "The sign-in could not be completed. Start it again.",
+);
+pub const SIGN_IN_INTERRUPTED: IpcError = IpcError::new(
+    "SIGN_IN_INTERRUPTED",
+    "This sign-in is no longer waiting (it was replaced, cancelled or took too long). Start it again.",
+);
+pub const SIGN_IN_RATE_LIMITED: IpcError = IpcError::new(
+    "SIGN_IN_RATE_LIMITED",
+    "Too many sign-in attempts. Wait a few minutes and try again.",
+);
+pub const ORG_IMPORT_EMPTY: IpcError = IpcError::new(
+    "ORG_IMPORT_EMPTY",
+    "This workspace has no active profiles to copy.",
+);
+
 impl From<pb_netproxy::ConfigError> for IpcError {
     fn from(e: pb_netproxy::ConfigError) -> Self {
         use pb_netproxy::ConfigError as C;

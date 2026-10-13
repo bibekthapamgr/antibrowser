@@ -276,6 +276,9 @@ describe('session tokens', () => {
     });
     expect(steal.statusCode).toBe(401);
     expect(steal.json().safe_details).toEqual({ reason: 'device_not_enrolled' });
+    // The refused request did not use up the token: the desktop can enroll this device with it instead.
+    expect((await enroll(bobToken, n2)).statusCode).toBe(201);
+    expect((await enroll(bobToken, n2)).statusCode).toBe(401);
   });
 });
 

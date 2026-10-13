@@ -58,6 +58,14 @@
     "allow-list-proxy-checks",
     "allow-assign-proxy",
     "allow-validate-privacy",
-    "allow-get-privacy-options"
+    "allow-get-privacy-options",
+    "allow-get-account",
+    "allow-set-cloud-server",
+    "allow-begin-sign-in",
+    "allow-cancel-sign-in",
+    "allow-sign-out",
+    "allow-cloud-request",
+    "allow-org-import",
+    "allow-list-org-links"
   ]
 }

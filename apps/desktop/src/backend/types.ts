@@ -7,10 +7,12 @@
  * - a cloud adapter (milestones 06-08) implements the same interfaces
  */
 import type {
+  AccountView,
   AppView,
   BulkAction,
   BulkResult,
   Client,
+  CloudResponse,
   EventName,
   EventPayload,
   ImportJob,
@@ -19,6 +21,8 @@ import type {
   IpcError,
   Library,
   NetworkCheck,
+  OrgImportView,
+  OrgLink,
   PrivacyConfig,
   PrivacyOptions,
   PrivacyValidation,
@@ -41,11 +45,13 @@ import type {
 } from '@pb/contracts/ipc';
 
 export type {
+  AccountView,
   AppView,
   BulkAction,
   BulkResult,
   Client,
   ClientView,
+  CloudResponse,
   FieldReport,
   ImportJob,
   ImportPreview,
@@ -55,6 +61,8 @@ export type {
   NetworkCheck,
   NetworkView,
   Operation,
+  OrgImportView,
+  OrgLink,
   Preset,
   PrivacyConfig,
   PrivacyOptions,
@@ -209,8 +217,41 @@ export interface NetworkRepository {
   privacyOptions(): Promise<PrivacyOptions>;
 }
 
+export interface CloudRequest {
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  /** An allow-listed API path, e.g. `/v1/orgs/<id>/profiles`. */
+  path: string;
+  query?: [string, string][];
+  body?: Record<string, unknown>;
+  /** Version for optimistic concurrency, e.g. `"3"`. */
+  ifMatch?: string;
+}
+
+/**
+ * The signed-in account and organizations (milestone 06). Sign-in happens in the system browser; the shell keeps the
+ * tokens and makes allow-listed API requests for the window (`request`), so the window never holds a token.
+ */
+export interface AccountRepository {
+  get(): Promise<AccountView>;
+  setServer(url: string | null): Promise<AccountView>;
+  /** Opens the sign-in page in the system browser; the result arrives as an `account` event. */
+  signIn(reauth?: boolean): Promise<void>;
+  cancelSignIn(): Promise<AccountView>;
+  signOut(): Promise<AccountView>;
+  request(req: CloudRequest): Promise<CloudResponse>;
+  /** Copies a local workspace's profiles (metadata) into an organization; `dryRun` previews. */
+  orgImport(
+    workspaceId: string,
+    orgId: string,
+    dryRun: boolean,
+    mapping?: Record<string, string>,
+  ): Promise<OrgImportView>;
+  links(orgId?: string): Promise<OrgLink[]>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
+  account: AccountRepository;
   workspaces: WorkspaceRepository;
   profiles: ProfileRepository;
   library: LibraryRepository;

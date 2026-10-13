@@ -48,7 +48,14 @@ describe('IPC surface', () => {
       .map((m) => m[1])
       .sort();
     expect(Object.keys(EVENTS).sort()).toEqual(rust);
-    expect(rust).toEqual(['deep-link', 'operation', 'profiles-changed', 'quit-requested', 'warning']);
+    expect(rust).toEqual([
+      'account',
+      'deep-link',
+      'operation',
+      'profiles-changed',
+      'quit-requested',
+      'warning',
+    ]);
   });
 });
 

@@ -9,6 +9,9 @@
  *   the trash with a typed confirmation, import preview/commit/cancel, export, secret-looking notes
  * - milestone 05: proxies (paste line, hidden login, test), assignment, the credential prompt, a failing
  *   fail-closed proxy, privacy presets with settings this OS cannot apply, bulk "Set proxy"
+ * - milestone 06: account (server, sign-in in the system browser, devices), organizations (switcher, profiles,
+ *   clients, members, invitations, access, activity), re-authentication before an ownership transfer, offline
+ *   information marked as such, copying a local workspace after a preview
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -138,6 +141,26 @@ describe('keyboard-only first run', () => {
     await page.close();
   });
 });
+
+/** Switches the sidebar workspace to the demo organization and, optionally, opens one of its sections. */
+async function openOrg(page: Page, section?: string) {
+  const handle = await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll<HTMLOptionElement>('.workspace option')].find((o) =>
+        o.value.startsWith('org:'),
+      )?.value,
+    { timeout: 10_000 },
+  );
+  await page.select('.workspace select', (await handle.jsonValue()) as string);
+  await page.waitForFunction(() => document.querySelector('h1')?.textContent?.includes('Demo Agency'));
+  if (section) {
+    await clickButton(page, '.org-nav', section);
+    await page.waitForSelector(`#org-${section.toLowerCase()}-title`);
+  }
+  await page.waitForFunction(
+    () => !document.querySelector('main [role=status].loading, main p[role=status]'),
+  );
+}
 
 const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) => Promise<void> }[] = [
   { name: 'welcome', demo: 'fresh' },
@@ -269,6 +292,38 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
         (window as unknown as { __pbDemo: { simulateQuitRequest(): void } }).__pbDemo.simulateQuitRequest(),
       );
       await p.waitForSelector('[role=alertdialog],[role=dialog]');
+    },
+  },
+  { name: 'account-signed-out', demo: '', nav: 'Account' },
+  { name: 'account', demo: 'signedin', nav: 'Account' },
+  { name: 'org-profiles', demo: 'signedin', prepare: (p) => openOrg(p) },
+  { name: 'org-clients', demo: 'signedin', prepare: (p) => openOrg(p, 'Clients') },
+  { name: 'org-members', demo: 'signedin', prepare: (p) => openOrg(p, 'Members') },
+  {
+    name: 'org-invitations',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Invitations');
+      await p.type('form[aria-label="Invite someone"] input[type=email]', 'new.person@example.test');
+      await clickButton(p, 'form[aria-label="Invite someone"]', 'Create invitation');
+      await p.waitForFunction(() =>
+        document.querySelector('.notice')?.textContent?.includes('shown only now'),
+      );
+    },
+  },
+  { name: 'org-access', demo: 'signedin', prepare: (p) => openOrg(p, 'Access') },
+  { name: 'org-activity', demo: 'signedin', prepare: (p) => openOrg(p, 'Activity') },
+  { name: 'org-operator', demo: 'member', prepare: (p) => openOrg(p) },
+  {
+    name: 'org-copy-preview',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Settings');
+      await clickButton(p, '#main', 'Copy profiles from this computer…');
+      await clickButton(p, '[role=dialog]', 'Preview');
+      await p.waitForFunction(() =>
+        document.querySelector('[role=dialog]')?.textContent?.includes('will be added'),
+      );
     },
   },
 ];
@@ -735,6 +790,142 @@ describe('proxies and privacy (milestone 05)', () => {
     // Shop admin already uses the first proxy, so one profile changes and one already matched.
     await toastContains(page, 'Set the proxy of 1 profile.');
     await toastContains(page, '1 profile already matched.');
+    await page.close();
+  });
+});
+
+describe('account and organizations (milestone 06)', () => {
+  it('signs in through the browser and switches to an organization', async () => {
+    const page = await open('');
+    await goTo(page, 'Account');
+    const signIn = await page.$$eval('button', (bs) =>
+      bs
+        .filter((b) => b.textContent?.trim() === 'Sign in or create an account')
+        .map((b) => (b as HTMLButtonElement).disabled),
+    );
+    expect(signIn).toEqual([true]); // no server yet
+    await page.type('input[type=url]', 'http://browser.example.test');
+    await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
+    await toastContains(page, 'https://');
+    await page.$eval('input[type=url]', (i) => {
+      (i as HTMLInputElement).select();
+    });
+    await page.type('input[type=url]', 'https://browser.example.test');
+    await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
+    await toastContains(page, 'Server saved.');
+    await clickButton(page, '#main', 'Sign in or create an account');
+    await toastContains(page, 'Signed in.');
+    await page.waitForFunction(() => document.body.textContent?.includes('Signed in as Demo Person'));
+    expect(await text(page, '#devices-title')).toBe('Your devices');
+    await openOrg(page);
+    expect(await text(page, '#main')).toContain('North shop admin');
+    expect(await text(page, '.sidebar__note')).toContain('signed in as Demo Person');
+    await page.close();
+  });
+
+  it('creates an invitation code shown once and explains a code for another address', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Invitations');
+    await page.type('form[aria-label="Invite someone"] input[type=email]', 'someone.else@example.test');
+    await clickButton(page, 'form[aria-label="Invite someone"]', 'Create invitation');
+    await page.waitForSelector('.notice input.mono');
+    const code = await page.$eval('.notice input.mono', (i) => (i as HTMLInputElement).value);
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    await clickButton(page, '.notice', 'Done');
+    expect(await page.content()).not.toContain(code);
+    await page.waitForFunction(() =>
+      document.querySelector('table.records')?.textContent?.includes('someone.else@example.test'),
+    );
+
+    await goTo(page, 'Account');
+    await page.type('form[aria-labelledby=join-title] input', `Your code: ${code}`);
+    await clickButton(page, 'form[aria-labelledby=join-title]', 'Check');
+    await page.waitForFunction(() =>
+      document
+        .querySelector('form[aria-labelledby=join-title]')
+        ?.textContent?.includes('different e-mail address'),
+    );
+    await page.close();
+  });
+
+  it('asks the owner to sign in again before transferring ownership, then completes it', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Members');
+    await clickButton(page, '#main', 'Transfer ownership');
+    await page.waitForSelector('[role=alertdialog] select');
+    await clickButton(page, '[role=alertdialog]', 'Transfer');
+    await clickButton(page, '[role=alertdialog]', "Confirm it's me");
+    await toastContains(page, 'is now the owner. You are an admin.');
+    await page.waitForFunction(() => document.querySelector('header')?.textContent?.includes('Admin'));
+    await page.close();
+  });
+
+  it('gives an operator access to a client, and an operator sees only what was shared', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Access');
+    await page.waitForSelector('form[aria-label="Give access"] select');
+    const option = await page.$eval(
+      'form[aria-label="Give access"] select',
+      (sel) =>
+        [...(sel as HTMLSelectElement).options].find((o) => o.textContent === 'Client South')?.value ?? '',
+    );
+    await page.select('form[aria-label="Give access"] select', option);
+    await clickButton(page, 'form[aria-label="Give access"]', 'Give access');
+    await page.waitForFunction(() =>
+      document.querySelector('ul.plain')?.textContent?.includes('Client South'),
+    );
+    await page.close();
+
+    const member = await open('member');
+    await openOrg(member);
+    const rows = await text(member, 'table.records');
+    expect(rows).toContain('North shop admin');
+    expect(rows).not.toContain('South support desk');
+    const buttons = await member.$$eval('.org-nav button', (bs) => bs.map((b) => b.textContent?.trim()));
+    expect(buttons).toEqual(['Profiles', 'Clients', 'Settings']);
+    expect(await member.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim()))).not.toContain(
+      'Add profile',
+    );
+    await member.close();
+  });
+
+  it('marks information as offline and refuses changes until the server is back', async () => {
+    const page = await open('signedin-cloudoffline');
+    await openOrg(page, 'Clients');
+    await clickButton(page, '.org-nav', 'Profiles');
+    await clickButton(page, '.org-nav', 'Clients');
+    await page.waitForFunction(() =>
+      document.body.textContent?.includes('Offline: showing information saved'),
+    );
+    await page.close();
+  });
+
+  it('copies a local workspace into an organization after a preview, keeping the local profiles', async () => {
+    const page = await open('signedin');
+    const before = await page.$eval('[role=grid]', (g) => g.getAttribute('aria-rowcount'));
+    await openOrg(page, 'Settings');
+    await clickButton(page, '#main', 'Copy profiles from this computer…');
+    await clickButton(page, '[role=dialog]', 'Preview');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog]')?.textContent?.includes('will be added'),
+    );
+    const label = await page.$eval(
+      '[role=dialog] .row--end button[data-variant=primary]',
+      (b) => b.textContent ?? '',
+    );
+    await clickButton(page, '[role=dialog]', label.trim());
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog]')?.textContent?.includes('are unchanged'),
+    );
+    await clickButton(page, '[role=dialog]', 'Done');
+    await clickButton(page, '.org-nav', 'Profiles');
+    await page.waitForFunction(() => document.querySelectorAll('table.records tbody tr').length > 3);
+    await page.select(
+      '.workspace select',
+      await page.$eval('.workspace option', (o) => (o as HTMLOptionElement).value),
+    );
+    await page.waitForSelector('[role=grid]');
+    expect(await page.$eval('[role=grid]', (g) => g.getAttribute('aria-rowcount'))).toBe(before);
     await page.close();
   });
 });

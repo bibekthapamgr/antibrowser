@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-
 /**
  * Opaque, server-generated identifiers.
  *
@@ -42,9 +40,13 @@ const BODY = '[0-9A-HJKMNP-TV-Z]{26}';
 export const ID_PATTERN = (prefix: IdPrefix): string => `^${prefix}_${BODY}$`;
 
 export function newId(kind: IdKind, now: number = Date.now()): string {
-  const bytes = Buffer.alloc(16);
-  bytes.writeUIntBE(now, 0, 6);
-  randomBytes(10).copy(bytes, 6);
+  const bytes = new Uint8Array(16);
+  let t = now;
+  for (let i = 5; i >= 0; i--) {
+    bytes[i] = t % 256;
+    t = Math.floor(t / 256);
+  }
+  globalThis.crypto.getRandomValues(bytes.subarray(6));
   return `${ID_PREFIXES[kind]}_${encodeBase32(bytes)}`;
 }
 
@@ -52,7 +54,7 @@ export function isId(kind: IdKind, value: unknown): value is string {
   return typeof value === 'string' && new RegExp(ID_PATTERN(ID_PREFIXES[kind])).test(value);
 }
 
-function encodeBase32(bytes: Buffer): string {
+function encodeBase32(bytes: Uint8Array): string {
   // 128 bits -> 26 base32 chars (130 bits, top 2 bits zero).
   let value = 0n;
   for (const b of bytes) value = (value << 8n) | BigInt(b);

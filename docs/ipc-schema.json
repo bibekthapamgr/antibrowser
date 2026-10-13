@@ -8973,6 +8973,590 @@
           }
         }
       }
+    },
+    "get_account": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "server_url",
+          "status",
+          "signing_in",
+          "user",
+          "device_id",
+          "session_saved"
+        ],
+        "properties": {
+          "server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "signed_out",
+              "signed_in",
+              "expired"
+            ]
+          },
+          "signing_in": {
+            "type": "boolean"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "display_name",
+                  "email",
+                  "email_verified"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_verified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_saved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "set_cloud_server": {
+      "args": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "server_url",
+          "status",
+          "signing_in",
+          "user",
+          "device_id",
+          "session_saved"
+        ],
+        "properties": {
+          "server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "signed_out",
+              "signed_in",
+              "expired"
+            ]
+          },
+          "signing_in": {
+            "type": "boolean"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "display_name",
+                  "email",
+                  "email_verified"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_verified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_saved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "begin_sign_in": {
+      "args": {
+        "type": "object",
+        "properties": {
+          "reauth": {
+            "type": "boolean"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "opened"
+        ],
+        "properties": {
+          "opened": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "cancel_sign_in": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "server_url",
+          "status",
+          "signing_in",
+          "user",
+          "device_id",
+          "session_saved"
+        ],
+        "properties": {
+          "server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "signed_out",
+              "signed_in",
+              "expired"
+            ]
+          },
+          "signing_in": {
+            "type": "boolean"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "display_name",
+                  "email",
+                  "email_verified"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_verified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_saved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "sign_out": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "server_url",
+          "status",
+          "signing_in",
+          "user",
+          "device_id",
+          "session_saved"
+        ],
+        "properties": {
+          "server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "signed_out",
+              "signed_in",
+              "expired"
+            ]
+          },
+          "signing_in": {
+            "type": "boolean"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "display_name",
+                  "email",
+                  "email_verified"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_verified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_saved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "cloud_request": {
+      "args": {
+        "type": "object",
+        "required": [
+          "method",
+          "path"
+        ],
+        "properties": {
+          "method": {
+            "enum": [
+              "GET",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^/v1/"
+          },
+          "query": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "additionalItems": false,
+              "items": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "minItems": 2
+            },
+            "maxItems": 10
+          },
+          "body": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            }
+          },
+          "ifMatch": {
+            "type": "string",
+            "maxLength": 12
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "status",
+          "body",
+          "stale",
+          "fetched_at"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "body": {},
+          "stale": {
+            "type": "boolean"
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "org_import": {
+      "args": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "orgId",
+          "dryRun"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "mapping": {
+            "type": "object",
+            "patternProperties": {
+              "^cli_[0-9A-HJKMNP-TV-Z]{26}$": {
+                "type": "string",
+                "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "status",
+          "body",
+          "clients",
+          "profiles",
+          "linked"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "body": {},
+          "clients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "ref",
+                "name"
+              ],
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "profiles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "linked": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "list_org_links": {
+      "args": {
+        "type": "object",
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "local_profile_id",
+            "org_id",
+            "org_profile_id",
+            "linked_at"
+          ],
+          "properties": {
+            "local_profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "org_id": {
+              "type": "string"
+            },
+            "org_profile_id": {
+              "type": "string"
+            },
+            "linked_at": {
+              "type": "string"
+            }
+          }
+        },
+        "maxItems": 10000
+      }
     }
   },
   "events": {
@@ -9093,6 +9677,31 @@
           "const": "auth-callback"
         },
         "outcome": {}
+      }
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "signed_in",
+            "signed_out",
+            "expired",
+            "failed"
+          ]
+        },
+        "reauth": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
       }
     },
     "warning": {

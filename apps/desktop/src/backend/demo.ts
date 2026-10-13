@@ -37,6 +37,7 @@ import type {
   Template,
 } from '@pb/contracts/ipc';
 import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
+import { demoCloud } from './demo-cloud.ts';
 import type {
   AppView,
   Backend,
@@ -1240,6 +1241,20 @@ export function demoBackend(mode = ''): Backend {
 
   const backend = {
     kind: 'demo',
+    account: demoCloud({
+      mode,
+      emit: (e) => emit('account', e),
+      localProfiles: (workspaceId) =>
+        recs
+          .filter((r) => r.workspace_id === workspaceId && !r.trashed_at && !r.archived_at)
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            client_id: r.client_id,
+            client_name: clients.find((c) => c.id === r.client_id)?.name ?? null,
+            notes: r.notes,
+          })),
+    }),
     workspaces: {
       async appState(): Promise<AppView> {
         return {
@@ -2211,7 +2226,7 @@ export function demoBackend(mode = ''): Backend {
           app: { version: '0.5.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
-            schema_version: 5,
+            schema_version: 6,
             journal_mode: 'wal',
             foreign_keys: true,
             integrity_ok: true,

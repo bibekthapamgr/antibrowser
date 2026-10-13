@@ -54,6 +54,14 @@ const COMMANDS: &[&str] = &[
     "assign_proxy",
     "validate_privacy",
     "get_privacy_options",
+    "get_account",
+    "set_cloud_server",
+    "begin_sign_in",
+    "cancel_sign_in",
+    "sign_out",
+    "cloud_request",
+    "org_import",
+    "list_org_links",
 ];
 
 fn main() {

@@ -2921,13 +2921,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "pb-cloud"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "pb-desktop"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "ed25519-dalek",
  "fs4",
  "hex",
  "keyring",
+ "pb-cloud",
  "pb-import",
  "pb-netproxy",
  "pb-runtime",

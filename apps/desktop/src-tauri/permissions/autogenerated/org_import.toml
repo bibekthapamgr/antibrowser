@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-org-import"
+description = "Enables the org_import command without any pre-configured scope."
+commands.allow = ["org_import"]
+
+[[permission]]
+identifier = "deny-org-import"
+description = "Denies the org_import command without any pre-configured scope."
+commands.deny = ["org_import"]

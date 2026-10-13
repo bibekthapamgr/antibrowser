@@ -6,7 +6,8 @@
   "description": "Shared API, event and identifier contracts (milestone 01). Changes require an ADR.",
   "exports": {
     ".": "./src/index.ts",
-    "./ipc": "./src/ipc.ts"
+    "./ipc": "./src/ipc.ts",
+    "./resources": "./src/resources.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

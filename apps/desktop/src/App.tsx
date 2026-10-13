@@ -1,8 +1,12 @@
+import type { Workspaces } from '@pb/contracts/resources';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppView, Backend, Operation } from './backend/types.ts';
+import { AccountScreen } from './account.tsx';
+import type { AccountView, AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
+import { get, ROLE_LABEL } from './cloud.ts';
 import { LiveRegion } from './components.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
+import { OrganizationScreen } from './org.tsx';
 import { ProfilesScreen } from './profiles.tsx';
 import {
   CrashPrompt,
@@ -14,14 +18,16 @@ import {
   Welcome,
 } from './screens.tsx';
 
-type View = 'profiles' | 'proxies' | 'downloads' | 'diagnostics' | 'settings';
+type View = 'profiles' | 'proxies' | 'downloads' | 'diagnostics' | 'account' | 'settings' | 'organization';
 const NAV: [View, string][] = [
   ['profiles', 'Profiles'],
   ['proxies', 'Proxies'],
   ['downloads', 'Downloads and updates'],
   ['diagnostics', 'Diagnostics'],
+  ['account', 'Account'],
   ['settings', 'Settings'],
 ];
+type OrgWorkspace = Workspaces['items'][number];
 
 interface Toast {
   id: number;
@@ -37,6 +43,9 @@ export function App({ backend }: { backend: Backend }) {
   const [quit, setQuit] = useState<{ running: number; unresponsive: number } | null>(null);
   const [importOp, setImportOp] = useState<Operation | null>(null);
   const [folderSlot, setFolderSlot] = useState<HTMLElement | null>(null);
+  const [account, setAccount] = useState<AccountView | null>(null);
+  const [orgs, setOrgs] = useState<OrgWorkspace[]>([]);
+  const [orgId, setOrgId] = useState<string | null>(null);
   const toastSeq = useRef(0);
   const reported = useRef(false);
 
@@ -57,6 +66,50 @@ export function App({ backend }: { backend: Backend }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** The account and, when signed in (or showing an ended session), the organizations to switch to. */
+  const refreshAccount = useCallback(async () => {
+    try {
+      const a = await backend.account.get();
+      setAccount(a);
+      if (a.status === 'signed_out') {
+        setOrgs([]);
+        return;
+      }
+      const res = await get<Workspaces>(backend, '/v1/me/workspaces');
+      setOrgs(res.data.items);
+    } catch {
+      setOrgs((o) => o);
+    }
+  }, [backend]);
+
+  useEffect(() => {
+    void refreshAccount();
+  }, [refreshAccount]);
+
+  // An organization the person no longer belongs to (left, removed, signed out) closes its screen.
+  useEffect(() => {
+    if (orgId && account && !orgs.some((o) => o.org_id === orgId)) {
+      setOrgId(null);
+      setView((v) => (v === 'organization' ? 'profiles' : v));
+    }
+  }, [orgs, orgId, account]);
+
+  useEffect(
+    () =>
+      backend.on('account', (e) => {
+        void refreshAccount();
+        setRefreshKey((k) => k + 1);
+        if (e.status === 'failed') notify(e.message ?? 'Sign-in did not complete.', 'error');
+        else if (e.status === 'signed_in' && !e.reauth) notify('Signed in.');
+        else if (e.status === 'expired')
+          notify(
+            'Your session ended. Sign in again in Account. Your local profiles are not affected.',
+            'error',
+          );
+      }),
+    [backend, notify, refreshAccount],
+  );
 
   // Record manager startup time once the first real screen has rendered (kept separate from browser timings).
   useEffect(() => {
@@ -163,22 +216,42 @@ export function App({ backend }: { backend: Backend }) {
         <label className="workspace">
           <span className="sidebar__label">Workspace</span>
           <select
-            value={app.active_workspace_id ?? ''}
+            value={
+              orgId && view === 'organization' ? `org:${orgId}` : `local:${app.active_workspace_id ?? ''}`
+            }
             onChange={async (e) => {
+              const [kind, id] = e.target.value.split(':');
+              if (kind === 'org' && id) {
+                setOrgId(id);
+                setView('organization');
+                return;
+              }
               try {
-                await backend.workspaces.setActiveWorkspace(e.target.value);
+                if (id) await backend.workspaces.setActiveWorkspace(id);
                 await refresh();
                 setRefreshKey((k) => k + 1);
+                setView((v) => (v === 'organization' ? 'profiles' : v));
               } catch (err) {
                 notify(errorMessage(err), 'error');
               }
             }}
           >
-            {app.workspaces.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
+            <optgroup label="On this computer">
+              {app.workspaces.map((w) => (
+                <option key={w.id} value={`local:${w.id}`}>
+                  {w.name}
+                </option>
+              ))}
+            </optgroup>
+            {orgs.length > 0 && (
+              <optgroup label="Organizations">
+                {orgs.map((o) => (
+                  <option key={o.org_id} value={`org:${o.org_id}`}>
+                    {o.name} ({ROLE_LABEL[o.role]})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <nav aria-label="Main">
@@ -192,6 +265,7 @@ export function App({ backend }: { backend: Backend }) {
                   onClick={() => {
                     setView(id);
                     if (id === 'settings') void refresh();
+                    if (id === 'account') void refreshAccount();
                   }}
                 >
                   {label}
@@ -213,7 +287,12 @@ export function App({ backend }: { backend: Backend }) {
             : `${app.running_count} profile${app.running_count === 1 ? '' : 's'} open`}
           <span className="sidebar__hint">Profiles can stay open when the manager is closed.</span>
         </div>
-        <p className="sidebar__note">Internal build {app.app.version} · local profiles only</p>
+        <p className="sidebar__note">
+          Internal build {app.app.version}
+          {account?.status === 'signed_in' && account.user
+            ? ` · signed in as ${account.user.display_name}`
+            : ''}
+        </p>
       </aside>
 
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}
@@ -232,6 +311,37 @@ export function App({ backend }: { backend: Backend }) {
           <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
         )}
         {view === 'diagnostics' && <DiagnosticsScreen backend={backend} notify={notify} />}
+        {view === 'account' && (
+          <AccountScreen
+            backend={backend}
+            account={account}
+            refreshKey={refreshKey}
+            notify={notify}
+            onChanged={refreshAccount}
+            onOpenOrganization={async (id) => {
+              await refreshAccount();
+              setOrgId(id);
+              setView('organization');
+            }}
+          />
+        )}
+        {view === 'organization' && orgId && account && (
+          <OrganizationScreen
+            key={orgId}
+            backend={backend}
+            orgId={orgId}
+            app={app}
+            account={account}
+            refreshKey={refreshKey}
+            notify={notify}
+            onChanged={refreshAccount}
+            onLeft={() => {
+              setOrgId(null);
+              setView('profiles');
+              void refreshAccount();
+            }}
+          />
+        )}
         {view === 'settings' && (
           <SettingsScreen
             backend={backend}

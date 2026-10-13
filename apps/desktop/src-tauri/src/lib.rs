@@ -5,6 +5,7 @@
 //! processes. The webview can invoke only the commands listed in `capabilities/default.json`, each of which checks
 //! its caller and validates its inputs in Rust.
 
+pub mod account;
 pub mod authz;
 pub mod commands;
 pub mod deeplink;
@@ -98,6 +99,14 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::assign_proxy,
         commands::validate_privacy,
         commands::get_privacy_options,
+        commands::get_account,
+        commands::set_cloud_server,
+        commands::begin_sign_in,
+        commands::cancel_sign_in,
+        commands::sign_out,
+        commands::cloud_request,
+        commands::org_import,
+        commands::list_org_links,
     ]
 }
 
@@ -154,15 +163,20 @@ pub fn request_quit<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn handle_deep_link<R: Runtime>(app: &AppHandle<R>, raw: &str) {
-    let state = app.state::<Arc<AppState>>();
+    let state = app.state::<Arc<AppState>>().inner().clone();
     let store = state.store().ok();
-    let outcome = deeplink::handle(raw, store.as_deref());
+    let (outcome, callback) = deeplink::handle(raw, store.as_deref());
     // The link itself is never logged or echoed back.
     let _ = app.emit_to(
         "main",
         DEEP_LINK,
         json!({ "kind": "auth-callback", "outcome": outcome }),
     );
+    if let Some(callback) = callback {
+        show_main(app);
+        // The code exchange talks to the network: never on the UI thread.
+        std::thread::spawn(move || state.finish_sign_in(&callback));
+    }
 }
 
 fn build_tray<R: Runtime>(app: &tauri::App<R>, state: &Arc<AppState>) -> tauri::Result<()> {

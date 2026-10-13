@@ -1,7 +1,8 @@
 /**
  * Desktop IPC contract (milestone 02 deliverable "IPC schemas"; milestone 03 adds the runtime lifecycle; milestone 04
  * adds profile/client management, bulk actions, the trash, templates, and configuration import/export; milestone 05
- * adds proxies, routing, connectivity checks and privacy/environment settings).
+ * adds proxies, routing, connectivity checks and privacy/environment settings; milestone 06 adds the account, sign-in
+ * and organization requests relayed by the shell).
  *
  * The manager webview talks to the Rust shell only through these commands and events. Rust validates every input
  * again (apps/desktop/src-tauri); these schemas document the shapes and let the UI type-check its calls.
@@ -629,6 +630,54 @@ export const PrivacyOptions = Type.Object({
 });
 export type PrivacyOptions = Static<typeof PrivacyOptions>;
 
+// ---------------------------------------------------------------- account and organizations (milestone 06)
+/** The signed-in account as the manager shows it. Tokens never cross into the window. */
+export const AccountView = Type.Object({
+  server_url: Nullable(Type.String()),
+  status: Type.Enum(['signed_out', 'signed_in', 'expired']),
+  signing_in: Type.Boolean(),
+  user: Nullable(
+    Type.Object({
+      id: Type.String(),
+      display_name: Type.String(),
+      email: Nullable(Type.String()),
+      email_verified: Type.Boolean(),
+    }),
+  ),
+  device_id: Nullable(Type.String()),
+  /** False when no keychain works: the session ends when the manager closes. */
+  session_saved: Type.Boolean(),
+});
+export type AccountView = Static<typeof AccountView>;
+/**
+ * An organization API answer relayed by the shell. `body` follows the API contract (packages/contracts resources,
+ * docs/openapi.json); error statuses carry the API error envelope. `stale`: served from the offline cache.
+ */
+export const CloudResponse = Type.Object({
+  status: Type.Integer(),
+  body: Type.Unknown(),
+  stale: Type.Boolean(),
+  fetched_at: Nullable(Type.String()),
+});
+export type CloudResponse = Static<typeof CloudResponse>;
+export const OrgImportView = Type.Object({
+  status: Type.Integer(),
+  body: Type.Unknown(),
+  clients: Type.Array(Type.Object({ ref: Type.String(), name: Type.String() })),
+  profiles: Type.Integer({ minimum: 0 }),
+  linked: Type.Integer({ minimum: 0 }),
+});
+export type OrgImportView = Static<typeof OrgImportView>;
+export const OrgLink = Type.Object({
+  local_profile_id: Type.String({ pattern: ProfileIdPattern }),
+  org_id: Type.String(),
+  org_profile_id: Type.String(),
+  linked_at: Type.String(),
+});
+export type OrgLink = Static<typeof OrgLink>;
+const OrgIdPattern = '^org_[0-9A-HJKMNP-TV-Z]{26}$';
+const ClientRef = Type.String({ pattern: ClientIdPattern });
+
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
@@ -887,6 +936,41 @@ export const COMMANDS = {
     result: PrivacyValidation,
   },
   get_privacy_options: { args: Type.Object({}), result: PrivacyOptions },
+  // Milestone 06: account and organizations.
+  get_account: { args: Type.Object({}), result: AccountView },
+  set_cloud_server: {
+    args: Type.Object({ url: Nullable(Type.String({ maxLength: 300 })) }),
+    result: AccountView,
+  },
+  begin_sign_in: {
+    args: Type.Object({ reauth: Type.Optional(Type.Boolean()) }),
+    result: Type.Object({ opened: Type.Boolean() }),
+  },
+  cancel_sign_in: { args: Type.Object({}), result: AccountView },
+  sign_out: { args: Type.Object({}), result: AccountView },
+  cloud_request: {
+    args: Type.Object({
+      method: Type.Enum(['GET', 'POST', 'PATCH', 'DELETE']),
+      path: Type.String({ maxLength: 200, pattern: '^/v1/' }),
+      query: Type.Optional(Type.Array(Type.Tuple([Type.String(), Type.String()]), { maxItems: 10 })),
+      body: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      ifMatch: Type.Optional(Type.String({ maxLength: 12 })),
+    }),
+    result: CloudResponse,
+  },
+  org_import: {
+    args: Type.Object({
+      workspaceId: Type.String({ pattern: WorkspaceIdPattern }),
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      dryRun: Type.Boolean(),
+      mapping: Type.Optional(Type.Record(Type.String({ pattern: ClientIdPattern }), ClientRef)),
+    }),
+    result: OrgImportView,
+  },
+  list_org_links: {
+    args: Type.Object({ orgId: Type.Optional(Type.String({ pattern: OrgIdPattern })) }),
+    result: Type.Array(OrgLink, { maxItems: 10000 }),
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -898,6 +982,12 @@ export const EVENTS = {
   'profiles-changed': Type.Object({ running: Type.Integer() }),
   'quit-requested': Type.Object({ running: Type.Integer(), unresponsive: Type.Integer() }),
   'deep-link': Type.Object({ kind: Type.Literal('auth-callback'), outcome: Type.Unknown() }),
+  account: Type.Object({
+    status: Type.Enum(['signed_in', 'signed_out', 'expired', 'failed']),
+    reauth: Type.Optional(Type.Boolean()),
+    code: Type.Optional(Type.String()),
+    message: Type.Optional(Type.String()),
+  }),
   warning: Type.Union([
     Type.Object({ code: Type.Literal('LOW_DISK_SPACE'), free_bytes: Type.Integer() }),
     Type.Object({

@@ -330,12 +330,12 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    fn secret_store(&self) -> Result<Arc<dyn SecretStore>, IpcError> {
+    pub(crate) fn secret_store(&self) -> Result<Arc<dyn SecretStore>, IpcError> {
         Ok(self.secrets.read().map_err(|_| ipc::INTERNAL)?.clone())
     }
 
     /// The secret store, only when the keychain works (secrets are never written anywhere else).
-    fn writable_secret_store(&self) -> Result<Arc<dyn SecretStore>, IpcError> {
+    pub(crate) fn writable_secret_store(&self) -> Result<Arc<dyn SecretStore>, IpcError> {
         let not_checked = self
             .keychain
             .read()

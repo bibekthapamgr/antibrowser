@@ -1,9 +1,10 @@
 //! Controlled app deep links (milestone 02, step 6).
 //!
-//! The only accepted form is `projectbrowser://auth/callback?state=<s>&code=<c>` (plus an optional `error`), with
-//! strict character sets and lengths. Anything else is rejected. A deep link is DATA: it is never interpreted as a
-//! command, path or URL to open, and its contents are never logged. The `state` must match a one-time transaction
-//! created by this device (milestone 06 starts transactions when the user signs in); replays and expired states fail.
+//! The only accepted form is `projectbrowser://auth/callback?state=<s>&code=<c>` (or `error=<e>` instead of the code),
+//! optionally with the provider's `iss` (RFC 9207), `session_state` and `error_description`/`error_uri`, with strict
+//! character sets and lengths. Anything else is rejected. A deep link is DATA: it is never interpreted as a command,
+//! path or URL to open, and its contents are never logged. The `state` must match a one-time transaction created by
+//! this device when the user started signing in (milestone 06); replays and expired states fail.
 
 use pb_storage::{AuthTxError, LocalStore};
 use serde::Serialize;
@@ -18,6 +19,21 @@ pub struct AuthCallback {
     pub state: String,
     pub code: Option<String>,
     pub error: Option<String>,
+    /// The issuer named in the response (checked against the configured provider by the sign-in code).
+    pub iss: Option<String>,
+}
+
+/// An `https` (or loopback `http`) issuer URL of bounded length.
+fn issuer_ok(s: &str) -> bool {
+    s.len() <= 512
+        && url::Url::parse(s).is_ok_and(|u| {
+            matches!(u.scheme(), "https" | "http") && u.host().is_some() && u.query().is_none()
+        })
+}
+
+/// Free text the provider may add to an error; never shown or logged, only bounded.
+fn text_ok(s: &str) -> bool {
+    s.len() <= 512 && !s.chars().any(char::is_control)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -67,15 +83,32 @@ pub fn parse(raw: &str) -> Result<AuthCallback, Rejection> {
     {
         return Err(Rejection::UnexpectedParts);
     }
-    let (mut state, mut code, mut error) = (None, None, None);
+    let (mut state, mut code, mut error, mut iss) = (None, None, None, None);
+    let (mut session_state, mut description, mut error_uri) = (None, None, None);
     for (k, v) in url.query_pairs() {
-        let slot = match k.as_ref() {
-            "state" => &mut state,
-            "code" => &mut code,
-            "error" => &mut error,
+        let (slot, valid) = match k.as_ref() {
+            "state" => (&mut state, token_ok(&v)),
+            "code" => (&mut code, token_ok(&v)),
+            "error" => (
+                &mut error,
+                token_ok(&v)
+                    || (v.len() >= 3
+                        && v.len() <= 64
+                        && v.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')),
+            ),
+            "iss" => (&mut iss, issuer_ok(&v)),
+            "session_state" => (
+                &mut session_state,
+                token_ok(&v)
+                    || (v.len() >= 8
+                        && v.len() <= 128
+                        && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
+            ),
+            "error_description" => (&mut description, text_ok(&v)),
+            "error_uri" => (&mut error_uri, text_ok(&v)),
             _ => return Err(Rejection::UnexpectedParts),
         };
-        if slot.is_some() || !token_ok(&v) {
+        if slot.is_some() || !valid {
             return Err(Rejection::BadParameter); // duplicates and bad characters are refused
         }
         *slot = Some(v.into_owned());
@@ -84,24 +117,30 @@ pub fn parse(raw: &str) -> Result<AuthCallback, Rejection> {
     if code.is_none() == error.is_none() {
         return Err(Rejection::BadParameter); // exactly one of code / error
     }
-    Ok(AuthCallback { state, code, error })
+    Ok(AuthCallback {
+        state,
+        code,
+        error,
+        iss,
+    })
 }
 
-/// Validates and binds a received deep link. The authorization code exchange itself is milestone 06.
-pub fn handle(raw: &str, store: Option<&LocalStore>) -> Outcome {
+/// Validates and binds a received deep link. On [`Outcome::Accepted`] the callback is returned for the sign-in code
+/// (`account.rs`), which exchanges the code.
+pub fn handle(raw: &str, store: Option<&LocalStore>) -> (Outcome, Option<AuthCallback>) {
     let callback = match parse(raw) {
         Ok(c) => c,
-        Err(r) => return Outcome::Rejected(r),
+        Err(r) => return (Outcome::Rejected(r), None),
     };
     let Some(store) = store else {
-        return Outcome::StoreUnavailable;
+        return (Outcome::StoreUnavailable, None);
     };
     match store.consume_auth_transaction(&callback.state) {
-        Ok(Ok(())) => Outcome::Accepted,
-        Ok(Err(AuthTxError::Unknown)) => Outcome::UnknownTransaction,
-        Ok(Err(AuthTxError::Expired)) => Outcome::ExpiredTransaction,
-        Ok(Err(AuthTxError::Replayed)) => Outcome::ReplayedTransaction,
-        Err(_) => Outcome::StoreUnavailable,
+        Ok(Ok(())) => (Outcome::Accepted, Some(callback)),
+        Ok(Err(AuthTxError::Unknown)) => (Outcome::UnknownTransaction, None),
+        Ok(Err(AuthTxError::Expired)) => (Outcome::ExpiredTransaction, None),
+        Ok(Err(AuthTxError::Replayed)) => (Outcome::ReplayedTransaction, None),
+        Err(_) => (Outcome::StoreUnavailable, None),
     }
 }
 
@@ -191,19 +230,56 @@ mod tests {
     }
 
     #[test]
+    fn accepts_provider_extras_but_validates_them() {
+        // The shape Keycloak sends: state, session_state, iss, code.
+        let ok = parse(&format!(
+            "projectbrowser://auth/callback?state={STATE}&session_state=1b9b1a3c-7f7e-4c38-9c5e-0a4c2f0f1d2e&iss=https%3A%2F%2Fid.example.test%2Frealms%2Fpb&code={CODE}"
+        ));
+        assert_eq!(
+            ok.map(|c| c.iss),
+            Ok(Some("https://id.example.test/realms/pb".to_owned()))
+        );
+        let err = parse(&format!(
+            "projectbrowser://auth/callback?state={STATE}&error=access_denied&error_description=User%20cancelled"
+        ));
+        assert_eq!(err.map(|c| c.error), Ok(Some("access_denied".to_owned())));
+        for bad in [
+            format!(
+                "projectbrowser://auth/callback?state={STATE}&code={CODE}&iss=javascript%3Aalert(1)"
+            ),
+            format!(
+                "projectbrowser://auth/callback?state={STATE}&code={CODE}&iss=https%3A%2F%2Fa.test%2F%3Fx%3D1"
+            ),
+            format!(
+                "projectbrowser://auth/callback?state={STATE}&code={CODE}&error_description=a%0Ab"
+            ),
+            format!(
+                "projectbrowser://auth/callback?state={STATE}&code={CODE}&session_state=%24%28x%29"
+            ),
+        ] {
+            assert_eq!(parse(&bad).err(), Some(Rejection::BadParameter), "{bad}");
+        }
+    }
+
+    #[test]
     fn binds_to_a_one_time_transaction() {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let store =
             LocalStore::open(&dir.path().join("local.db")).unwrap_or_else(|e| panic!("{e}"));
         let link = format!("projectbrowser://auth/callback?state={STATE}&code={CODE}");
-        assert_eq!(handle(&link, Some(&store)), Outcome::UnknownTransaction);
+        assert_eq!(handle(&link, Some(&store)).0, Outcome::UnknownTransaction);
         store
             .begin_auth_transaction(STATE, 300)
             .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(handle(&link, Some(&store)), Outcome::Accepted);
-        assert_eq!(handle(&link, Some(&store)), Outcome::ReplayedTransaction);
+        let (outcome, callback) = handle(&link, Some(&store));
+        assert_eq!(outcome, Outcome::Accepted);
+        assert_eq!(callback.and_then(|c| c.code).as_deref(), Some(CODE));
         assert_eq!(
-            handle("projectbrowser://evil", Some(&store)),
+            handle(&link, Some(&store)),
+            (Outcome::ReplayedTransaction, None)
+        );
+        assert_eq!(
+            handle("projectbrowser://evil", Some(&store)).0,
             Outcome::Rejected(Rejection::UnknownRoute)
         );
     }

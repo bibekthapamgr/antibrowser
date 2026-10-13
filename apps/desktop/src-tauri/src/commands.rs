@@ -5,6 +5,7 @@
 //!
 //! Long work returns an `operation_id`; progress arrives as events (see `events.rs`).
 
+use crate::account::{AccountView, CloudResponse, OrgImportView, SignInStarted};
 use crate::ipc::{self, IpcError};
 use crate::lifecycle::ProfileStatus;
 use crate::manage::{BulkAction, BulkResult, Library, ProfilePage, Selection, UndoResult};
@@ -17,12 +18,14 @@ use pb_runtime::{
 };
 use pb_storage::Workspace;
 use pb_storage::catalog::{Client, SavedFilter, TagRefOwned, Template};
+use pb_storage::cloud::OrgLink;
 use pb_storage::imports::ImportJob;
 use pb_storage::network::NetworkCheck;
 use pb_storage::query::{ProfileFilter, Sort};
 use pb_storage::settings::SettingValue;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime, State, Webview};
 use tauri_plugin_dialog::DialogExt;
@@ -764,4 +767,123 @@ pub fn validate_privacy<Rt: Runtime>(
 pub fn get_privacy_options<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<PrivacyOptions> {
     caller(&webview)?;
     Ok(state.privacy_options())
+}
+
+// ----------------------------------------------------------------------------- account and organizations (06)
+// Network work runs on a blocking thread; tokens never cross to the window.
+
+fn blocking_state<Rt: Runtime>(app: &AppHandle<Rt>) -> Arc<AppState> {
+    app.state::<Arc<AppState>>().inner().clone()
+}
+
+#[tauri::command]
+pub fn get_account<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<AccountView> {
+    caller(&webview)?;
+    state.account_view()
+}
+
+/// Sets or clears the organization server (https; http only to this computer). Changing it signs out.
+#[tauri::command]
+pub fn set_cloud_server<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    url: Option<String>,
+) -> R<AccountView> {
+    caller(&webview)?;
+    state.set_cloud_server(url.as_deref())
+}
+
+/// Opens the identity provider's sign-in page in the system browser (never inside the manager).
+#[tauri::command]
+pub async fn begin_sign_in<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    reauth: Option<bool>,
+) -> R<SignInStarted> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    let url =
+        tauri::async_runtime::spawn_blocking(move || state.begin_sign_in(reauth.unwrap_or(false)))
+            .await
+            .map_err(|_| ipc::INTERNAL)??;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|_| ipc::INTERNAL)?;
+    Ok(SignInStarted { opened: true })
+}
+
+#[tauri::command]
+pub fn cancel_sign_in<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<AccountView> {
+    caller(&webview)?;
+    state.cancel_sign_in();
+    state.account_view()
+}
+
+#[tauri::command]
+pub async fn sign_out<Rt: Runtime>(app: AppHandle<Rt>, webview: Webview<Rt>) -> R<AccountView> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || state.sign_out())
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+/// An allow-listed organization API request made by the shell with the session's token.
+#[tauri::command]
+pub async fn cloud_request<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    method: String,
+    path: String,
+    query: Option<Vec<(String, String)>>,
+    body: Option<Value>,
+    if_match: Option<String>,
+) -> R<CloudResponse> {
+    caller(&webview)?;
+    if query.as_ref().is_some_and(|q| q.len() > 10) {
+        return Err(ipc::INVALID_ARGUMENT);
+    }
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        state.cloud_request(
+            &method,
+            &path,
+            query.as_deref().unwrap_or(&[]),
+            body.as_ref(),
+            if_match.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Previews (`dryRun`) or commits copying a local workspace's profiles into an organization.
+#[tauri::command]
+pub async fn org_import<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    workspace_id: String,
+    org_id: String,
+    mapping: Option<BTreeMap<String, String>>,
+    dry_run: bool,
+) -> R<OrgImportView> {
+    caller(&webview)?;
+    let workspace =
+        pb_runtime::WorkspaceId::parse(&workspace_id).map_err(|_| ipc::UNKNOWN_WORKSPACE)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        state.org_import(&workspace, &org_id, &mapping.unwrap_or_default(), dry_run)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+#[tauri::command]
+pub fn list_org_links<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    org_id: Option<String>,
+) -> R<Vec<OrgLink>> {
+    caller(&webview)?;
+    state.org_links(org_id.as_deref())
 }

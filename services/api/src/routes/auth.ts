@@ -64,6 +64,7 @@ export function authRoutes(app: App, deps: Deps): void {
       const identity = await verifySignIn(deps, req.id, req.body.id_token, req.body.nonce);
       const userId = await upsertUser(deps, req.id, identity);
       const session = await withTx(deps.pool, { orgId: null, userId }, async (c) => {
+        await claimOnce(c, deps, req.id, req.body.id_token, identity);
         const deviceId = newId('device');
         await c.query(
           'insert into devices (id, user_id, name, platform, last_seen_at) values ($1, $2, $3, $4, now())',
@@ -123,6 +124,7 @@ export function authRoutes(app: App, deps: Deps): void {
             },
           );
         }
+        await claimOnce(c, deps, req.id, body.id_token, identity);
         await c.query(
           `update device_sessions set revoked_at = now(), revoke_reason = 'replaced'
             where device_id = $1 and user_id = $2 and revoked_at is null`,
@@ -182,7 +184,7 @@ export function authRoutes(app: App, deps: Deps): void {
 
 // ---------------------------------------------------------------- helpers
 
-/** Verifies the ID token and claims it (one use only). Failures are audited without any token material. */
+/** Verifies the ID token (signature, issuer, audience, age, nonce). Failures are audited without token material. */
 async function verifySignIn(
   deps: Deps,
   requestId: string,
@@ -190,33 +192,47 @@ async function verifySignIn(
   nonce: string,
 ): Promise<VerifiedIdentity> {
   if (!deps.idTokens) throw new ApiError('UNAVAILABLE', 'Sign-in is not configured on this server');
-  const fail = async (reason: string) => {
-    await auditAlone(deps.pool, {
-      orgId: null,
-      actorUserId: null,
-      actorDeviceId: null,
-      action: 'auth.sign_in',
-      outcome: 'failed',
-      requestId,
-      details: { reason },
-    });
-    return new ApiError('UNAUTHENTICATED', SIGN_IN_FAILED, { reason });
-  };
   let identity: VerifiedIdentity;
   try {
     identity = await deps.idTokens.verify(idToken, nonce);
   } catch (err) {
-    if (err instanceof ApiError && err.code === 'UNAUTHENTICATED') throw await fail('id_token_invalid');
+    if (err instanceof ApiError && err.code === 'UNAUTHENTICATED') {
+      throw await signInFailed(deps, requestId, 'id_token_invalid');
+    }
     throw err;
   }
-  const { rows } = await withTx(deps.pool, { orgId: null, userId: null }, (c) =>
-    c.query<{ first: boolean }>('select app.claim_id_token($1, $2) as first', [
-      sha256Hex(idToken),
-      identity.expiresAt,
-    ]),
-  );
-  if (!rows[0]?.first) throw await fail('id_token_reused');
   return identity;
+}
+
+/**
+ * Claims the ID token inside the transaction that uses it: each token starts at most one session. A refused
+ * request (for example an unknown device) rolls the claim back, so the same token can still enroll this device.
+ */
+async function claimOnce(
+  c: pg.PoolClient,
+  deps: Deps,
+  requestId: string,
+  idToken: string,
+  identity: VerifiedIdentity,
+): Promise<void> {
+  const { rows } = await c.query<{ first: boolean }>('select app.claim_id_token($1, $2) as first', [
+    sha256Hex(idToken),
+    identity.expiresAt,
+  ]);
+  if (!rows[0]?.first) throw await signInFailed(deps, requestId, 'id_token_reused');
+}
+
+async function signInFailed(deps: Deps, requestId: string, reason: string): Promise<ApiError> {
+  await auditAlone(deps.pool, {
+    orgId: null,
+    actorUserId: null,
+    actorDeviceId: null,
+    action: 'auth.sign_in',
+    outcome: 'failed',
+    requestId,
+    details: { reason },
+  });
+  return new ApiError('UNAUTHENTICATED', SIGN_IN_FAILED, { reason });
 }
 
 /** Finds or creates the user for this identity (matched by issuer and subject, never by e-mail). */

@@ -106,6 +106,8 @@ pub struct AppState {
     pub(crate) networks: Mutex<Networks>,
     /// Expiry reminders already shown in this session.
     pub(crate) expiry_warned: Mutex<Vec<(pb_runtime::ProxyId, &'static str)>>,
+    /// The signed-in account and organization requests (milestone 06).
+    pub(crate) cloud: crate::account::Cloud,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -251,6 +253,8 @@ impl AppState {
             reconcile = supervisor.reconcile_on_startup(store, &root, &trusted);
         }
         let net = pb_netproxy::NetRuntime::new().map_err(|e| format!("network runtime: {e}"))?;
+        let signed_in = matches!(&slot, StoreSlot::Ready(store)
+            if store.cloud_state(pb_storage::cloud::ACCOUNT).ok().flatten().is_some());
 
         Ok(Arc::new(Self {
             paths,
@@ -288,6 +292,7 @@ impl AppState {
             network_settings: RwLock::new(NetworkSettings::default()),
             networks: Mutex::new(HashMap::new()),
             expiry_warned: Mutex::new(Vec::new()),
+            cloud: crate::account::Cloud::new(signed_in),
         }))
     }
 

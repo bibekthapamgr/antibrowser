@@ -10,6 +10,7 @@
 
 pub mod bulk;
 pub mod catalog;
+pub mod cloud;
 pub mod imports;
 pub mod migrations;
 pub mod network;

@@ -11,6 +11,26 @@ function call<C extends CommandName>(cmd: C, args: CommandArgs<C>): Promise<Comm
 export function tauriBackend(): Backend {
   return {
     kind: 'tauri',
+    account: {
+      get: () => call('get_account', {}),
+      setServer: (url) => call('set_cloud_server', { url }),
+      signIn: async (reauth) => {
+        await call('begin_sign_in', reauth ? { reauth } : {});
+      },
+      cancelSignIn: () => call('cancel_sign_in', {}),
+      signOut: () => call('sign_out', {}),
+      request: (r) =>
+        call('cloud_request', {
+          method: r.method,
+          path: r.path,
+          ...(r.query ? { query: r.query } : {}),
+          ...(r.body ? { body: r.body } : {}),
+          ...(r.ifMatch ? { ifMatch: r.ifMatch } : {}),
+        }),
+      orgImport: (workspaceId, orgId, dryRun, mapping) =>
+        call('org_import', { workspaceId, orgId, dryRun, ...(mapping ? { mapping } : {}) }),
+      links: (orgId) => call('list_org_links', orgId ? { orgId } : {}),
+    },
     workspaces: {
       appState: () => call('get_app_state', {}),
       createWorkspace: (name) => call('create_workspace', { name }),

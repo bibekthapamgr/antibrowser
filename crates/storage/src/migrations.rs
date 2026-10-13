@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -23,6 +23,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (3, "runtime_lifecycle", v3),
     (4, "profile_management", v4),
     (5, "proxies_and_privacy", v5),
+    (6, "cloud_account", v6),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -533,5 +534,32 @@ fn v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          drop table audit_log;
          alter table audit_log_v5 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
+}
+
+/// Milestone 06: the signed-in account's non-secret state, a cache of organization metadata for offline display
+/// (always shown as stale; never used to authorize anything) and links from local profiles to the organization
+/// profiles they were copied to. The refresh token is in the OS keychain, never here.
+fn v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table cloud_state (
+           key         text primary key check (key in ('server_url', 'device_id', 'account')),
+           value       text not null check (length(value) <= 4096),
+           updated_at  text not null default {NOW}
+         ) strict;
+
+         create table cloud_cache (
+           key         text primary key check (length(key) between 1 and 300),
+           body        text not null check (json_valid(body) and length(body) <= 4000000),
+           fetched_at  text not null default {NOW}
+         ) strict;
+
+         create table org_profile_links (
+           local_profile_id  text primary key references profiles(id) on delete cascade,
+           org_id            text not null check (org_id glob 'org_*' and length(org_id) = 30),
+           org_profile_id    text not null check (org_profile_id glob 'prf_*' and length(org_profile_id) = 30),
+           linked_at         text not null default {NOW}
+         ) strict;
+         create index org_profile_links_org_idx on org_profile_links (org_id);"
     ))
 }
