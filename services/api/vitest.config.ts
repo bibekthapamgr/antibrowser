@@ -13,8 +13,15 @@ function loadEnvFile(path: string): Record<string, string> {
 }
 
 const testEnv = loadEnvFile(join(import.meta.dirname, '../../infra/env/test.env.example'));
-// CI may point at its own service container.
-for (const key of ['DATABASE_URL', 'WORKER_DATABASE_URL', 'MIGRATION_DATABASE_URL']) {
+// CI or a test server may point at its own services.
+for (const key of [
+  'DATABASE_URL',
+  'WORKER_DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
+  // A test server's own storage credentials (scripts/deploy/vps-setup.sh), instead of the repository fixture.
+  'OBJECT_STORE_ACCESS_KEY_ID',
+  'OBJECT_STORE_SECRET_ACCESS_KEY',
+]) {
   const override = process.env[`TEST_${key}`];
   if (override) testEnv[key] = override;
 }

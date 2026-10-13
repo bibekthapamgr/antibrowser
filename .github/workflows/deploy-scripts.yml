@@ -1,14 +1,18 @@
 name: deploy scripts
 
 # Runs the test-server scripts the way a person runs them on a fresh VPS (Ubuntu 24.04 VM with systemd, as root):
-# vps-setup.sh, then keycloak-setup.sh, then real sign-ins through the deployed API and the self-hosted Keycloak,
-# then the update path (both scripts again) and the account commands. Linux only; runs when these files change.
+# vps-setup.sh (with the snapshot storage and the backup root key), then keycloak-setup.sh, then real sign-ins through
+# the deployed API and the self-hosted Keycloak, then the update path (both scripts again: an earlier backup must
+# still restore and the root key must be kept), the account commands and a root key rotation. Linux only; runs when
+# these files change.
 on:
   push:
     branches: [main]
     paths:
       - 'scripts/deploy/**'
       - 'scripts/ci/keycloak-sign-in-check.ts'
+      - 'services/api/scripts/snapshot-smoke.ts'
+      - 'services/api/scripts/storage-check.ts'
       - '.github/workflows/deploy-scripts.yml'
   workflow_dispatch:
 
@@ -54,6 +58,18 @@ jobs:
             exit 1
           fi
 
+      - name: Snapshot storage and root key
+        run: |
+          systemctl is-active --quiet pb-storage || { echo "::error title=storage::pb-storage is not running"; exit 1; }
+          grep -q "snapshot smoke: backed up and restored" "$RUNNER_TEMP/vps-setup.log" \
+            || { echo "::error title=storage::no snapshot round trip in the setup log"; exit 1; }
+          [ "$(sudo stat -c '%U %a' /etc/project-browser/kms-root.json)" = "pb 600" ] \
+            || { echo "::error title=root key::kms-root.json must be pb-owned and mode 600"; exit 1; }
+          sudo sha256sum /etc/project-browser/kms-root.json | cut -d' ' -f1 > "$RUNNER_TEMP/root-key.sha"
+          # A backup made now must still restore after the update below (new storage credentials, restarts).
+          sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
+            --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --save /tmp/pb-smoke-state.json'
+
       - name: keycloak-setup.sh (first run, creates the owner account)
         run: |
           scripts/ci/annotate.sh "keycloak-setup.sh" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
@@ -74,6 +90,11 @@ jobs:
           scripts/ci/annotate.sh "vps-setup.sh (update)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
           scripts/ci/annotate.sh "keycloak-setup.sh (update)" sudo bash scripts/deploy/keycloak-setup.sh | tee "$RUNNER_TEMP/rerun.log"
           grep -q "nothing changed" "$RUNNER_TEMP/rerun.log" || { echo "::error title=update::Keycloak was restarted without a change"; exit 1; }
+          # The backup root key was kept, and the backup made before the update still restores.
+          [ "$(sudo sha256sum /etc/project-browser/kms-root.json | cut -d' ' -f1)" = "$(cat "$RUNNER_TEMP/root-key.sha")" ] \
+            || { echo "::error title=update::the backup root key changed"; exit 1; }
+          sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
+            --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --check /tmp/pb-smoke-state.json'
           # The session from before the updates still works: same signing key, sign-in settings kept by vps-setup.sh.
           code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/owner.header" http://127.0.0.1:8080/v1/me)
           [ "$code" = 200 ] || { echo "::error title=update::the earlier API session stopped working (HTTP $code)"; exit 1; }
@@ -102,6 +123,24 @@ jobs:
             bash scripts/deploy/keycloak-setup.sh reset-password teammate@example.test
           signin teammate@example.test "teammate sign-in after reset"
 
+      - name: Root key rotation (root-key.sh)
+        run: |
+          sudo bash scripts/deploy/root-key.sh status
+          old=$(sudo /opt/node/bin/node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).active)' /etc/project-browser/kms-root.json)
+          if sudo bash scripts/deploy/root-key.sh retire "$old"; then
+            echo "::error title=root key::the active key was retired"; exit 1
+          fi
+          sudo bash scripts/deploy/root-key.sh rotate
+          # The worker re-wraps organization keys with the new root key (about once a minute).
+          for _ in $(seq 1 30); do
+            sudo bash scripts/deploy/root-key.sh status | grep -E "old +$old +wraps nothing" && break
+            sleep 10
+          done
+          sudo bash scripts/deploy/root-key.sh retire "$old"
+          sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
+            --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --check /tmp/pb-smoke-state.json'
+          echo "::notice title=Root key rotation::rotated, re-wrapped by the worker, old key retired; the earlier backup still restores"
+
       - name: Evidence
         run: |
           kc=$(basename "$(readlink -f /opt/keycloak)")
@@ -112,7 +151,7 @@ jobs:
       - name: Service logs
         if: failure()
         run: |
-          for u in keycloak pb-api; do
+          for u in keycloak pb-api pb-worker pb-storage; do
             sudo journalctl -u "$u" -n 120 --no-pager || true
             # Raw logs are not always reachable; the most useful lines also go into annotations.
             msg=$(sudo journalctl -u "$u" -n 200 --no-pager -o cat 2>/dev/null | grep -iE "error|exception|fail|refus|denied" \

@@ -7,10 +7,14 @@
 #   2. Creates an unprivileged user `pb` with a read-only GitHub deploy key; GitHub's host key is verified.
 #   3. Clones/updates the private repository, installs dependencies, creates DB roles with RANDOM passwords,
 #      runs migrations, seeds the two fixture tenants, runs the test suite.
-#   4. Runs the API and outbox worker as hardened systemd services bound to 127.0.0.1 only.
+#   4. Installs SeaweedFS (pinned release, SHA-256 verified) as the snapshot storage (S3 API on 127.0.0.1:8333, its
+#      own system user and data folder) and creates the backup root key once (/etc/project-browser/kms-root.json,
+#      pb user only; never regenerated: see root-key.sh and docs/sync/key-recovery-runbook.md).
+#   5. Runs the API, the worker and the storage as hardened systemd services bound to 127.0.0.1 only, then proves a
+#      snapshot round trip (upload, verification by the worker, restore).
 #
-# It never opens firewall ports, never changes SSH settings and never exposes PostgreSQL or the API publicly.
-# Access the API through an SSH tunnel (printed at the end).
+# It never opens firewall ports, never changes SSH settings and never exposes PostgreSQL, the storage or the API
+# publicly. Access them through an SSH tunnel (printed at the end).
 #
 # Usage (as root):  bash vps-setup.sh [--skip-tests]
 # Env overrides:    PB_REPO (default git@github.com:bibekthapamgr/antibrowser.git), PB_BRANCH (main), PB_API_PORT (8080)
@@ -175,6 +179,99 @@ ok "$(as_pb git -C "$APP_DIR" log -1 --format='%h %s')"
 as_pb bash -c "cd '$APP_DIR' && pnpm install --frozen-lockfile --reporter=silent"
 ok "dependencies installed (pnpm $(as_pb bash -c "cd '$APP_DIR' && pnpm --version"))"
 
+# ----------------------------------------------------------------------------- snapshot storage + root key (07)
+step "Snapshot storage (SeaweedFS) and the backup root key"
+SW_VERSION=4.48
+case "$NODE_ARCH" in
+  x64)   SW_ASSET=linux_amd64.tar.gz; SW_SHA256=4a7d108384d044d95212d1342cdda9533fa55842c1c9b41f606ca3c8a9561124 ;;
+  arm64) SW_ASSET=linux_arm64.tar.gz; SW_SHA256=557e92c38c5c7d180748eb8e2b2b45e426f8e5282a4caca8e098a90d09f03a07 ;;
+esac
+SW_DIR=/opt/seaweedfs/$SW_VERSION
+STORE_USER=pbstore
+STORE_DATA=/var/lib/pb-seaweedfs
+STORE_CONF_DIR=/etc/pb-seaweedfs
+S3_PORT=8333
+STORE_PORTS="$S3_PORT 9333 19333 8090 18090 8888 18888"
+KMS_FILE=$ENV_DIR/kms-root.json
+if [[ ! -x $SW_DIR/weed ]]; then
+  tmp=$(mktemp -d)
+  curl -fsSL --retry 3 "https://github.com/seaweedfs/seaweedfs/releases/download/$SW_VERSION/$SW_ASSET" -o "$tmp/sw.tgz"
+  echo "$SW_SHA256  $tmp/sw.tgz" | sha256sum -c --quiet - || die "the SeaweedFS download does not match its pinned SHA-256"
+  install -d -m 755 "$SW_DIR"
+  tar -xzf "$tmp/sw.tgz" -C "$SW_DIR" weed
+  chmod 755 "$SW_DIR/weed"
+  rm -rf "$tmp"
+fi
+ln -sfn "$SW_DIR" /opt/seaweedfs/current
+ok "SeaweedFS $SW_VERSION ($SW_ASSET, SHA-256 verified)"
+id "$STORE_USER" >/dev/null 2>&1 \
+  || useradd --system --home-dir "$STORE_DATA" --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$STORE_USER"
+install -d -m 700 -o "$STORE_USER" -g "$STORE_USER" "$STORE_DATA"
+if ! systemctl is-active --quiet pb-storage; then
+  for port in $STORE_PORTS; do
+    port_in_use "$port" && die "port $port is already in use; SeaweedFS needs $STORE_PORTS on 127.0.0.1"
+  done
+fi
+# New random S3 credentials on every run, like the database passwords; storage and API get them together.
+S3_KEY="pb$(randhex 8)"; S3_SECRET=$(randhex 24)
+install -d -m 750 -o root -g "$STORE_USER" "$STORE_CONF_DIR"
+umask 027
+printf '{"identities":[{"name":"project-browser","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}\n' \
+  "$S3_KEY" "$S3_SECRET" > "$STORE_CONF_DIR/s3.json"
+umask 022
+chown root:"$STORE_USER" "$STORE_CONF_DIR/s3.json"; chmod 640 "$STORE_CONF_DIR/s3.json"
+cat > /etc/systemd/system/pb-storage.service <<UNIT
+[Unit]
+Description=Project Browser snapshot storage (SeaweedFS; S3 on 127.0.0.1:$S3_PORT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$STORE_USER
+Group=$STORE_USER
+ExecStart=/opt/seaweedfs/current/weed server -dir=$STORE_DATA -ip=127.0.0.1 -ip.bind=127.0.0.1 -master.port=9333 -master.volumeSizeLimitMB=1024 -volume.port=8090 -volume.max=50 -filer.port=8888 -s3 -s3.port=$S3_PORT -s3.config=$STORE_CONF_DIR/s3.json
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ReadWritePaths=$STORE_DATA
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q pb-storage
+systemctl restart pb-storage
+for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:$S3_PORT/" && break; sleep 1; done
+curl -s -o /dev/null "http://127.0.0.1:$S3_PORT/" || { journalctl -u pb-storage -n 30 --no-pager; die "the snapshot storage did not start"; }
+ok "pb-storage running (S3 on 127.0.0.1:$S3_PORT, data in $STORE_DATA)"
+# The root key wraps every organization's backup keys. Created once; this script never replaces it.
+install -d -m 750 -o root -g "$APP_USER" "$ENV_DIR"
+NEW_ROOT_KEY=0
+if [[ ! -s $KMS_FILE ]]; then
+  kid="root-$(date -u +%Y%m%d%H%M%S)"
+  umask 077
+  printf '{"active":"%s","keys":{"%s":"%s"}}\n' "$kid" "$kid" "$(head -c 32 /dev/urandom | base64 | tr -d '\n')" > "$KMS_FILE"
+  umask 022
+  NEW_ROOT_KEY=1
+  ok "created the backup root key $kid"
+else
+  ok "backup root key kept ($KMS_FILE)"
+fi
+chown "$APP_USER:$APP_USER" "$KMS_FILE"; chmod 600 "$KMS_FILE"
+
 # ----------------------------------------------------------------------------- database roles + secrets
 step "Database roles and secrets"
 (cd /tmp && runuser -u postgres -- "$PSQL" -q -v ON_ERROR_STOP=1 -f - < "$APP_DIR/infra/db/bootstrap-local.sql")
@@ -197,7 +294,14 @@ WORKER_DATABASE_URL=postgres://pb_worker:$WORKER_PW@127.0.0.1:5432/pb_dev
 MIGRATION_DATABASE_URL=postgres://pb_owner:$OWNER_PW@127.0.0.1:5432/pb_dev
 DEV_AUTH_ENABLED=true
 DEV_AUTH_SECRET=$DEV_SECRET
+OBJECT_STORE_ENDPOINT=http://127.0.0.1:$S3_PORT
+OBJECT_STORE_PUBLIC_ENDPOINT=http://127.0.0.1:$S3_PORT
 OBJECT_STORE_BUCKET=pb-snapshots-dev
+OBJECT_STORE_REGION=us-east-1
+OBJECT_STORE_ACCESS_KEY_ID=$S3_KEY
+OBJECT_STORE_SECRET_ACCESS_KEY=$S3_SECRET
+OBJECT_STORE_FORCE_PATH_STYLE=true
+KMS_LOCAL_KEY_FILE=$KMS_FILE
 EOF
 umask 022
 chown root:"$APP_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
@@ -205,6 +309,8 @@ ok "random passwords set for pb_owner, pb_app, pb_worker; secrets in $ENV_FILE (
 
 step "Migrations and fixture tenants"
 as_pb bash -c "cd '$APP_DIR' && node --env-file='$ENV_FILE' services/api/scripts/migrate.ts && node --env-file='$ENV_FILE' services/api/scripts/seed.ts" | sed 's/^/    /'
+# Buckets for this server and for the test suite; the API's own credentials write, read and delete a probe.
+as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/storage-check.ts pb-snapshots-test" | sed 's/^/    /'
 
 # ----------------------------------------------------------------------------- tests
 if [[ $RUN_TESTS == 1 ]]; then
@@ -213,6 +319,7 @@ if [[ $RUN_TESTS == 1 ]]; then
       TEST_DATABASE_URL='postgres://pb_app:$APP_PW@127.0.0.1:5432/pb_test' \
       TEST_WORKER_DATABASE_URL='postgres://pb_worker:$WORKER_PW@127.0.0.1:5432/pb_test' \
       TEST_MIGRATION_DATABASE_URL='postgres://pb_owner:$OWNER_PW@127.0.0.1:5432/pb_test' \
+      TEST_OBJECT_STORE_ACCESS_KEY_ID='$S3_KEY' TEST_OBJECT_STORE_SECRET_ACCESS_KEY='$S3_SECRET' \
       NO_COLOR=1 FORCE_COLOR=0 pnpm run test" > /tmp/pb-tests.log 2>&1; then
     # pnpm prefixes each line with the package path, e.g. "services/api test:  Tests  25 passed (25)".
     ok "$( (sed 's/\x1b\[[0-9;]*m//g' /tmp/pb-tests.log | grep -oE 'Tests +[0-9]+ passed' || true) | awk '{s+=$2} END {print s+0" tests passed"}')"
@@ -231,8 +338,8 @@ unit() {  # name, description, workdir, entry
   cat > "/etc/systemd/system/$1.service" <<EOF
 [Unit]
 Description=$2
-After=network-online.target $PG_SERVICE.service
-Wants=network-online.target
+After=network-online.target $PG_SERVICE.service pb-storage.service
+Wants=network-online.target pb-storage.service
 Requires=$PG_SERVICE.service
 
 [Service]
@@ -283,20 +390,26 @@ other=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $TOKEN"
 [[ $own == 200 && $other == 404 ]] && ok "own tenant 200, other tenant 404 (isolation holds)" || die "tenant check failed: own=$own other=$other"
 sleep 2
 systemctl is-active --quiet pb-worker && ok "worker running" || { journalctl -u pb-worker -n 30 --no-pager; die "worker not running"; }
-pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT)\$" | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
-[[ -z $pub ]] && ok "PostgreSQL and API listen on localhost only" || die "something listens publicly: $pub"
+if as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/snapshot-smoke.ts" > /tmp/pb-snapshot-smoke.log 2>&1; then
+  ok "$(tail -1 /tmp/pb-snapshot-smoke.log)"
+else
+  tail -5 /tmp/pb-snapshot-smoke.log; journalctl -u pb-worker -n 20 --no-pager
+  die "the snapshot round trip failed"
+fi
+pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT|${STORE_PORTS// /|})\$" | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
+[[ -z $pub ]] && ok "PostgreSQL, storage and API listen on localhost only" || die "something listens publicly: $pub"
 
 # ----------------------------------------------------------------------------- summary
 step "Done"
-TUNNEL_EXTRA=""; SIGN_IN_HINT=""
+TUNNEL_EXTRA=" -L $S3_PORT:127.0.0.1:$S3_PORT"; SIGN_IN_HINT=""
 if [[ -f $ENV_DIR/oidc.env ]]; then  # sign-in through the local Keycloak (keycloak-setup.sh) needs its port too
   kc_port=$(sed -nE 's|^OIDC_ISSUER=http://127\.0\.0\.1:([0-9]+)/.*|\1|p' "$ENV_DIR/oidc.env")
-  [[ -n $kc_port ]] && TUNNEL_EXTRA=" -L $kc_port:127.0.0.1:$kc_port"
+  [[ -n $kc_port ]] && TUNNEL_EXTRA="$TUNNEL_EXTRA -L $kc_port:127.0.0.1:$kc_port"
   SIGN_IN_HINT=$'\n'"    Sign-in: Keycloak is connected (keycloak-setup.sh); in Project Browser use http://127.0.0.1:$API_PORT"
 fi
 cat <<EOF
     Code:      $APP_DIR ($(as_pb git -C "$APP_DIR" log -1 --format=%h))
-    Services:  systemctl status pb-api pb-worker    |  logs: journalctl -u pb-api -f
+    Services:  systemctl status pb-api pb-worker pb-storage    |  logs: journalctl -u pb-api -f
     Update:    \\cp -f $APP_DIR/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh
                (refreshes this script, pulls main, migrates, tests, restarts; \\cp skips the "overwrite?" prompt)
 
@@ -305,4 +418,11 @@ cat <<EOF
     then open http://127.0.0.1:$API_PORT/v1/health$SIGN_IN_HINT
     Fixture token (on this server):
       runuser -u pb -- bash -c "cd $APP_DIR && /opt/node/bin/node --env-file=$ENV_FILE services/api/scripts/dev-token.ts acmeOwner"
+    Backups:   encrypted snapshots are stored on 127.0.0.1:$S3_PORT (the tunnel above carries it)
+    Root key:  $KMS_FILE   |  bash $APP_DIR/scripts/deploy/root-key.sh status
 EOF
+if [[ $NEW_ROOT_KEY == 1 ]]; then
+  printf '\n\033[1;33m    IMPORTANT:\033[0m a new backup root key was created. Without it no organization backup on this\n'
+  printf '    server can ever be decrypted. Copy it off the server now and keep it offline:\n'
+  printf '      scp root@<this-server>:%s ./project-browser-root-key.json\n' "$KMS_FILE"
+fi
