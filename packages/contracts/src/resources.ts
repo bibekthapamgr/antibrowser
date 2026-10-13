@@ -751,10 +751,7 @@ export const RestorePlan = Type.Object(
     snapshot: Snapshot,
     /** The profile's newest committed version at planning time (a restored copy is based on it). */
     head_version: Type.Integer({ minimum: 0 }),
-    download: Type.Object(
-      { url: Type.String(), expires_at: Timestamp },
-      { additionalProperties: false },
-    ),
+    download: Type.Object({ url: Type.String(), expires_at: Timestamp }, { additionalProperties: false }),
     key: SnapshotKey,
   },
   { additionalProperties: false },

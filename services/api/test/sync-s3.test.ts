@@ -105,7 +105,9 @@ describe.skipIf(!reachable)('snapshots on S3-compatible storage', () => {
   it('an object replaced in storage after the upload fails verification and is erased', async () => {
     const profile = await freshProfile();
     const fencing = await acquireLease(h, owner, acme.id, profile, device);
-    const init = (await initSnapshot(h, owner, acme.id, profile, { base_version: 0, fencing_token: fencing })).json();
+    const init = (
+      await initSnapshot(h, owner, acme.id, profile, { base_version: 0, fencing_token: fencing })
+    ).json();
     const object = sealedObject({
       orgId: acme.id,
       profileId: profile,

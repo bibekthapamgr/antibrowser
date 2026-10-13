@@ -1,1 +1,9 @@
-{"identities":[{"name":"pb","credentials":[{"accessKey":"pb-local","secretKey":"pb-local-fixture-secret-key"}],"actions":["Admin","Read","List","Tagging","Write"]}]}
+{
+  "identities": [
+    {
+      "name": "pb",
+      "credentials": [{ "accessKey": "pb-local", "secretKey": "pb-local-fixture-secret-key" }],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}
