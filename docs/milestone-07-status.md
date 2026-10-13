@@ -59,7 +59,16 @@ backups 9, desktop sync 6, storage sync 2); API 264 (+ Keycloak and session-key 
 snapshot routes in the cross-tenant sweep); UI unit 30; UI end-to-end 111 (4 new backup flows plus the three new
 screens in light and dark with axe at 900×600); worker 7; contracts and config 7 each.
 
-CI: the three-OS run is recorded below once it completes.
+CI: full run green on Windows x64, macOS arm64 and Linux at `0f8a995`
+([ci 38391646819](https://github.com/bibekthapamgr/antibrowser/actions/runs/38391646819): fmt, clippy, all Rust tests per
+OS including the sync engine and desktop backup tests, TypeScript + PostgreSQL 18 + S3 storage, Keycloak 26.6.2
+sign-in, **sync end to end** — run notices "committed once as version 1 after 4 attempts", "VERSION_CONFLICT (head 2),
+head unchanged", "identical files, labelled sign-in required", "another organization's member: NOT_FOUND" —, UI e2e
+with axe, license inventory, secret scan). Real Chromium through sealed snapshots on all three OSes in
+[runtime pipeline 38387874586](https://github.com/bibekthapamgr/antibrowser/actions/runs/38387874586) (at `b303d88`;
+later commits did not change the sealed format or the browser tests); installers in
+[desktop internal build 38391649703](https://github.com/bibekthapamgr/antibrowser/actions/runs/38391649703) (at `0f8a995`).
+The first 3-OS run found two Windows problems, fixed before the green run (below).
 
 ## Test server
 `vps-setup.sh` now installs SeaweedFS 4.48 (checksum-pinned) as `pb-storage` on `127.0.0.1:8333`, creates the backup
