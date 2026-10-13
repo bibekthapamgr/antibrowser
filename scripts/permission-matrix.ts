@@ -2,12 +2,15 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  API_SCOPES,
   GRANT_CAPABILITIES,
   PERMISSION_CAPABILITY,
   PERMISSIONS,
   ROLE_PERMISSIONS,
   ROLE_SCOPE,
   ROLES,
+  SCOPE_LABELS,
+  SCOPE_PERMISSIONS,
 } from '../packages/contracts/src/index.ts';
 
 const cell = (r: (typeof ROLES)[number], p: (typeof PERMISSIONS)[number]) => {
@@ -24,6 +27,11 @@ const capabilityRows = GRANT_CAPABILITIES.map(
       .join(', ')} |`,
 );
 const SCOPE_TEXT = { organization: 'all', granted: 'granted only', none: 'none' } as const;
+const scopeRows = API_SCOPES.map(
+  (scope) =>
+    `  - \`${scope}\` — ${SCOPE_LABELS[scope]}: ${SCOPE_PERMISSIONS[scope].map((p) => `\`${p}\``).join(', ')}`,
+).join('\n');
+
 const md = `# Permission matrix
 
 Generated from \`packages/contracts/src/resources.ts\` by \`pnpm run docs:permissions\`. Do not edit by hand.
@@ -85,6 +93,18 @@ ${capabilityRows.join('\n')}
   their app applies it.
 - Client dashboards, tasks and bookmarks inherit the reach: a dashboard counts only profiles the caller can see; who works
   on a client and its recent activity are shown to holders of \`grants.manage\` and \`audit.read\` only (milestone 09).
+- **Automation** (milestone 10, [ADR-0017](adr/0017-developer-api-and-automation.md)): \`automation.run\` asks for
+  jobs on profiles one may open (operators: the grant's \`launch\` capability) and cancels one's own;
+  \`automation.manage\` sets the approved sites and limits and cancels anyone's jobs; \`automation.debug\` asks for
+  debugging (Playwright) sessions; \`automation.agent\` lets one's own computer run jobs as oneself (only profiles one
+  may open). Jobs are visible to those who can see their profile.
+- **API tokens** act as their owner and never beyond the owner's access *now*: each request needs the role permission,
+  the grant capability and a token scope, inside the token's client/profile restrictions. Scopes:
+${scopeRows}
+  Tokens reach only the routes marked "API tokens: yes" in the OpenAPI document; tokens, webhooks, members, grants,
+  computers and sessions need an interactive sign-in. \`tokens.create\`: one's own tokens; \`tokens.manage\`: see and
+  revoke everyone's. A member who leaves loses their tokens and computers.
+- \`webhooks.manage\`: webhook endpoints, their secrets and deliveries (owners and admins).
 - \`billing.*\` are reserved for milestone 11; no endpoint uses them yet.
 `;
 writeFileSync(join(import.meta.dirname, '..', 'docs', 'permission-matrix.md'), md);

@@ -309,7 +309,7 @@ export function tokenRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['api-tokens'],
         description:
-          'API tokens: yes. The calling token: scopes, restrictions, expiry. Useful to check what an integration ' +
+          'The calling token: scopes, restrictions, expiry. Useful to check what an integration ' +
           'may do. Interactive sign-ins get 404.',
         params: OrgParams,
         response: { 200: ApiToken, ...errors },

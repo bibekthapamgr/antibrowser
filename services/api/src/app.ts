@@ -172,6 +172,19 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       },
       security: [{ bearer: [] }],
     },
+    // Routes API tokens may call say so in their description and list both schemes (milestone 10).
+    transform: ({ schema, url, route }) => {
+      if (!(route.config as { tokens?: boolean } | undefined)?.tokens || !schema) return { schema, url };
+      const s = schema as { description?: string; security?: unknown };
+      return {
+        url,
+        schema: {
+          ...schema,
+          description: `API tokens: yes (scopes apply). ${s.description ?? ''}`.trim(),
+          security: [{ bearer: [] }, { apiToken: [] }],
+        } as typeof schema,
+      };
+    },
   });
 
   app.decorateRequest('principal', null);

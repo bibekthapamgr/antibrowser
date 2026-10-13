@@ -33,6 +33,14 @@ web UIs may hide controls but are never the authority. Decisions: [ADR-0013](adr
 | `audit.read` | yes | yes | — | — | — |
 | `tasks.write` | yes | yes | yes | — | — |
 | `extensions.manage` | yes | yes | — | — | — |
+| `automation.read` | yes | yes | yes | — | — |
+| `automation.run` | yes | yes | yes | — | — |
+| `automation.manage` | yes | yes | — | — | — |
+| `automation.debug` | yes | yes | — | — | — |
+| `automation.agent` | yes | yes | yes | — | — |
+| `tokens.create` | yes | yes | yes | — | — |
+| `tokens.manage` | yes | yes | — | — | — |
+| `webhooks.manage` | yes | yes | — | — | — |
 
 ## Which clients and profiles a role reaches
 
@@ -85,4 +93,20 @@ grants carry none. Permanent deletion, export and sharing (grants) are never gra
   their app applies it.
 - Client dashboards, tasks and bookmarks inherit the reach: a dashboard counts only profiles the caller can see; who works
   on a client and its recent activity are shown to holders of `grants.manage` and `audit.read` only (milestone 09).
+- **Automation** (milestone 10, [ADR-0017](adr/0017-developer-api-and-automation.md)): `automation.run` asks for
+  jobs on profiles one may open (operators: the grant's `launch` capability) and cancels one's own;
+  `automation.manage` sets the approved sites and limits and cancels anyone's jobs; `automation.debug` asks for
+  debugging (Playwright) sessions; `automation.agent` lets one's own computer run jobs as oneself (only profiles one
+  may open). Jobs are visible to those who can see their profile.
+- **API tokens** act as their owner and never beyond the owner's access *now*: each request needs the role permission,
+  the grant capability and a token scope, inside the token's client/profile restrictions. Scopes:
+  - `profiles:read` — Read profiles and clients: `org.read`, `clients.read`, `profile.read`
+  - `profiles:write` — Create, edit and trash profiles: `org.read`, `clients.read`, `profile.read`, `profile.create`, `profile.update`, `profile.delete`
+  - `automation:read` — See automation jobs: `org.read`, `clients.read`, `profile.read`, `automation.read`
+  - `automation:run` — Run automation jobs: `org.read`, `clients.read`, `profile.read`, `automation.read`, `automation.run`, `profile.launch`
+  - `automation:debug` — Debugging sessions (Playwright): `automation.debug`
+  Tokens reach only the routes marked "API tokens: yes" in the OpenAPI document; tokens, webhooks, members, grants,
+  computers and sessions need an interactive sign-in. `tokens.create`: one's own tokens; `tokens.manage`: see and
+  revoke everyone's. A member who leaves loses their tokens and computers.
+- `webhooks.manage`: webhook endpoints, their secrets and deliveries (owners and admins).
 - `billing.*` are reserved for milestone 11; no endpoint uses them yet.

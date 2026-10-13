@@ -442,6 +442,35 @@ describe('API tokens', () => {
     expect(other.statusCode).toBe(404);
   });
 
+  it('only a deliberate, documented list of routes accepts tokens', () => {
+    const spec = h.app.swagger() as { paths: Record<string, Record<string, { description?: string }>> };
+    const routes = Object.entries(spec.paths).flatMap(([path, ops]) =>
+      Object.entries(ops)
+        .filter(([, op]) => op.description?.startsWith('API tokens: yes'))
+        .map(([method]) => `${method.toUpperCase()} ${path}`),
+    );
+    expect(routes.sort()).toEqual(
+      [
+        'GET /v1/orgs/{orgId}',
+        'GET /v1/orgs/{orgId}/clients',
+        'GET /v1/orgs/{orgId}/clients/{clientId}',
+        'GET /v1/orgs/{orgId}/profiles',
+        'POST /v1/orgs/{orgId}/profiles',
+        'GET /v1/orgs/{orgId}/profiles/{profileId}',
+        'PATCH /v1/orgs/{orgId}/profiles/{profileId}',
+        'DELETE /v1/orgs/{orgId}/profiles/{profileId}',
+        'GET /v1/orgs/{orgId}/api-tokens/current',
+        'GET /v1/orgs/{orgId}/automation/settings',
+        'POST /v1/orgs/{orgId}/automation/jobs',
+        'GET /v1/orgs/{orgId}/automation/jobs',
+        'GET /v1/orgs/{orgId}/automation/jobs/{jobId}',
+        'POST /v1/orgs/{orgId}/automation/jobs/{jobId}/cancel',
+        'GET /v1/orgs/{orgId}/automation/jobs/{jobId}/artifacts/{artifactId}',
+        'GET /v1/orgs/{orgId}/automation/agents',
+      ].sort(),
+    );
+  });
+
   it('is rate-limited per token', async () => {
     const t = await token(owner, ['profiles:read']);
     expect(

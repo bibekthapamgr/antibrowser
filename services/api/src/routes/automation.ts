@@ -208,7 +208,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       config: { tokens: true },
       schema: {
         tags: ['automation'],
-        description: 'API tokens: yes. Approved sites (where job steps may go) and the running-job limit.',
+        description: 'Approved sites (where job steps may go) and the running-job limit.',
         params: OrgParams,
         response: { 200: AutomationSettings, ...errors },
       },
@@ -290,7 +290,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['automation'],
         description:
-          'API tokens: yes (automation:run). Idempotency-Key required: a repeated request answers the same job ' +
+          'Scope: automation:run. Idempotency-Key required: a repeated request answers the same job ' +
           '(200, idempotent-replayed: true); the same key with a different body is refused. The profile must be one ' +
           'you may open (grant capability launch); every address must be on the approved sites. The first step ' +
           'must open an address. keep_open_minutes keeps the profile open after the steps (a launch request) until ' +
@@ -422,7 +422,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['automation'],
         description:
-          'API tokens: yes (automation:read). Jobs on profiles you can see, newest first. state: a state, ' +
+          'Scope: automation:read. Jobs on profiles you can see, newest first. state: a state, ' +
           '`active` (queued, claimed, running) or `finished`.',
         params: OrgParams,
         querystring: JobQuery,
@@ -476,8 +476,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       config: { tokens: true },
       schema: {
         tags: ['automation'],
-        description:
-          'API tokens: yes (automation:read). The job, its steps (with typed outputs) and its screenshots.',
+        description: 'Scope: automation:read. The job, its steps (with typed outputs) and its screenshots.',
         params: JobParams,
         response: { 200: JobDetail, ...errors },
       },
@@ -500,7 +499,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['automation'],
         description:
-          'API tokens: yes (automation:run). A queued job ends at once. A running job is asked to stop: its computer ' +
+          'Scope: automation:run. A queued job ends at once. A running job is asked to stop: its computer ' +
           'closes the profile safely (the closing backup still uploads) and reports CANCELED; a profile kept open ' +
           'after its steps closes and the job SUCCEEDED (a stop request). Your own jobs, or any with ' +
           'automation.manage. Canceling twice is a no-op; a finished job answers JOB_FINISHED.',
@@ -560,7 +559,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['automation'],
         description:
-          'API tokens: yes (automation:read). A diagnostic screenshot (image/jpeg or image/png). Kept 7 days. ' +
+          'Scope: automation:read. A diagnostic screenshot (image/jpeg or image/png). Kept 7 days. ' +
           'Screenshots can show whatever the page showed: treat them as confidential.',
         params: ArtifactParams,
       },
@@ -669,7 +668,7 @@ export function automationRoutes(app: App, deps: Deps): void {
       schema: {
         tags: ['automation'],
         description:
-          'API tokens: yes (automation:read). Computers that run jobs: online state, owner, what they accept.',
+          'Scope: automation:read. Computers that run jobs: online state, owner, what they accept.',
         params: OrgParams,
         response: { 200: Type.Object({ items: Type.Array(Agent) }), ...errors },
       },
