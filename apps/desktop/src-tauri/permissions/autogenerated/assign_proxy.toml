@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assign-proxy"
+description = "Enables the assign_proxy command without any pre-configured scope."
+commands.allow = ["assign_proxy"]
+
+[[permission]]
+identifier = "deny-assign-proxy"
+description = "Denies the assign_proxy command without any pre-configured scope."
+commands.deny = ["assign_proxy"]

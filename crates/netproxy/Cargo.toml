@@ -1,0 +1,28 @@
+[package]
+name = "pb-netproxy"
+version = "0.1.0"
+description = "Per-profile proxy routing adapter: a loopback gateway for the browser that relays through HTTP, HTTPS or SOCKS5 proxies (credentials added here, never given to the browser), fail-closed, plus connectivity checks"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# In-process test proxies and servers, shared by this crate's tests and the desktop tests.
+testing = ["dep:rcgen"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+base64 = "0.22"
+thiserror.workspace = true
+serde.workspace = true
+rcgen = { version = "0.14", optional = true, default-features = false, features = ["crypto", "ring", "pem"] }
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
+
+[lints]
+workspace = true

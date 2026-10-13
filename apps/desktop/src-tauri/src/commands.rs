@@ -8,13 +8,17 @@
 use crate::ipc::{self, IpcError};
 use crate::lifecycle::ProfileStatus;
 use crate::manage::{BulkAction, BulkResult, Library, ProfilePage, Selection, UndoResult};
+use crate::network::{PrivacyOptions, PrivacyValidation, ProxyEdit, ProxyInput, ProxyView};
 use crate::operations::Started;
 use crate::state::{AppState, AppView, ProfileChanges, ProfileView, RuntimeStatus};
 use crate::transfer::{ChosenImport, ExportFormat, ExportResult, ImportPreview, ImportSettings};
-use pb_runtime::{ClientId, FilterId, ImportJobId, ProfileId, TagId, TemplateId};
+use pb_runtime::{
+    ClientId, FilterId, ImportJobId, PrivacyConfig, ProfileId, ProxyId, TagId, TemplateId,
+};
 use pb_storage::Workspace;
 use pb_storage::catalog::{Client, SavedFilter, TagRefOwned, Template};
 use pb_storage::imports::ImportJob;
+use pb_storage::network::NetworkCheck;
 use pb_storage::query::{ProfileFilter, Sort};
 use pb_storage::settings::SettingValue;
 use serde::Serialize;
@@ -105,6 +109,7 @@ pub fn update_profile<Rt: Runtime>(
     camera: Option<String>,
     microphone: Option<String>,
     location: Option<String>,
+    privacy: Option<PrivacyConfig>,
 ) -> R<ProfileView> {
     caller(&webview)?;
     state.update_profile(
@@ -122,6 +127,7 @@ pub fn update_profile<Rt: Runtime>(
             camera: camera.as_deref(),
             microphone: microphone.as_deref(),
             location: location.as_deref(),
+            privacy: privacy.as_ref(),
         },
     )
 }
@@ -661,4 +667,101 @@ pub fn remove_local_data<Rt: Runtime>(
     state.remove_local_data(&confirm)?;
     app.request_restart();
     Ok(())
+}
+
+// ------------------------------------------------------------------------------------- milestone 05
+/// Proxies of the active workspace. Logins are never returned (`has_login` only).
+#[tauri::command]
+pub fn list_proxies<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<Vec<ProxyView>> {
+    caller(&webview)?;
+    state.list_proxies()
+}
+
+/// The login, if any, goes straight to the OS keychain.
+#[tauri::command]
+pub fn create_proxy<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    proxy: ProxyInput,
+) -> R<ProxyView> {
+    caller(&webview)?;
+    state.create_proxy(proxy)
+}
+
+#[tauri::command]
+pub fn update_proxy<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    proxy_id: ProxyId,
+    expected_version: i64,
+    changes: ProxyEdit,
+) -> R<ProxyView> {
+    caller(&webview)?;
+    state.update_proxy(&proxy_id, expected_version, changes)
+}
+
+#[tauri::command]
+pub fn delete_proxy<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>, proxy_id: ProxyId) -> R<()> {
+    caller(&webview)?;
+    state.delete_proxy(&proxy_id)
+}
+
+/// `proxies.test(id)`: user-started connectivity check (latency, exit address, time).
+#[tauri::command]
+pub async fn test_proxy<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    proxy_id: ProxyId,
+) -> R<NetworkCheck> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    state.test_proxy(proxy_id).await
+}
+
+#[tauri::command]
+pub fn list_proxy_checks<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    proxy_id: ProxyId,
+) -> R<Vec<NetworkCheck>> {
+    caller(&webview)?;
+    state.list_proxy_checks(&proxy_id)
+}
+
+/// `profiles.assign_proxy(id, proxy_id, expected_version)`; no `proxy_id` removes the proxy.
+#[tauri::command]
+pub fn assign_proxy<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    proxy_id: Option<ProxyId>,
+    fail_closed: bool,
+    expected_version: i64,
+) -> R<ProfileView> {
+    caller(&webview)?;
+    state.assign_proxy(
+        &profile_id,
+        proxy_id.as_ref(),
+        fail_closed,
+        expected_version,
+    )
+}
+
+/// `privacy.validate(config)`.
+#[tauri::command]
+pub fn validate_privacy<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    config: PrivacyConfig,
+    fail_closed_proxy: Option<bool>,
+) -> R<PrivacyValidation> {
+    caller(&webview)?;
+    Ok(state.validate_privacy(&config, fail_closed_proxy.unwrap_or(false)))
+}
+
+/// Languages, time zones, window limits and presets offered in the environment settings.
+#[tauri::command]
+pub fn get_privacy_options<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<PrivacyOptions> {
+    caller(&webview)?;
+    Ok(state.privacy_options())
 }

@@ -32,6 +32,8 @@ pub const DOWNLOAD_DIR: &str = "downloads.directory";
 pub const ACTIVE_WORKSPACE: &str = "workspace.active";
 /// Days a profile stays in the trash before it is deleted permanently (milestone 04).
 pub const TRASH_RETENTION: &str = "profiles.trash_retention_days";
+/// Allows proxies on this computer or the local network (milestone 05; off by default).
+pub const ALLOW_PRIVATE_PROXIES: &str = "proxies.allow_private_addresses";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -69,6 +71,12 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::Enum(&["7", "30", "90"]),
         ui_settable: true,
         default: || Value::from("30"),
+    },
+    SettingSpec {
+        key: ALLOW_PRIVATE_PROXIES,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::from(false),
     },
 ];
 

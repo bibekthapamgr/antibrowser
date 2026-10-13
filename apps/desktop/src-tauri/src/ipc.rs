@@ -213,6 +213,98 @@ pub const EXPORT_FAILED: IpcError =
 pub const NOTHING_SELECTED: IpcError =
     IpcError::new("NOTHING_SELECTED", "Select at least one profile.");
 
+// ---------------------------------------------------------------------------------------- milestone 05
+pub const UNKNOWN_PROXY: IpcError = IpcError::new(
+    "UNKNOWN_PROXY",
+    "That proxy does not exist in this workspace.",
+);
+pub const PROXY_IN_USE: IpcError = IpcError::new(
+    "PROXY_IN_USE",
+    "Profiles still use this proxy. Give them another proxy (or none) first.",
+);
+pub const INVALID_PROXY_TYPE: IpcError =
+    IpcError::new("INVALID_PROXY_TYPE", "Choose HTTP, HTTPS or SOCKS5.");
+pub const INVALID_PROXY_NAME: IpcError = IpcError::new(
+    "INVALID_PROXY_NAME",
+    "Proxy names must be 1-80 visible characters.",
+);
+pub const PROXY_NOTES_TOO_LONG: IpcError = IpcError::new(
+    "NOTES_TOO_LONG",
+    "Proxy notes can be at most 500 characters.",
+);
+pub const PROXY_BAD_HOST: IpcError = IpcError::new(
+    "PROXY_BAD_HOST",
+    "Enter the proxy's host name or IP address only (no http://, path or login).",
+);
+pub const PROXY_BAD_PORT: IpcError =
+    IpcError::new("PROXY_BAD_PORT", "The port must be between 1 and 65535.");
+pub const PROXY_BAD_CREDENTIALS: IpcError = IpcError::new(
+    "PROXY_BAD_CREDENTIALS",
+    "Usernames and passwords can be at most 255 bytes without control characters; HTTP usernames cannot contain a colon.",
+);
+pub const PROXY_PRIVATE_ADDRESS: IpcError = IpcError::new(
+    "PROXY_PRIVATE_ADDRESS",
+    "This proxy is on this computer or the local network. Allow local proxies in Settings to use it.",
+);
+pub const PROXY_FORBIDDEN_ADDRESS: IpcError = IpcError::new(
+    "PROXY_FORBIDDEN_ADDRESS",
+    "This address can never be used as a proxy (link-local, multicast or unspecified).",
+);
+pub const INVALID_DATE: IpcError = IpcError::new("INVALID_DATE", "Enter the date as YYYY-MM-DD.");
+pub const KEYCHAIN_UNAVAILABLE: IpcError = IpcError::new(
+    "KEYCHAIN_UNAVAILABLE",
+    "This computer's secure credential storage is not available, so proxy logins cannot be saved.",
+);
+pub const KEYCHAIN_ERROR: IpcError = IpcError::new(
+    "KEYCHAIN_ERROR",
+    "The proxy login could not be read from or saved to secure storage.",
+);
+pub const PROXY_CREDENTIALS_MISSING: IpcError = IpcError::new(
+    "PROXY_CREDENTIALS_MISSING",
+    "The proxy's saved login is missing from this computer's secure storage. Enter it again.",
+);
+pub const GATEWAY_FAILED: IpcError = IpcError::new(
+    "GATEWAY_FAILED",
+    "The profile's proxy connection could not be prepared.",
+);
+pub const INVALID_LANGUAGE: IpcError = IpcError::new(
+    "INVALID_LANGUAGE",
+    "Choose one of the listed page languages.",
+);
+pub const INVALID_TIMEZONE: IpcError =
+    IpcError::new("INVALID_TIMEZONE", "Choose one of the listed time zones.");
+pub const INVALID_WINDOW_SIZE: IpcError = IpcError::new(
+    "INVALID_WINDOW_SIZE",
+    "Window size must be between 800×600 and 3840×2160.",
+);
+pub const INVALID_PRESET: IpcError =
+    IpcError::new("INVALID_PRESET", "Preset names are at most 40 characters.");
+
+impl From<pb_netproxy::ConfigError> for IpcError {
+    fn from(e: pb_netproxy::ConfigError) -> Self {
+        use pb_netproxy::ConfigError as C;
+        match e {
+            C::BadHost => PROXY_BAD_HOST,
+            C::BadPort => PROXY_BAD_PORT,
+            C::BadCredentials | C::ColonInUsername => PROXY_BAD_CREDENTIALS,
+            C::PrivateAddress => PROXY_PRIVATE_ADDRESS,
+            C::ForbiddenAddress => PROXY_FORBIDDEN_ADDRESS,
+        }
+    }
+}
+
+impl From<pb_runtime::environment::EnvironmentError> for IpcError {
+    fn from(e: pb_runtime::environment::EnvironmentError) -> Self {
+        use pb_runtime::environment::EnvironmentError as E;
+        match e {
+            E::Language => INVALID_LANGUAGE,
+            E::TimeZone => INVALID_TIMEZONE,
+            E::Window => INVALID_WINDOW_SIZE,
+            E::Preset => INVALID_PRESET,
+        }
+    }
+}
+
 impl From<LaunchError> for IpcError {
     fn from(e: LaunchError) -> Self {
         let message = match e {
@@ -221,6 +313,7 @@ impl From<LaunchError> for IpcError {
             LaunchError::BrowserNotConfigured => "The browser runtime is not installed.",
             LaunchError::BadStartUrl => "Start address must begin with http:// or https://.",
             LaunchError::DisallowedSwitch => "That browser option is not allowed.",
+            LaunchError::BadEnvironment => "The profile's environment settings are not valid.",
             LaunchError::Layout(_) => "The profile folder failed a safety check.",
             LaunchError::Spawn(_) => "The browser could not be started.",
         };
@@ -238,6 +331,7 @@ impl From<StoreError> for IpcError {
                 current_version: Some(current),
             },
             StoreError::Duplicate => DUPLICATE_NAME,
+            StoreError::InUse(_) => PROXY_IN_USE,
             StoreError::Invalid(_) => INVALID_ARGUMENT,
             StoreError::Setting(SettingError::UnknownKey) => {
                 Self::new("UNKNOWN_SETTING", "That setting does not exist.")

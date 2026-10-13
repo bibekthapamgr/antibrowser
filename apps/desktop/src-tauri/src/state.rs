@@ -3,10 +3,11 @@
 
 use crate::events::{EventSink, PROFILES_CHANGED};
 use crate::ipc::{self, IpcError, limits};
+use crate::network::{NetworkSettings, NetworkView, Networks};
 use crate::operations::Operations;
 use crate::recovery::{self, SessionInfo};
 use crate::runtime::{self, ManifestStatus, ResolvedRuntime, RuntimeConfig};
-use crate::secrets::KeychainStatus;
+use crate::secrets::{KeychainStatus, KeychainStore, SecretStore};
 use crate::supervisor::{ReconcileReport, RunningProfile, Supervisor};
 use pb_runtime::backup::Backups;
 use pb_runtime::{
@@ -96,6 +97,15 @@ pub struct AppState {
     pub reconcile: ReconcileReport,
     /// Set by the shell to refresh the tray's running-profile count.
     pub on_running_changed: RwLock<Option<RunningListener>>,
+    /// Network tasks (proxy gateways and checks) run here, never on the UI thread (milestone 05).
+    pub(crate) net: Arc<pb_netproxy::NetRuntime>,
+    /// Proxy logins: the OS keychain (tests replace it with an in-memory store).
+    pub(crate) secrets: RwLock<Arc<dyn SecretStore>>,
+    pub(crate) network_settings: RwLock<NetworkSettings>,
+    /// Gateways and launch settings of open profiles.
+    pub(crate) networks: Mutex<Networks>,
+    /// Expiry reminders already shown in this session.
+    pub(crate) expiry_warned: Mutex<Vec<(pb_runtime::ProxyId, &'static str)>>,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -122,8 +132,13 @@ pub struct ProfileView {
     pub trashed_at: Option<String>,
     pub purge_after: Option<String>,
     pub template_id: Option<String>,
-    /// Proxy assigned in milestone 05 (placeholder).
+    /// Assigned proxy (milestone 05) and its name.
+    pub proxy_id: Option<String>,
     pub proxy_label: Option<String>,
+    /// With a proxy: block traffic that cannot go through it (on by default).
+    pub fail_closed: bool,
+    pub network: NetworkView,
+    pub privacy: pb_runtime::PrivacyConfig,
     /// Cloud sync arrives in milestone 07: always `local_only` for now.
     pub sync_status: &'static str,
     pub version: i64,
@@ -190,6 +205,8 @@ pub struct ProfileChanges<'a> {
     pub camera: Option<&'a str>,
     pub microphone: Option<&'a str>,
     pub location: Option<&'a str>,
+    /// Privacy and environment settings (milestone 05), replaced as a whole.
+    pub privacy: Option<&'a pb_runtime::PrivacyConfig>,
 }
 
 impl AppState {
@@ -233,6 +250,7 @@ impl AppState {
             let trusted = trusted_executables(store, &runtime, &paths.runtimes);
             reconcile = supervisor.reconcile_on_startup(store, &root, &trusted);
         }
+        let net = pb_netproxy::NetRuntime::new().map_err(|e| format!("network runtime: {e}"))?;
 
         Ok(Arc::new(Self {
             paths,
@@ -265,6 +283,11 @@ impl AppState {
             low_disk_warned: AtomicBool::new(false),
             reconcile,
             on_running_changed: RwLock::new(None),
+            net,
+            secrets: RwLock::new(Arc::new(KeychainStore)),
+            network_settings: RwLock::new(NetworkSettings::default()),
+            networks: Mutex::new(HashMap::new()),
+            expiry_warned: Mutex::new(Vec::new()),
         }))
     }
 
@@ -306,6 +329,7 @@ impl AppState {
 
     pub(crate) fn view(&self, p: LocalProfile) -> ProfileView {
         let live = self.supervisor.status(&p.id);
+        let network = self.network_view(&p);
         let state = live.as_ref().map(|r| r.state).unwrap_or(match p.state {
             // Without a tracked process the profile cannot be active (the supervisor reconciles at start-up).
             RunState::Starting | RunState::Running | RunState::Stopping => RunState::Stopped,
@@ -325,7 +349,11 @@ impl AppState {
             trashed_at: p.trashed_at,
             purge_after: p.purge_after,
             template_id: p.template_id.map(|t| t.to_string()),
+            proxy_id: p.proxy_id.map(|x| x.to_string()),
             proxy_label: p.proxy_label,
+            fail_closed: p.fail_closed,
+            network,
+            privacy: p.privacy,
             sync_status: "local_only",
             version: p.version,
             created_at: p.created_at,
@@ -512,6 +540,9 @@ impl AppState {
         };
         let (camera, microphone, location) =
             (perm(c.camera)?, perm(c.microphone)?, perm(c.location)?);
+        if let Some(privacy) = c.privacy {
+            pb_runtime::environment::validate(privacy)?;
+        }
         let store = self.store()?;
         let current = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
         if current.trashed_at.is_some() {
@@ -549,9 +580,14 @@ impl AppState {
                 location,
                 favourite: c.favourite,
                 tags: tag_ids.as_deref(),
+                network: None,
+                privacy: c.privacy,
             },
             expected_version,
         )?;
+        if c.privacy.is_some() {
+            self.notify_running_changed();
+        }
         Ok(self.view(p))
     }
 

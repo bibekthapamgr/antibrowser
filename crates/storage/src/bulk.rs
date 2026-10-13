@@ -6,7 +6,7 @@
 //! - Whether a profile is running is decided by the caller (the process supervisor), never here.
 
 use crate::{LocalStore, StoreError};
-use pb_runtime::{ClientId, ProfileId, TagId, WorkspaceId};
+use pb_runtime::{ClientId, ProfileId, ProxyId, TagId, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,11 @@ pub enum BulkOp {
         retention_days: u32,
     },
     Restore,
+    /// Assigns a proxy (`None`: no proxy) and the fail-closed setting (milestone 05). Takes effect at next launch.
+    SetProxy {
+        proxy_id: Option<ProxyId>,
+        fail_closed: bool,
+    },
 }
 
 /// What a profile looked like before an action (enough to undo it).
@@ -49,6 +54,7 @@ pub enum Prior {
     ArchivedAt(Option<String>),
     Favourite(bool),
     Trash(Option<(String, String)>),
+    Network(Option<ProxyId>, bool),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -195,6 +201,17 @@ fn apply_one(
             )?;
             Prior::Trash(trash)
         }
+        BulkOp::SetProxy {
+            proxy_id,
+            fail_closed,
+        } => {
+            let (current, current_fc) = crate::network::settings_of(tx, id)?;
+            if current.as_ref() == proxy_id.as_ref() && current_fc == *fail_closed {
+                return Ok(ItemOutcome::Unchanged);
+            }
+            crate::network::upsert_settings(tx, id, proxy_id.as_ref(), *fail_closed)?;
+            Prior::Network(current, current_fc)
+        }
     };
     Ok(ItemOutcome::Changed {
         prior,
@@ -252,6 +269,15 @@ fn undo_one(
                 "update profiles set favourite = ?2 where id = ?1",
                 params![id.as_str(), f],
             )?;
+        }
+        (BulkOp::SetProxy { .. }, Prior::Network(proxy, fail_closed)) => {
+            // A proxy deleted meanwhile cannot come back; the profile then keeps its current routing.
+            if proxy
+                .as_ref()
+                .is_none_or(|p| crate::network::proxy_exists(tx, p).unwrap_or(false))
+            {
+                crate::network::upsert_settings(tx, id, proxy.as_ref(), *fail_closed)?;
+            }
         }
         (BulkOp::Trash { .. } | BulkOp::Restore, Prior::Trash(entry)) => match entry {
             None => {

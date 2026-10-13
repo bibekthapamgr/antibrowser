@@ -10,6 +10,9 @@
 //! 7. Chromium's settings files are readable (otherwise the profile is marked damaged and recovery is offered);
 //! 8. the profile was not last opened by a newer browser (downgrades are refused).
 //!
+//! With a proxy, its route is prepared after step 4 (a missing login or a disallowed address fails here, before
+//! anything starts) and the profile's loopback gateway is started; it lives until the browser closes.
+//!
 //! The browser is then prepared and started on a worker thread: a backup is taken first when the browser engine
 //! is about to be upgraded, profile settings are written into Chromium's Preferences, and the process is spawned
 //! from a structured argument list.
@@ -22,8 +25,8 @@ use crate::supervisor::{GRACEFUL_TIMEOUT, PollEvent, StartConflict, StopError};
 use pb_runtime::backup::BackupError;
 use pb_runtime::procs;
 use pb_runtime::{
-    BrowserInstall, BrowserPrefs, LaunchRequest, ProfileId, ProfileLock, ProfileState, RunState,
-    prefs, prepare_launch,
+    BrowserInstall, BrowserPrefs, LaunchRequest, NetworkLaunch, PrivacyPrefs, ProfileId,
+    ProfileLock, ProfileState, RunState, environment, prefs, prepare_launch,
 };
 use pb_storage::LocalStore;
 use pb_storage::RuntimeInstallation;
@@ -116,6 +119,12 @@ impl AppState {
             Some(u) => vec![u.to_owned()],
             None => profile.start_urls.clone(),
         };
+        // The proxy route and its gateway (dropped, and so stopped, on any early return below).
+        let route = self.route_for(&store, &profile)?;
+        let gateway = route
+            .as_ref()
+            .map(|r| self.start_gateway(r, 0))
+            .transpose()?;
         let spec = prepare_launch(
             &self.root,
             Some(&BrowserInstall {
@@ -130,6 +139,10 @@ impl AppState {
                 profile_id,
                 start_urls: &urls,
                 switches: &self.runtime.switches,
+                network: gateway.as_ref().map(|g| NetworkLaunch {
+                    gateway_port: g.port(),
+                }),
+                environment: Some(&profile.privacy),
             },
         )?;
         // 5.
@@ -159,6 +172,8 @@ impl AppState {
                 runtime.version.clone(),
                 None,
             )?;
+            drop(gateway);
+            self.restore_network(&store, profile_id);
             let op = self
                 .ops
                 .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
@@ -211,6 +226,7 @@ impl AppState {
                 StartConflict::AlreadyActive { .. } => ipc::PROFILE_BUSY,
             })?;
         let _ = store.set_run_state(profile_id, RunState::Starting, Some(None));
+        self.track_network(&store, &profile, gateway, route.as_ref());
         self.notify_running_changed();
 
         let this = self.clone();
@@ -235,6 +251,7 @@ impl AppState {
     ) {
         let abort = |code: &'static str, message: &'static str| {
             self.supervisor.abort_start(store, id, code);
+            self.untrack_network(store, id);
             self.ops.fail(op, code, message);
             self.notify_running_changed();
         };
@@ -273,6 +290,8 @@ impl AppState {
             Some(c) => format!("{} · {c}", profile.name),
             None => profile.name.clone(),
         };
+        let proxied = profile.proxy_id.is_some();
+        let env = &profile.privacy;
         let browser_prefs = BrowserPrefs {
             display_name,
             colour: profile.client_colour.clone(),
@@ -284,6 +303,16 @@ impl AppState {
             camera: profile.camera,
             microphone: profile.microphone,
             location: profile.location,
+            privacy: PrivacyPrefs {
+                webrtc_policy: environment::effective_webrtc(env, proxied && profile.fail_closed)
+                    .pref_value(),
+                block_third_party_cookies: env.block_third_party_cookies,
+                do_not_track: env.do_not_track,
+                accept_languages: env.language.as_deref().map(environment::accept_languages),
+                font_sizes: env.text_size.font_sizes(),
+                // Prefetching and preconnecting would open connections the user did not ask for.
+                disable_network_prediction: proxied,
+            },
         };
         if prefs::apply(&spec.dirs.user_data, &browser_prefs).is_err() {
             return abort(
@@ -371,7 +400,9 @@ impl AppState {
         // Trash retention: shortly after start-up, then about hourly (one poll is ~1.5 s).
         if n % 2400 == 2 {
             self.purge_expired_trash();
+            self.proxy_housekeeping(&store);
         }
+        self.poll_networks(&store);
         if n.is_multiple_of(20) && self.supervisor.running_count() > 0 {
             let free = free_space(&self.paths.data).unwrap_or(u64::MAX);
             if free < WARN_FREE_BYTES {

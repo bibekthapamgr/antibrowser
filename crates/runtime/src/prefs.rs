@@ -3,7 +3,11 @@
 //! Applied only while the profile is stopped and its manager lock is held, immediately before launch:
 //!  - display name (Chromium's profile menu shows it) and optional client colour (`browser.theme.user_color`);
 //!  - download folder;
-//!  - camera / microphone / location defaults (ask = Chromium default, block = 2, allow = 1).
+//!  - camera / microphone / location defaults (ask = Chromium default, block = 2, allow = 1);
+//!  - privacy (milestone 05): WebRTC IP handling, third-party cookies, Do Not Track, page languages, default text
+//!    size, and network prediction (pre-resolving/pre-connecting) switched off for proxied profiles.
+//!
+//! A setting returned to the browser default is removed from the file rather than written with a value.
 //!
 //! Start URLs are NOT written here: Chromium protects its startup-page preferences with a MAC ("Secure
 //! Preferences") and resets externally edited values, so start URLs are passed on the command line instead.
@@ -62,6 +66,21 @@ pub struct BrowserPrefs {
     pub camera: PermissionDefault,
     pub microphone: PermissionDefault,
     pub location: PermissionDefault,
+    pub privacy: PrivacyPrefs,
+}
+
+/// Privacy preferences; `Default` leaves every one at the browser's default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrivacyPrefs {
+    /// `webrtc.ip_handling_policy` value.
+    pub webrtc_policy: Option<&'static str>,
+    pub block_third_party_cookies: bool,
+    pub do_not_track: bool,
+    /// `intl.accept_languages`, e.g. `de-DE,de`.
+    pub accept_languages: Option<String>,
+    /// (default, fixed-width) font sizes.
+    pub font_sizes: Option<(u32, u32)>,
+    pub disable_network_prediction: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +188,48 @@ pub fn apply(user_data: &Path, prefs: &BrowserPrefs) -> Result<(), PrefsError> {
         );
     }
 
+    let p = &prefs.privacy;
+    set_path(
+        &mut root,
+        &["webrtc", "ip_handling_policy"],
+        p.webrtc_policy.map(Value::from),
+    );
+    set_path(
+        &mut root,
+        &["profile", "cookie_controls_mode"],
+        p.block_third_party_cookies.then(|| json!(1)),
+    );
+    set_path(
+        &mut root,
+        &["profile", "block_third_party_cookies"],
+        p.block_third_party_cookies.then_some(json!(true)),
+    );
+    set_path(
+        &mut root,
+        &["enable_do_not_track"],
+        p.do_not_track.then_some(json!(true)),
+    );
+    set_path(
+        &mut root,
+        &["intl", "accept_languages"],
+        p.accept_languages.as_deref().map(Value::from),
+    );
+    set_path(
+        &mut root,
+        &["webkit", "webprefs", "default_font_size"],
+        p.font_sizes.map(|(d, _)| json!(d)),
+    );
+    set_path(
+        &mut root,
+        &["webkit", "webprefs", "default_fixed_font_size"],
+        p.font_sizes.map(|(_, f)| json!(f)),
+    );
+    set_path(
+        &mut root,
+        &["net", "network_prediction_options"],
+        p.disable_network_prediction.then(|| json!(2)),
+    );
+
     let dir = path.parent().ok_or(PrefsError::Unreadable)?;
     fs::create_dir_all(dir)?;
     let tmp = dir.join("Preferences.pb-tmp");
@@ -214,7 +275,44 @@ mod tests {
             camera: PermissionDefault::Block,
             microphone: PermissionDefault::Allow,
             location: PermissionDefault::Ask,
+            privacy: PrivacyPrefs::default(),
         }
+    }
+
+    #[test]
+    fn privacy_preferences_are_written_and_removed_again() -> Result<(), PrefsError> {
+        let dir = tempfile::tempdir()?;
+        let mut p = prefs();
+        p.privacy = PrivacyPrefs {
+            webrtc_policy: Some("disable_non_proxied_udp"),
+            block_third_party_cookies: true,
+            do_not_track: true,
+            accept_languages: Some("de-DE,de".into()),
+            font_sizes: Some((20, 16)),
+            disable_network_prediction: true,
+        };
+        apply(dir.path(), &p)?;
+        let read = || -> Result<Value, PrefsError> {
+            serde_json::from_slice(&fs::read(preferences_path(dir.path()))?)
+                .map_err(|_| PrefsError::Unreadable)
+        };
+        let v = read()?;
+        assert_eq!(v["webrtc"]["ip_handling_policy"], "disable_non_proxied_udp");
+        assert_eq!(v["profile"]["cookie_controls_mode"], 1);
+        assert_eq!(v["enable_do_not_track"], true);
+        assert_eq!(v["intl"]["accept_languages"], "de-DE,de");
+        assert_eq!(v["webkit"]["webprefs"]["default_font_size"], 20);
+        assert_eq!(v["net"]["network_prediction_options"], 2);
+        p.privacy = PrivacyPrefs::default();
+        apply(dir.path(), &p)?;
+        let v = read()?;
+        assert!(v["webrtc"].get("ip_handling_policy").is_none());
+        assert!(v["profile"].get("cookie_controls_mode").is_none());
+        assert!(v.get("enable_do_not_track").is_none());
+        assert!(v["intl"].get("accept_languages").is_none());
+        assert!(v["webkit"]["webprefs"].get("default_font_size").is_none());
+        assert!(v["net"].get("network_prediction_options").is_none());
+        Ok(())
     }
 
     #[test]

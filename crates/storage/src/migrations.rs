@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -22,6 +22,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (2, "manager_records", v2),
     (3, "runtime_lifecycle", v3),
     (4, "profile_management", v4),
+    (5, "proxies_and_privacy", v5),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,4 +460,78 @@ fn v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          alter table audit_log_v4 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);",
     )
+}
+
+/// Milestone 05: proxies (metadata only: logins live in the OS keychain under `credential_ref`), per-profile routing,
+/// connectivity checks (kept 7 days), privacy/environment settings, and the loopback gateway of each running profile.
+fn v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table proxy_configs (
+           id              text primary key check (id glob 'prx_*' and length(id) = 30),
+           workspace_id    text not null references workspaces(id) on delete restrict,
+           owner_scope     text not null default 'workspace' check (owner_scope in ('workspace')),
+           name            text not null check (length(name) between 1 and 80),
+           name_key        text not null,
+           type            text not null check (type in ('http', 'https', 'socks5')),
+           host            text not null check (length(host) between 1 and 253),
+           port            integer not null check (port between 1 and 65535),
+           credential_ref  text check (credential_ref is null or credential_ref glob 'proxy:prx_*'),
+           expires_at      text check (expires_at is null or expires_at glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+           notes           text not null default '' check (length(notes) <= 500),
+           version         integer not null default 1,
+           created_at      text not null default {NOW},
+           updated_at      text not null default {NOW}
+         ) strict;
+         create unique index proxy_configs_ws_name on proxy_configs (workspace_id, name_key);
+
+         create table profile_network_settings (
+           profile_id      text primary key references profiles(id) on delete cascade,
+           proxy_id        text references proxy_configs(id) on delete restrict,
+           fail_closed     integer not null default 1 check (fail_closed in (0, 1)),
+           config_version  integer not null default 1
+         ) strict;
+         create index profile_network_proxy_idx on profile_network_settings (proxy_id);
+
+         create table network_checks (
+           id          text primary key check (id glob 'nck_*' and length(id) = 30),
+           proxy_id    text not null references proxy_configs(id) on delete cascade,
+           result      text not null check (result in ('ok', 'error')),
+           error_code  text check (error_code is null or length(error_code) <= 40),
+           latency_ms  integer check (latency_ms is null or latency_ms >= 0),
+           egress_ip   text check (egress_ip is null or length(egress_ip) <= 45),
+           checked_at  text not null default {NOW}
+         ) strict;
+         create index network_checks_proxy_idx on network_checks (proxy_id, checked_at);
+         create index network_checks_age_idx on network_checks (checked_at);
+
+         create table gateway_sessions (
+           profile_id     text primary key references profiles(id) on delete cascade,
+           port           integer not null check (port between 1 and 65535),
+           proxy_id       text not null,
+           proxy_version  integer not null,
+           fail_closed    integer not null check (fail_closed in (0, 1)),
+           started_at     text not null default {NOW}
+         ) strict;
+
+         alter table profiles add column privacy_json text not null default '{{}}'
+           check (json_valid(privacy_json) and json_type(privacy_json) = 'object');
+
+         create table audit_log_v5 (
+           seq         integer primary key autoincrement,
+           at          text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           profile_id  text,
+           action      text not null check (action in ('start', 'stop', 'force_stop', 'exit', 'crash', 'adopt',
+                         'interrupted', 'recover', 'backup', 'runtime_install', 'runtime_remove',
+                         'create', 'trash', 'restore', 'delete', 'purge', 'bulk', 'import', 'export',
+                         'proxy', 'network')),
+           outcome     text not null check (length(outcome) <= 40),
+           run_id      text,
+           detail      text check (detail is null or length(detail) <= 200)
+         ) strict;
+         insert into audit_log_v5 (seq, at, profile_id, action, outcome, run_id, detail)
+           select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
+         drop table audit_log;
+         alter table audit_log_v5 rename to audit_log;
+         create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
 }

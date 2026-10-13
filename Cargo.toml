@@ -5,6 +5,7 @@ members = [
   "crates/storage",
   "crates/update",
   "crates/import",
+  "crates/netproxy",
   "apps/desktop/src-tauri",
 ]
 
@@ -28,6 +29,7 @@ hex = "0.4"
 tempfile = "3"
 unicode-normalization = "0.1"
 pb-import = { path = "crates/import" }
+pb-netproxy = { path = "crates/netproxy" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

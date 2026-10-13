@@ -13,7 +13,7 @@ use crate::authz::{self, Action};
 use crate::ipc::{self, IpcError, limits};
 use crate::state::{AppState, ProfileView};
 use pb_runtime::{
-    ClientId, FilterId, ProfileId, ProfileLock, TagId, TemplateId, WorkspaceId, procs,
+    ClientId, FilterId, ProfileId, ProfileLock, ProxyId, TagId, TemplateId, WorkspaceId, procs,
 };
 use pb_storage::bulk::{self, BulkOp, ItemOutcome, ItemResult};
 use pb_storage::catalog::{Client, SavedFilter, Tag, Template, TemplateConfig};
@@ -65,6 +65,12 @@ pub enum BulkAction {
     },
     Trash,
     Restore,
+    /// Assigns a proxy (`None`: no proxy) and the fail-closed setting (milestone 05). Open profiles keep their
+    /// current route until they are reopened.
+    SetProxy {
+        proxy_id: Option<ProxyId>,
+        fail_closed: bool,
+    },
 }
 
 #[derive(Serialize)]
@@ -137,6 +143,7 @@ fn op_name(a: &BulkAction) -> &'static str {
         BulkAction::Favourite { .. } => "favourite",
         BulkAction::Trash => "trash",
         BulkAction::Restore => "restore",
+        BulkAction::SetProxy { .. } => "set_proxy",
     }
 }
 
@@ -418,6 +425,8 @@ impl AppState {
             location: src.location,
             tags: src.tags.into_iter().map(|t| t.id).collect(),
             template_id: src.template_id,
+            privacy: src.privacy,
+            network: Some((src.proxy_id, src.fail_closed)),
             ..NewProfile::basic(id, Some(ws), &name, src.client_id)
         };
         let p = store.insert_profile(new)?;
@@ -502,6 +511,21 @@ impl AppState {
                 retention_days: self.trash_retention_days(&store),
             },
             BulkAction::Restore => BulkOp::Restore,
+            BulkAction::SetProxy {
+                proxy_id,
+                fail_closed,
+            } => {
+                if let Some(p) = &proxy_id {
+                    let found = store.get_proxy(p)?.ok_or(ipc::UNKNOWN_PROXY)?;
+                    if found.workspace_id != ws {
+                        return Err(ipc::UNKNOWN_PROXY);
+                    }
+                }
+                BulkOp::SetProxy {
+                    proxy_id,
+                    fail_closed,
+                }
+            }
         };
         let mut failed = vec![];
         let mut eligible = Vec::with_capacity(ids.len());

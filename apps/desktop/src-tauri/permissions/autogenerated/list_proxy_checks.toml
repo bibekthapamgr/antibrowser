@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-proxy-checks"
+description = "Enables the list_proxy_checks command without any pre-configured scope."
+commands.allow = ["list_proxy_checks"]
+
+[[permission]]
+identifier = "deny-list-proxy-checks"
+description = "Denies the list_proxy_checks command without any pre-configured scope."
+commands.deny = ["list_proxy_checks"]

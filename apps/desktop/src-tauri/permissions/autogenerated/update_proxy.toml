@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-proxy"
+description = "Enables the update_proxy command without any pre-configured scope."
+commands.allow = ["update_proxy"]
+
+[[permission]]
+identifier = "deny-update-proxy"
+description = "Denies the update_proxy command without any pre-configured scope."
+commands.deny = ["update_proxy"]

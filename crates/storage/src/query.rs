@@ -3,7 +3,7 @@
 
 use crate::migrations::name_key;
 use crate::{LocalProfile, LocalStore, SELECT_PROFILE, StoreError, escape_like, row_to_profile};
-use pb_runtime::{ClientId, ProfileId, RunState, TagId, TemplateId, WorkspaceId};
+use pb_runtime::{ClientId, ProfileId, ProxyId, RunState, TagId, TemplateId, WorkspaceId};
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,8 @@ pub struct ProfileFilter {
     pub states: Vec<RunState>,
     pub favourites_only: bool,
     pub template: Option<TemplateId>,
+    /// Profiles routed through this proxy (milestone 05).
+    pub proxy: Option<ProxyId>,
 }
 
 impl ProfileFilter {
@@ -153,6 +155,10 @@ fn where_clause(f: &ProfileFilter) -> (String, Vec<Value>) {
         let p = ph(&mut params, Value::Text(t.to_string()));
         sql.push_str(&format!(" and p.template_id = {p}"));
     }
+    if let Some(x) = &f.proxy {
+        let p = ph(&mut params, Value::Text(x.to_string()));
+        sql.push_str(&format!(" and ns.proxy_id = {p}"));
+    }
     if let Some(text) = f.text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         let n = ph(
             &mut params,
@@ -189,7 +195,8 @@ fn order_by(sort: Sort) -> String {
 
 const FROM: &str = "from profiles p
      left join clients_local c on c.id = p.client_id
-     left join trash_entries te on te.profile_id = p.id";
+     left join trash_entries te on te.profile_id = p.id
+     left join profile_network_settings ns on ns.profile_id = p.id";
 
 impl LocalStore {
     /// One page of profiles matching `filter`, plus the total. `limit` is clamped to 1..=500 (the table loads

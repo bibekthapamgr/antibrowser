@@ -13,6 +13,7 @@ pub mod external;
 pub mod ipc;
 pub mod lifecycle;
 pub mod manage;
+pub mod network;
 pub mod operations;
 pub mod recovery;
 pub mod runtime;
@@ -88,6 +89,15 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::cancel_import,
         commands::list_imports,
         commands::export_profiles,
+        commands::list_proxies,
+        commands::create_proxy,
+        commands::update_proxy,
+        commands::delete_proxy,
+        commands::test_proxy,
+        commands::list_proxy_checks,
+        commands::assign_proxy,
+        commands::validate_privacy,
+        commands::get_privacy_options,
     ]
 }
 
@@ -240,11 +250,14 @@ pub fn run() {
 
             // Keychain availability is probed off the UI thread; until then secrets are disabled.
             let probe_state = state.clone();
+            // Then the proxy gateways of profiles that kept running while the manager was closed are restored (their
+            // logins come from the keychain).
             std::thread::spawn(move || {
                 let status = secrets::probe();
                 if let Ok(mut k) = probe_state.keychain.write() {
                     *k = status;
                 }
+                probe_state.restore_networks();
             });
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.

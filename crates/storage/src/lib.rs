@@ -12,14 +12,15 @@ pub mod bulk;
 pub mod catalog;
 pub mod imports;
 pub mod migrations;
+pub mod network;
 pub mod query;
 pub mod runs;
 pub mod settings;
 
 use migrations::{MigrationFailure, SCHEMA_VERSION};
 use pb_runtime::{
-    ClientId, DeviceId, PermissionDefault, ProfileId, RunState, TagId, TemplateId, WorkspaceId,
-    random_hex,
+    ClientId, DeviceId, PermissionDefault, PrivacyConfig, ProfileId, ProxyId, RunState, TagId,
+    TemplateId, WorkspaceId, random_hex,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
@@ -51,6 +52,8 @@ pub enum StoreError {
     VersionConflict { current: i64 },
     #[error("an entry with this name or reference already exists")]
     Duplicate,
+    #[error("still used by {0} profile(s)")]
+    InUse(u64),
     #[error("invalid value: {0}")]
     Invalid(&'static str),
     #[error("setting rejected: {0:?}")]
@@ -90,8 +93,14 @@ pub struct LocalProfile {
     pub trashed_at: Option<String>,
     pub purge_after: Option<String>,
     pub template_id: Option<TemplateId>,
-    /// Placeholder until milestone 05 assigns proxies.
+    /// Name of the assigned proxy (milestone 05).
     pub proxy_label: Option<String>,
+    pub proxy_id: Option<ProxyId>,
+    /// With a proxy: block traffic (incl. UDP/WebRTC) that cannot go through it. On by default.
+    pub fail_closed: bool,
+    /// Bumped whenever routing settings change (a running profile shows "restart to apply").
+    pub network_config_version: i64,
+    pub privacy: PrivacyConfig,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -133,6 +142,9 @@ pub struct NewProfile {
     pub template_id: Option<TemplateId>,
     /// Stable reference of the import row that created this profile (makes an import retry idempotent).
     pub import_ref: Option<String>,
+    pub privacy: PrivacyConfig,
+    /// (proxy, fail-closed); `None` = no routing settings yet (no proxy, fail-closed on).
+    pub network: Option<(Option<ProxyId>, bool)>,
 }
 
 impl NewProfile {
@@ -156,6 +168,8 @@ impl NewProfile {
             favourite: false,
             template_id: None,
             import_ref: None,
+            privacy: PrivacyConfig::default(),
+            network: None,
         }
     }
 }
@@ -174,6 +188,9 @@ pub struct ProfileUpdate<'a> {
     pub favourite: Option<bool>,
     /// Replaces the profile's tags.
     pub tags: Option<&'a [TagId]>,
+    /// (proxy, fail-closed): replaces the routing settings and bumps their config version.
+    pub network: Option<(Option<&'a ProxyId>, bool)>,
+    pub privacy: Option<&'a PrivacyConfig>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -369,8 +386,9 @@ impl LocalStore {
         {
             let mut insert = tx.prepare_cached(
                 "insert into profiles (id, workspace_id, name, search_text, data_dir_ref, client_id, notes, start_urls,
-                                       perm_camera, perm_microphone, perm_location, favourite, template_id, import_ref)
-                 values (?1, ?2, ?3, ?4, ?1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                       perm_camera, perm_microphone, perm_location, favourite, template_id, import_ref,
+                                       privacy_json)
+                 values (?1, ?2, ?3, ?4, ?1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  on conflict (import_ref) where import_ref is not null do nothing",
             )?;
             let mut tag = tx.prepare_cached(
@@ -392,10 +410,14 @@ impl LocalStore {
                     p.favourite,
                     p.template_id.as_ref().map(TemplateId::as_str),
                     p.import_ref,
+                    serde_json::to_string(&p.privacy).map_err(|_| StoreError::Corrupt)?,
                 ])?;
                 if n == 1 {
                     for t in &p.tags {
                         tag.execute(params![p.id.as_str(), t.as_str()])?;
+                    }
+                    if let Some((proxy, fail_closed)) = &p.network {
+                        network::upsert_settings(&tx, &p.id, proxy.as_ref(), *fail_closed)?;
                     }
                 }
                 out.push(n == 1);
@@ -442,6 +464,11 @@ impl LocalStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|_| StoreError::Corrupt)?;
+        let privacy = changes
+            .privacy
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|_| StoreError::Corrupt)?;
         let mut conn = self.w()?;
         let tx = conn.transaction()?;
         let updated = tx.execute(
@@ -456,6 +483,7 @@ impl LocalStore {
                perm_microphone = coalesce(?12, perm_microphone),
                perm_location = coalesce(?13, perm_location),
                favourite = coalesce(?14, favourite),
+               privacy_json = coalesce(?15, privacy_json),
                version = version + 1,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
              where id = ?1 and version = ?2",
@@ -474,6 +502,7 @@ impl LocalStore {
                 changes.microphone.map(PermissionDefault::as_str),
                 changes.location.map(PermissionDefault::as_str),
                 changes.favourite,
+                privacy,
             ],
         )?;
         if updated == 0 {
@@ -483,6 +512,9 @@ impl LocalStore {
                 Some(p) => Err(StoreError::VersionConflict { current: p.version }),
                 None => Err(StoreError::NotFound),
             };
+        }
+        if let Some((proxy, fail_closed)) = changes.network {
+            network::upsert_settings(&tx, id, proxy, fail_closed)?;
         }
         if let Some(tags) = changes.tags {
             tx.execute(
@@ -757,12 +789,15 @@ pub(crate) const SELECT_PROFILE: &str =
        p.start_urls, p.download_dir, p.perm_camera, p.perm_microphone, p.perm_location,
        p.runtime_version, p.data_dir_ref, p.state, p.last_started_at, p.last_clean_shutdown_at, p.schema_version,
        p.crash_count, p.last_error, p.last_backup_at, p.backup_runtime_version,
-       p.favourite, p.archived_at, te.trashed_at, te.purge_after, p.template_id, p.proxy_label,
+       p.favourite, p.archived_at, te.trashed_at, te.purge_after, p.template_id, px.name,
        (select json_group_array(json_array(t.id, t.name)) from profile_tags pt join tags t on t.id = pt.tag_id
-          where pt.profile_id = p.id) as tags
+          where pt.profile_id = p.id) as tags,
+       ns.proxy_id, coalesce(ns.fail_closed, 1), p.privacy_json, coalesce(ns.config_version, 0)
      from profiles p
      left join clients_local c on c.id = p.client_id
      left join trash_entries te on te.profile_id = p.id
+     left join profile_network_settings ns on ns.profile_id = p.id
+     left join proxy_configs px on px.id = ns.proxy_id
      left join process_runs r on r.profile_id = p.id and r.ended_at is null";
 
 pub(crate) fn row_to_profile(
@@ -821,6 +856,17 @@ pub(crate) fn row_to_profile(
     }
     tags.sort_by_key(|t| migrations::name_key(&t.name));
     let data_dir_ref: Option<String> = row.get(18)?;
+    let proxy_id = match row
+        .get::<_, Option<String>>(34)?
+        .map(|t| ProxyId::parse(&t))
+    {
+        None => None,
+        Some(Ok(t)) => Some(t),
+        Some(Err(_)) => return Ok(Err(StoreError::Corrupt)),
+    };
+    let Ok(privacy) = serde_json::from_str::<PrivacyConfig>(&row.get::<_, String>(36)?) else {
+        return Ok(Err(StoreError::Corrupt));
+    };
     Ok(Ok(LocalProfile {
         data_dir_ref: data_dir_ref.unwrap_or_else(|| id.to_string()),
         id,
@@ -837,6 +883,10 @@ pub(crate) fn row_to_profile(
         purge_after: row.get(30)?,
         template_id,
         proxy_label: row.get(32)?,
+        proxy_id,
+        fail_closed: row.get::<_, i64>(35)? == 1,
+        network_config_version: row.get(37)?,
+        privacy,
         version: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
@@ -882,3 +932,5 @@ pub(crate) fn escape_like(s: &str) -> String {
 mod tests;
 #[cfg(test)]
 mod tests_m04;
+#[cfg(test)]
+mod tests_m05;

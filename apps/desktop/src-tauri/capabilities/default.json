@@ -49,6 +49,15 @@
     "allow-commit-import",
     "allow-cancel-import",
     "allow-list-imports",
-    "allow-export-profiles"
+    "allow-export-profiles",
+    "allow-list-proxies",
+    "allow-create-proxy",
+    "allow-update-proxy",
+    "allow-delete-proxy",
+    "allow-test-proxy",
+    "allow-list-proxy-checks",
+    "allow-assign-proxy",
+    "allow-validate-privacy",
+    "allow-get-privacy-options"
   ]
 }

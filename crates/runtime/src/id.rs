@@ -131,6 +131,14 @@ opaque_id!(
     /// Saved profile-table filter. Milestone 04.
     FilterId, InvalidFilterId, "flt_", "saved filter"
 );
+opaque_id!(
+    /// Saved proxy configuration (credentials live in the OS keychain). Milestone 05.
+    ProxyId, InvalidProxyId, "prx_", "proxy"
+);
+opaque_id!(
+    /// One user-started proxy connectivity check. Milestone 05.
+    NetworkCheckId, InvalidNetworkCheckId, "nck_", "network check"
+);
 
 #[cfg(test)]
 mod tests {

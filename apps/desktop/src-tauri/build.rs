@@ -45,6 +45,15 @@ const COMMANDS: &[&str] = &[
     "cancel_import",
     "list_imports",
     "export_profiles",
+    "list_proxies",
+    "create_proxy",
+    "update_proxy",
+    "delete_proxy",
+    "test_proxy",
+    "list_proxy_checks",
+    "assign_proxy",
+    "validate_privacy",
+    "get_privacy_options",
 ];
 
 fn main() {
