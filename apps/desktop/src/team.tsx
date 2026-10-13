@@ -579,7 +579,7 @@ export function TakeoverDialog(props: {
           confirm: true,
         },
       );
-      props.notify(`Taken over. ${props.profileName} can be opened now; ${props.holder} was told it ended.`);
+      props.notify(`Taken over. ${props.profileName} can be opened now; their app closes it at its next check.`);
       props.onDone();
     } catch (err) {
       props.notify(
@@ -613,7 +613,7 @@ export function TakeoverDialog(props: {
           </p>
         </div>
         <label>
-          Reason (recorded in Activity and shown to them)
+          Reason (recorded in Activity)
           <textarea
             required
             minLength={3}

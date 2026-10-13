@@ -22,7 +22,7 @@ browser may still be open, so nobody else can open it.
 
 ## 3. Forced takeover (owners and admins)
 Organization → Profiles → **Take over…**, or the same button in the profile's panel.
-1. Write a reason (recorded in Activity, shown to the holder) and confirm that their unsaved changes are not merged.
+1. Write a reason (recorded in Activity) and confirm that their unsaved changes are not merged.
 2. Their session ends: their app closes the profile at its next heartbeat, keeps their copy aside on that computer and
    uploads it as a **recovery copy**. Anything they have not saved to the organization stays out of the shared profile.
 3. The profile can be opened right away; it opens from the newest backup.

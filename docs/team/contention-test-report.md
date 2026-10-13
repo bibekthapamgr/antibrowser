@@ -70,7 +70,7 @@ fencing token, not by the client's good behaviour.
 
 ## 8. Audit of the sequence
 Real API: the profile's audit trail contains acquisition, the request, release, takeover and revocation (19 events in
-a local run; the CI run prints its count), plus the run-state changes (`session.restoring`, `session.running`, `session.stopping`,
+the CI run [38411582584](https://github.com/bibekthapamgr/antibrowser/actions/runs/38411582584)), plus the run-state changes (`session.restoring`, `session.running`, `session.stopping`,
 `session.uploading`), commits (`snapshot.committed`) and recovery copies (`snapshot.recovery_kept`).
 
 ## 9. Cross-device handoff
