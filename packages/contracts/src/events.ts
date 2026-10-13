@@ -14,6 +14,17 @@ export const EVENT_TYPES = [
   'lease.released',
   'snapshot.committed',
   'device.registered',
+  // Milestone 06
+  'organization.created',
+  'organization.updated',
+  'client.created',
+  'client.updated',
+  'profile.deleted',
+  'membership.created',
+  'membership.updated',
+  'membership.removed',
+  'grant.created',
+  'grant.removed',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

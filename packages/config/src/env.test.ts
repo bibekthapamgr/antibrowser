@@ -23,7 +23,8 @@ describe('loadConfig', () => {
           DEV_AUTH_ENABLED: 'true',
           DEV_AUTH_SECRET: 'x'.repeat(40),
           OIDC_ISSUER: 'https://id.example',
-          OIDC_AUDIENCE: 'api',
+          OIDC_CLIENT_ID: 'pb-desktop',
+          SESSION_SIGNING_KEY: '{"kty":"EC"}',
           OBJECT_STORE_BUCKET: `pb-snapshots-${appEnv}`,
         }),
       ).toThrow(/DEV_AUTH_ENABLED is only permitted/);
@@ -37,7 +38,8 @@ describe('loadConfig', () => {
         APP_ENV: 'prod',
         SOME_SECRET: fixture,
         OIDC_ISSUER: 'https://id.example',
-        OIDC_AUDIENCE: 'api',
+        OIDC_CLIENT_ID: 'pb-desktop',
+        SESSION_SIGNING_KEY: '{"kty":"EC"}',
         OBJECT_STORE_BUCKET: 'pb-snapshots-prod',
       }),
     ).toThrow(/fixture secret/);
@@ -49,7 +51,8 @@ describe('loadConfig', () => {
         ...base,
         APP_ENV: 'prod',
         OIDC_ISSUER: 'https://id.example',
-        OIDC_AUDIENCE: 'api',
+        OIDC_CLIENT_ID: 'pb-desktop',
+        SESSION_SIGNING_KEY: '{"kty":"EC"}',
         OBJECT_STORE_BUCKET: 'pb-snapshots-staging',
       }),
     ).toThrow(ConfigError);
@@ -60,7 +63,8 @@ describe('loadConfig', () => {
       ...base,
       APP_ENV: 'prod',
       OIDC_ISSUER: 'https://id.example',
-      OIDC_AUDIENCE: 'api',
+      OIDC_CLIENT_ID: 'pb-desktop',
+      SESSION_SIGNING_KEY: '{"kty":"EC"}',
       OBJECT_STORE_BUCKET: 'pb-snapshots-prod',
     });
     expect(cfg.devAuth.enabled).toBe(false);

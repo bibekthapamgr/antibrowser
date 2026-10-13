@@ -8,6 +8,7 @@ import {
   type Consumer,
   processBatch,
   purgeExpiredIdempotencyKeys,
+  purgeRateLimits,
 } from '../src/outbox.ts';
 
 const { acme, beta } = FIXTURES.orgs;
@@ -109,6 +110,16 @@ describe('outbox worker', () => {
     );
     expect(await purgeExpiredIdempotencyKeys(worker)).toBeGreaterThanOrEqual(1);
     await expect(worker.query('delete from idempotency_keys')).rejects.toThrow(/permission denied/);
+  });
+
+  it('purges old rate-limit counters, which it cannot read or change directly', async () => {
+    await owner.query(
+      `insert into rate_limit_counters (bucket, key_hash, window_start, hits)
+       values ('signin.ip', $1, now() - interval '3 days', 5)`,
+      ['e'.repeat(64)],
+    );
+    expect(await purgeRateLimits(worker)).toBeGreaterThanOrEqual(1);
+    await expect(worker.query('select * from rate_limit_counters')).rejects.toThrow(/permission denied/);
   });
 
   it('backs off exponentially with a cap', () => {

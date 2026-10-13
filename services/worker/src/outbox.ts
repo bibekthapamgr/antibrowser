@@ -145,3 +145,9 @@ export async function purgeExpiredIdempotencyKeys(pool: pg.Pool): Promise<number
   const { rows } = await pool.query<{ n: number }>('select app.purge_expired_idempotency_keys(1000) as n');
   return rows[0]?.n ?? 0;
 }
+
+/** Drops rate-limit counters of windows that ended more than a day ago (milestone 06). */
+export async function purgeRateLimits(pool: pg.Pool): Promise<number> {
+  const { rows } = await pool.query<{ n: number }>('select app.purge_rate_limits(86400) as n');
+  return rows[0]?.n ?? 0;
+}

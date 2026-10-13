@@ -1,10 +1,11 @@
 import { ApiError, LEASE_TTL, Lease, LeaseAcquire, LeaseRelease, LeaseRenew } from '@pb/contracts';
 import Type, { type Static } from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
+import { audit, changeEntry } from '../audit.ts';
 import { withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { appendEvent } from '../outbox.ts';
-import { requirePermission, resolveTenant } from '../tenancy.ts';
+import { profileFor, resolveTenant } from '../tenancy.ts';
 import { errors, LEASE_COLUMNS, ProfileParams } from './common.ts';
 
 type LeaseRow = Static<typeof Lease>;
@@ -26,10 +27,9 @@ export function leaseRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const access = await resolveTenant(deps.pool, principalOf(req).userId, req.params.orgId);
-      requirePermission(access, 'profile.read');
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
       return withTx(deps.pool, access, async (c) => {
-        await assertProfile(c, req.params.profileId, access.orgId, false);
+        await profileFor(c, access, req.params.profileId, 'profile.read', 'p.id');
         const { rows } = await c.query<LeaseRow>(
           `select ${LEASE_COLUMNS} from profile_leases
             where profile_id = $1 and released_at is null and expires_at > now()`,
@@ -52,8 +52,8 @@ export function leaseRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const access = await resolveTenant(deps.pool, principalOf(req).userId, req.params.orgId);
-      requirePermission(access, 'profile.launch');
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      const principal = principalOf(req);
       const key = requireIdempotencyKey(req.headers['idempotency-key']);
       const ttl = req.body.ttl_seconds ?? LEASE_TTL.default;
       const digest = requestDigest({
@@ -63,32 +63,40 @@ export function leaseRoutes(app: App, deps: Deps): void {
         ttl,
       });
 
-      const result = await withTx(deps.pool, access, (c) =>
-        runIdempotent(c, { orgId: access.orgId, operation: 'lease.acquire', key, digest }, async () => {
-          const device = await c.query(
-            'select 1 from devices where id = $1 and user_id = $2 and revoked_at is null',
-            [req.body.device_id, access.userId],
-          );
-          if (device.rowCount === 0) {
-            throw new ApiError('FORBIDDEN', 'device_id is not an active device of the caller');
-          }
-          await assertProfile(c, req.params.profileId, access.orgId, true);
+      const result = await withTx(deps.pool, access, async (c) => {
+        // Authorization runs before any idempotent replay, so a revoked grant also stops replays.
+        await profileFor(c, access, req.params.profileId, 'profile.launch', 'p.id', true);
+        return runIdempotent(
+          c,
+          { orgId: access.orgId, operation: 'lease.acquire', key, digest },
+          async () => {
+            // A signed-in device can only take the lease for itself.
+            if (principal.deviceId && principal.deviceId !== req.body.device_id) {
+              throw new ApiError('FORBIDDEN', 'device_id must be the device making the request');
+            }
+            const device = await c.query(
+              'select 1 from devices where id = $1 and user_id = $2 and revoked_at is null',
+              [req.body.device_id, access.userId],
+            );
+            if (device.rowCount === 0) {
+              throw new ApiError('FORBIDDEN', 'device_id is not an active device of the caller');
+            }
 
-          const held = await c.query<{ holder_device_id: string; expires_at: string }>(
-            `select holder_device_id, expires_at from profile_leases
+            const held = await c.query<{ holder_device_id: string; expires_at: string }>(
+              `select holder_device_id, expires_at from profile_leases
               where profile_id = $1 and released_at is null and expires_at > now()
               for update`,
-            [req.params.profileId],
-          );
-          const current = held.rows[0];
-          if (current && current.holder_device_id !== req.body.device_id) {
-            throw new ApiError('LEASE_HELD', 'Profile is in use on another device', {
-              expires_at: new Date(current.expires_at).toISOString(),
-            });
-          }
+              [req.params.profileId],
+            );
+            const current = held.rows[0];
+            if (current && current.holder_device_id !== req.body.device_id) {
+              throw new ApiError('LEASE_HELD', 'Profile is in use on another device', {
+                expires_at: new Date(current.expires_at).toISOString(),
+              });
+            }
 
-          const { rows } = await c.query<LeaseRow & { version: number }>(
-            `insert into profile_leases
+            const { rows } = await c.query<LeaseRow & { version: number }>(
+              `insert into profile_leases
                (profile_id, org_id, holder_device_id, holder_user_id, fencing_token, acquired_at, expires_at)
              values ($1, $2, $3, $4, nextval('lease_fencing_seq'), now(), now() + make_interval(secs => $5))
              on conflict (profile_id) do update set
@@ -100,20 +108,27 @@ export function leaseRoutes(app: App, deps: Deps): void {
                released_at      = null,
                version          = profile_leases.version + 1
              returning ${LEASE_COLUMNS}, version`,
-            [req.params.profileId, access.orgId, req.body.device_id, access.userId, ttl],
-          );
-          const { version, ...lease } = rows[0] as LeaseRow & { version: number };
-          await appendEvent(c, {
-            orgId: access.orgId,
-            actorId: access.userId,
-            aggregateId: lease.profile_id,
-            aggregateVersion: version,
-            eventType: 'lease.acquired',
-            payload: { device_id: lease.holder_device_id, fencing_token: lease.fencing_token },
-          });
-          return { status: 201, body: lease };
-        }),
-      );
+              [req.params.profileId, access.orgId, req.body.device_id, access.userId, ttl],
+            );
+            const { version, ...lease } = rows[0] as LeaseRow & { version: number };
+            await appendEvent(c, {
+              orgId: access.orgId,
+              actorId: access.userId,
+              aggregateId: lease.profile_id,
+              aggregateVersion: version,
+              eventType: 'lease.acquired',
+              payload: { device_id: lease.holder_device_id, fencing_token: lease.fencing_token },
+            });
+            await audit(
+              c,
+              changeEntry(access, 'lease.acquired', 'profile', lease.profile_id, {
+                device_id: lease.holder_device_id,
+              }),
+            );
+            return { status: 201, body: lease };
+          },
+        );
+      });
       return reply
         .status(result.replayed ? 200 : result.status)
         .header('idempotent-replayed', String(result.replayed))
@@ -132,18 +147,19 @@ export function leaseRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const access = await resolveTenant(deps.pool, principalOf(req).userId, req.params.orgId);
-      requirePermission(access, 'profile.launch');
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      const device = principalOf(req).deviceId;
       const ttl = req.body.ttl_seconds ?? LEASE_TTL.default;
       return withTx(deps.pool, access, async (c) => {
-        await assertProfile(c, req.params.profileId, access.orgId, false);
+        await profileFor(c, access, req.params.profileId, 'profile.launch', 'p.id');
         const { rows } = await c.query<LeaseRow & { version: number }>(
           `update profile_leases
               set expires_at = now() + make_interval(secs => $3), version = version + 1
             where profile_id = $1 and fencing_token = $2::bigint and holder_user_id = $4
+              and ($5::text is null or holder_device_id = $5)
               and released_at is null and expires_at > now()
             returning ${LEASE_COLUMNS}, version`,
-          [req.params.profileId, req.body.fencing_token, ttl, access.userId],
+          [req.params.profileId, req.body.fencing_token, ttl, access.userId, device],
         );
         const row = rows[0];
         if (!row) throw await leaseFailure(c, req.params.profileId, req.body.fencing_token);
@@ -174,15 +190,16 @@ export function leaseRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const access = await resolveTenant(deps.pool, principalOf(req).userId, req.params.orgId);
-      requirePermission(access, 'profile.launch');
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      const device = principalOf(req).deviceId;
       await withTx(deps.pool, access, async (c) => {
-        await assertProfile(c, req.params.profileId, access.orgId, false);
+        await profileFor(c, access, req.params.profileId, 'profile.launch', 'p.id');
         const existing = await c.query<{ released: boolean }>(
           `select released_at is not null as released from profile_leases
             where profile_id = $1 and fencing_token = $2::bigint and holder_user_id = $3
+              and ($4::text is null or holder_device_id = $4)
             for update`,
-          [req.params.profileId, req.body.fencing_token, access.userId],
+          [req.params.profileId, req.body.fencing_token, access.userId, device],
         );
         const current = existing.rows[0];
         if (!current) throw await leaseFailure(c, req.params.profileId, req.body.fencing_token);
@@ -204,19 +221,6 @@ export function leaseRoutes(app: App, deps: Deps): void {
       return reply.status(204).send(null);
     },
   );
-}
-
-async function assertProfile(
-  c: import('pg').PoolClient,
-  profileId: string,
-  orgId: string,
-  lock: boolean,
-): Promise<void> {
-  const { rowCount } = await c.query(
-    `select 1 from profiles where id = $1 and org_id = $2 and deleted_at is null ${lock ? 'for update' : ''}`,
-    [profileId, orgId],
-  );
-  if (rowCount === 0) throw new ApiError('NOT_FOUND', 'Profile not found');
 }
 
 /** Distinguishes "no live lease" from "a newer holder exists" so clients can react correctly. */

@@ -24,6 +24,10 @@ export const ID_PREFIXES = {
   template: 'tpl',
   importJob: 'imp',
   savedFilter: 'flt',
+  // Milestone 06: identity and authorization.
+  invitation: 'inv',
+  grant: 'grt',
+  session: 'ses',
   // Milestone 05: proxies and connectivity-check records.
   proxy: 'prx',
   networkCheck: 'nck',

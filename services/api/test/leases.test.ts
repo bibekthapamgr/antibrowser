@@ -27,7 +27,8 @@ async function freshProfile(): Promise<string> {
     method: 'POST',
     url: `/v1/orgs/${acme.id}/profiles`,
     headers: owner,
-    payload: { name: `lease-${n++}` },
+    // Client North is granted to the operator fixture, so both fixtures can reach these profiles.
+    payload: { name: `lease-${n++}`, client_id: FIXTURES.clients.acmeNorth.id },
   });
   return res.json().id;
 }

@@ -106,11 +106,11 @@ describe('optimistic concurrency', () => {
       method: 'PATCH',
       url,
       headers: { ...ownerHeaders, 'if-match': '"1"' },
-      payload: { name: 'renamed', client_label: null },
+      payload: { name: 'renamed', client_id: null },
     });
     expect(ok.statusCode).toBe(200);
     expect(ok.headers.etag).toBe('"2"');
-    expect(ok.json()).toMatchObject({ name: 'renamed', version: 2, client_label: null });
+    expect(ok.json()).toMatchObject({ name: 'renamed', version: 2, client_id: null });
 
     const stale = await h.app.inject({
       method: 'PATCH',
@@ -152,7 +152,7 @@ describe('transactional outbox', () => {
         aggregate_version: 1,
         org_id: acme.id,
         actor_id: FIXTURES.users.acmeOwner.id,
-        redacted_payload: { name: 'evented', client_label: null },
+        redacted_payload: { client_id: null },
       },
     ]);
   });

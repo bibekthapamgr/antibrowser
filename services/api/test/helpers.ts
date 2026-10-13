@@ -1,34 +1,104 @@
+import { randomBytes } from 'node:crypto';
 import { loadConfig } from '@pb/config/env';
+import type { Session } from '@pb/contracts';
 import pg from 'pg';
 import { devToken } from '../scripts/dev-token.ts';
 import { type App, buildApp } from '../src/app.ts';
 import { createPool } from '../src/db.ts';
 import { FIXTURES, type FixtureUserKey } from '../src/fixtures.ts';
+import { nonce, TEST_CLIENT_ID, TEST_ISSUER, type TestIdp, testIdp } from './idp.ts';
 
 export interface Harness {
   app: App;
   pool: pg.Pool;
+  /** Schema-owner pool for test setup and inspection only (bypasses row-level security). */
   owner: pg.Pool;
+  idp: TestIdp;
+  /** Development token for a fixture user (dev principal: no device, no recent sign-in). */
   token: (user: FixtureUserKey) => Promise<string>;
+  auth: (user: FixtureUserKey) => Promise<Record<string, string>>;
+  /** Signs a person in through the test identity provider and enrolls a device. */
+  signIn: (person?: Partial<Person>) => Promise<SignedIn>;
   close: () => Promise<void>;
 }
 
-export async function harness(): Promise<Harness> {
-  const config = loadConfig();
-  const pool = createPool(config.databaseUrl, 20);
+export interface Person {
+  sub: string;
+  email: string;
+  verified: boolean;
+  name: string;
+}
+
+export interface SignedIn {
+  person: Person;
+  session: Session;
+  headers: Record<string, string>;
+}
+
+export interface HarnessOptions {
+  poolMax?: number;
+  /** Captures every log line (the app logs at the configured level). */
+  logLines?: string[];
+}
+
+export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
+  const config = loadConfig({ ...process.env, OIDC_ISSUER: TEST_ISSUER, OIDC_CLIENT_ID: TEST_CLIENT_ID });
+  const pool = createPool(config.databaseUrl, opts.poolMax ?? 20);
   const owner = new pg.Pool({
     connectionString: process.env.MIGRATION_DATABASE_URL,
     options: '-c search_path=app',
     max: 2,
   });
-  const app = await buildApp(config, pool, { logger: false });
+  const idp = await testIdp();
+  const lines = opts.logLines;
+  const app = await buildApp(
+    lines ? { ...config, logLevel: 'info' } : config,
+    pool,
+    lines
+      ? { idTokens: idp.verifier, logStream: { write: (line) => void lines.push(line) } }
+      : { logger: false, idTokens: idp.verifier },
+  );
   await app.ready();
   const secret = config.devAuth.enabled ? config.devAuth.secret : '';
+  const token = (user: FixtureUserKey) => devToken(secret, FIXTURES.users[user].id);
+
+  const signIn = async (partial: Partial<Person> = {}): Promise<SignedIn> => {
+    const tag = randomBytes(6).toString('hex');
+    const person: Person = {
+      sub: `sub-${tag}`,
+      email: `${tag}@people.test`,
+      verified: true,
+      name: `Person ${tag}`,
+      ...partial,
+    };
+    // Tests sign many people in from one address; the sign-in rate limit is exercised in auth.test.ts.
+    await owner.query("delete from rate_limit_counters where bucket = 'signin.ip'");
+    const n = nonce();
+    const idToken = await idp.idToken({
+      sub: person.sub,
+      nonce: n,
+      email: person.email,
+      email_verified: person.verified,
+      name: person.name,
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/devices',
+      payload: { id_token: idToken, nonce: n, name: 'Test device', platform: 'linux-x64' },
+    });
+    if (res.statusCode !== 201) throw new Error(`sign-in failed: ${res.statusCode} ${res.body}`);
+    const session = res.json() as Session;
+    return { person, session, headers: { authorization: `Bearer ${session.access_token}` } };
+  };
+
   return {
     app,
     pool,
     owner,
-    token: (user) => devToken(secret, FIXTURES.users[user].id),
+    idp,
+    token,
+    auth: async (user) => ({ authorization: `Bearer ${await token(user)}` }),
+    signIn,
     close: async () => {
       await app.close();
       await pool.end();
@@ -38,3 +108,6 @@ export async function harness(): Promise<Harness> {
 }
 
 export const ERROR_KEYS = ['code', 'message', 'request_id', 'retryable', 'safe_details'].sort();
+
+/** Unique idempotency key. */
+export const idemKey = (): string => `k-${randomBytes(8).toString('hex')}`;

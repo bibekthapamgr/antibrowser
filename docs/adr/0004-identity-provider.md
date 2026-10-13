@@ -1,5 +1,5 @@
 # 0004 — Identity provider
-Status: **Accepted** (protocol and boundaries) / **Proposed** (vendor). Date: 2026-10-12. Owner: backend lead.
+Status: **Accepted** (protocol and boundaries); vendor and redirect type decided in [ADR-0013](0013-identity-and-authorization.md) (Keycloak reference deployment, private-use-scheme redirect). Date: 2026-10-12. Owner: backend lead.
 
 ## Decision
 - Desktop login uses **OIDC Authorization Code + PKCE** in the **system browser** with a loopback redirect (native-app best practice), never an embedded login webview and never a client secret in the desktop binary.

@@ -1,9 +1,11 @@
 /**
- * Seeds the two fixture tenants (milestone 01, step 3). Idempotent. Refused outside APP_ENV=dev|test.
- * Runs as the schema owner (row-level security is not forced for the owner) because it writes across tenants.
+ * Seeds the two fixture tenants (milestone 01, step 3; roles, clients and grants from milestone 06). Idempotent.
+ * Refused outside APP_ENV=dev|test. Runs as the schema owner (row-level security is not forced for the owner) because
+ * it writes across tenants.
  */
 import pg from 'pg';
 import { DEV_ISSUER, FIXTURES } from '../src/fixtures.ts';
+import { nameKey } from '../src/names.ts';
 
 export async function seed(connectionString: string): Promise<void> {
   const appEnv = process.env.APP_ENV ?? 'dev';
@@ -21,9 +23,10 @@ export async function seed(connectionString: string): Promise<void> {
     }
     for (const user of Object.values(FIXTURES.users)) {
       await client.query(
-        `insert into users (id, oidc_issuer, oidc_subject, display_name) values ($1, $2, $1, $3)
+        `insert into users (id, oidc_issuer, oidc_subject, display_name, email, email_verified)
+         values ($1, $2, $1, $3, $4, true)
          on conflict do nothing`,
-        [user.id, DEV_ISSUER, user.name],
+        [user.id, DEV_ISSUER, user.name, user.email],
       );
       await client.query(
         'insert into memberships (org_id, user_id, role) values ($1, $2, $3) on conflict do nothing',
@@ -36,13 +39,40 @@ export async function seed(connectionString: string): Promise<void> {
         [device.id, FIXTURES.users[device.user].id, device.name, device.platform],
       );
     }
-    for (const profile of Object.values(FIXTURES.profiles)) {
-      const org = FIXTURES.orgs[profile.org];
-      const owner = profile.org === 'acme' ? FIXTURES.users.acmeOwner : FIXTURES.users.betaOwner;
+    const ownerOf = (org: 'acme' | 'beta') =>
+      org === 'acme' ? FIXTURES.users.acmeOwner : FIXTURES.users.betaOwner;
+    for (const c of Object.values(FIXTURES.clients)) {
       await client.query(
-        `insert into profiles (id, org_id, name, client_label, created_by) values ($1, $2, $3, $4, $5)
+        `insert into clients (id, org_id, name, name_key, created_by) values ($1, $2, $3, $4, $5)
          on conflict do nothing`,
-        [profile.id, org.id, profile.name, profile.client, owner.id],
+        [c.id, FIXTURES.orgs[c.org].id, c.name, nameKey(c.name), ownerOf(c.org).id],
+      );
+    }
+    for (const profile of Object.values(FIXTURES.profiles)) {
+      await client.query(
+        `insert into profiles (id, org_id, name, client_id, created_by) values ($1, $2, $3, $4, $5)
+         on conflict do nothing`,
+        [
+          profile.id,
+          FIXTURES.orgs[profile.org].id,
+          profile.name,
+          FIXTURES.clients[profile.client].id,
+          ownerOf(profile.org).id,
+        ],
+      );
+    }
+    for (const g of Object.values(FIXTURES.grants)) {
+      await client.query(
+        `insert into permission_grants (id, org_id, user_id, client_id, profile_id, created_by)
+         values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
+        [
+          g.id,
+          FIXTURES.orgs[g.org].id,
+          FIXTURES.users[g.user].id,
+          g.client ? FIXTURES.clients[g.client].id : null,
+          g.profile ? FIXTURES.profiles[g.profile].id : null,
+          ownerOf(g.org).id,
+        ],
       );
     }
     await client.query('commit');

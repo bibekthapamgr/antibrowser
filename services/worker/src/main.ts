@@ -1,6 +1,6 @@
 import { loadConfig } from '@pb/config/env';
 import pg from 'pg';
-import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys } from './outbox.ts';
+import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys, purgeRateLimits } from './outbox.ts';
 
 const config = loadConfig();
 const pool = new pg.Pool({
@@ -29,6 +29,8 @@ while (running) {
     if (Date.now() - lastPurge > 60_000) {
       const purged = await purgeExpiredIdempotencyKeys(pool);
       if (purged) log('info', 'purged idempotency keys', { purged });
+      const counters = await purgeRateLimits(pool);
+      if (counters) log('info', 'purged rate-limit counters', { counters });
       lastPurge = Date.now();
     }
     if (processed === 0) await new Promise((r) => setTimeout(r, 500));

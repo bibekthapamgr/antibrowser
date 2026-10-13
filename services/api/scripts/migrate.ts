@@ -9,7 +9,14 @@ import pg from 'pg';
 
 const MIGRATIONS_DIR = join(import.meta.dirname, '../../../infra/db/migrations');
 
-export async function migrate(connectionString: string, opts: { reset?: boolean; log?: boolean } = {}) {
+export interface MigrateOptions {
+  reset?: boolean;
+  log?: boolean;
+  /** Stop after this migration file (tests use it to load data in an older schema, then upgrade). */
+  until?: string;
+}
+
+export async function migrate(connectionString: string, opts: MigrateOptions = {}) {
   const appEnv = process.env.APP_ENV ?? 'dev';
   const client = new pg.Client({ connectionString });
   await client.connect();
@@ -31,6 +38,7 @@ export async function migrate(connectionString: string, opts: { reset?: boolean;
     );
 
     for (const file of files) {
+      if (opts.until && file > opts.until) break;
       const sql = await readFile(join(MIGRATIONS_DIR, file), 'utf8');
       const sha = createHash('sha256').update(sql).digest('hex');
       const previous = applied.get(file);
