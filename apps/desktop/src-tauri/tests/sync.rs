@@ -193,14 +193,31 @@ fn another_computer_restores_and_a_stale_computer_gets_a_conflict_not_an_overwri
     let a = fixture();
     connect(&a, &server, DEV_A);
     let id_a = linked_profile(&a);
+    let b = fixture();
+    connect(&b, &server, DEV_B);
+    invoke(&b, "create_workspace", json!({ "name": "Home" })).unwrap_or_else(|e| panic!("{e}"));
+    // Nothing to restore yet: refused before any local profile is created.
+    assert_eq!(
+        code(&invoke(
+            &b,
+            "sync_restore_here",
+            json!({ "orgId": ORG, "orgProfileId": PRF, "name": "Shop" })
+        ))
+        .as_deref(),
+        Some("SYNC_NO_BACKUP")
+    );
+    assert_eq!(
+        invoke(&b, "list_profiles", json!({}))
+            .map(|l| l.as_array().map(Vec::len))
+            .ok()
+            .flatten(),
+        Some(0)
+    );
     invoke(&a, "sync_backup_now", json!({ "profileId": id_a })).unwrap_or_else(|e| panic!("{e}"));
     a.state.run_sync_jobs();
     assert_eq!(sync_status(&a, &id_a)["synced_version"], json!(1));
 
     // Computer B puts the organization profile on this computer.
-    let b = fixture();
-    connect(&b, &server, DEV_B);
-    invoke(&b, "create_workspace", json!({ "name": "Home" })).unwrap_or_else(|e| panic!("{e}"));
     let view = invoke(
         &b,
         "sync_restore_here",

@@ -18,11 +18,20 @@ import {
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { AccountView, AppView, Backend, OrgImportView } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
+import { OrgBackupsSection } from './backups.tsx';
 import { ApiFailure, can, get, ROLE_HELP, ROLE_LABEL, send } from './cloud.ts';
 import { Dialog, useDebounced } from './components.tsx';
 import { type Notify, plural, relative, when } from './status.tsx';
 
-type Section = 'profiles' | 'clients' | 'members' | 'invitations' | 'access' | 'activity' | 'settings';
+type Section =
+  | 'profiles'
+  | 'clients'
+  | 'members'
+  | 'invitations'
+  | 'access'
+  | 'backups'
+  | 'activity'
+  | 'settings';
 interface Page<T> {
   items: T[];
   next_cursor: string | null;
@@ -92,6 +101,7 @@ export function OrganizationScreen(props: {
     ['members', 'Members', can(role, 'members.read')],
     ['invitations', 'Invitations', can(role, 'members.manage')],
     ['access', 'Access', can(role, 'grants.manage')],
+    ['backups', 'Backups', can(role, 'backups.manage')],
     ['activity', 'Activity', can(role, 'audit.read')],
     ['settings', 'Settings', true],
   ];
@@ -130,6 +140,7 @@ export function OrganizationScreen(props: {
       {current === 'members' && <MembersSection {...common} onLeft={props.onLeft} onChanged={org.reload} />}
       {current === 'invitations' && <InvitationsSection {...common} />}
       {current === 'access' && <AccessSection {...common} />}
+      {current === 'backups' && <OrgBackupsSection {...common} />}
       {current === 'activity' && <ActivitySection {...common} />}
       {current === 'settings' && (
         <SettingsSection
@@ -172,6 +183,33 @@ function ProfilesSection(props: SectionProps) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [editing, setEditing] = useState<OrgProfile | 'new' | null>(null);
   const [deleting, setDeleting] = useState<OrgProfile | null>(null);
+  // Organization profiles already on this computer (linked local profiles), milestone 07.
+  const [here, setHere] = useState<Set<string>>(new Set());
+  const [linkNonce, setLinkNonce] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: linkNonce reloads after a restore starts
+  useEffect(() => {
+    let live = true;
+    backend.account
+      .links(orgId)
+      .then((l) => live && setHere(new Set(l.map((x) => x.org_profile_id))))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [backend, orgId, linkNonce]);
+  useEffect(() => backend.on('sync', (e) => e.state === 'restored' && setLinkNonce((n) => n + 1)), [backend]);
+
+  const putHere = async (p: OrgProfile) => {
+    try {
+      const local = await backend.sync.restoreHere(orgId, p.id, p.name);
+      notify(
+        `Restoring ${local.name} to this computer. It appears in your local workspace; sign in to websites again after it opens.`,
+      );
+      setLinkNonce((n) => n + 1);
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  };
 
   useEffect(() => {
     setMore([]);
@@ -229,8 +267,9 @@ function ProfilesSection(props: SectionProps) {
         )}
       </div>
       <p className="muted small">
-        Organization profiles are shared settings (name, client, notes). Opening them on this computer arrives
-        in a later update together with encrypted sync; your local profiles are not affected.
+        Organization profiles are shared settings (name, client, notes) with encrypted backups. Put one on
+        this computer to restore its newest backup into a local profile; it is backed up again after you close
+        it.
       </p>
       <div className="row">
         <label className="grow">
@@ -269,6 +308,7 @@ function ProfilesSection(props: SectionProps) {
               <th scope="col">Client</th>
               <th scope="col">Notes</th>
               <th scope="col">Changed</th>
+              <th scope="col">This computer</th>
               <th scope="col">
                 <span className="pb-sr-only">Actions</span>
               </th>
@@ -283,8 +323,19 @@ function ProfilesSection(props: SectionProps) {
                 </td>
                 <td className="notes-cell">{p.notes || <span className="muted">—</span>}</td>
                 <td>{relative(p.updated_at)}</td>
+                <td>{here.has(p.id) ? 'On this computer' : <span className="muted">Not here</span>}</td>
                 <td>
                   <div className="cell-actions">
+                    {!here.has(p.id) && can(role, 'snapshot.restore') && (
+                      <button
+                        type="button"
+                        className="pb-button"
+                        disabled={offline}
+                        onClick={() => putHere(p)}
+                      >
+                        Put on this computer<span className="pb-sr-only"> {p.name}</span>
+                      </button>
+                    )}
                     {can(role, 'profile.update') && (
                       <button
                         type="button"

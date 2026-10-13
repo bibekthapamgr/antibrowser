@@ -39,6 +39,7 @@ import type {
   SettingValue,
   Sort,
   Started,
+  SyncStatus,
   TagRef,
   Template,
   Workspace,
@@ -52,6 +53,7 @@ export type {
   Client,
   ClientView,
   CloudResponse,
+  ConflictChoice,
   FieldReport,
   ImportJob,
   ImportPreview,
@@ -63,6 +65,7 @@ export type {
   Operation,
   OrgImportView,
   OrgLink,
+  Portability,
   Preset,
   PrivacyConfig,
   PrivacyOptions,
@@ -80,6 +83,8 @@ export type {
   Selection,
   SettingValue,
   Sort,
+  SyncJobView,
+  SyncStatus,
   Tag,
   TagRef,
   Template,
@@ -249,9 +254,29 @@ export interface AccountRepository {
   links(orgId?: string): Promise<OrgLink[]>;
 }
 
+/**
+ * Encrypted backups of organization profiles and restores (milestone 07). Uploads and restores run in the shell's
+ * background worker; progress arrives as `sync` events. The window never sees a data key or a signed URL.
+ */
+export interface SyncRepository {
+  status(profileId: string): Promise<SyncStatus>;
+  backupNow(profileId: string): Promise<SyncStatus>;
+  cancel(profileId: string): Promise<SyncStatus>;
+  setAutoBackup(profileId: string, enabled: boolean): Promise<SyncStatus>;
+  resolveConflict(
+    profileId: string,
+    choice: 'upload_mine' | 'use_newer' | 'open_newer_as_copy',
+  ): Promise<SyncStatus>;
+  /** The newest backup (or `snapshotId`) into this profile, or `asCopy` into a new local profile. */
+  restore(profileId: string, snapshotId: string | null, asCopy: boolean): Promise<SyncStatus>;
+  /** Puts an organization profile on this computer: a new local profile, restored from its newest backup. */
+  restoreHere(orgId: string, orgProfileId: string, name: string): Promise<ProfileView>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   account: AccountRepository;
+  sync: SyncRepository;
   workspaces: WorkspaceRepository;
   profiles: ProfileRepository;
   library: LibraryRepository;

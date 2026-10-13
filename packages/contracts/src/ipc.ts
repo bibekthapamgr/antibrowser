@@ -113,7 +113,9 @@ export const ProfileView = Type.Object({
   fail_closed: Type.Boolean({ description: 'With a proxy: block traffic that cannot go through it.' }),
   network: NetworkView,
   privacy: PrivacyConfig,
-  sync_status: Type.Literal('local_only', { description: 'Cloud sync arrives in milestone 07.' }),
+  sync_status: Type.Literal('local_only', {
+    description: 'Organization backup state (milestone 07) is per profile: get_sync_status.',
+  }),
   version: Type.Integer({ minimum: 1 }),
   created_at: Type.String(),
   updated_at: Type.String(),
@@ -678,6 +680,84 @@ export type OrgLink = Static<typeof OrgLink>;
 const OrgIdPattern = '^org_[0-9A-HJKMNP-TV-Z]{26}$';
 const ClientRef = Type.String({ pattern: ClientIdPattern });
 
+// ---------------------------------------------------------------- encrypted backups and sync (milestone 07)
+/** What a restored backup keeps on this computer (ADR-0002): sign-ins only on the computer that made it. */
+export const Portability = Type.Enum(['supported', 'sign_in_required', 'unsupported']);
+export type Portability = Static<typeof Portability>;
+export const UPLOAD_STATES = [
+  'local_dirty',
+  'preparing',
+  'uploading',
+  'verifying',
+  'committed',
+  'conflict',
+  'failed',
+  'canceled',
+] as const;
+export const RESTORE_STATES = [
+  'planning',
+  'downloading',
+  'opening',
+  'ready',
+  'done',
+  'failed',
+  'canceled',
+] as const;
+export const SyncJobView = Type.Object({
+  id: Type.String(),
+  kind: Type.Enum(['upload', 'restore']),
+  state: Type.Enum([...UPLOAD_STATES, ...RESTORE_STATES]),
+  error_code: Nullable(Type.String()),
+  updated_at: Type.String(),
+  /** Upload: the version it became. Restore: the version restored. */
+  version: Nullable(Type.Integer()),
+  head_version: Nullable(Type.Integer()),
+  portability: Nullable(Portability),
+});
+export type SyncJobView = Static<typeof SyncJobView>;
+export const SyncProgress = Type.Object({
+  phase: Nullable(Type.Enum(['sealing', 'uploading', 'downloading', 'opening'])),
+  done: Type.Integer({ minimum: 0 }),
+  total: Type.Integer({ minimum: 0 }),
+  /** Why an unfinished job is waiting (CLOUD_OFFLINE, STORAGE_OFFLINE, CLOUD_SIGNED_OUT, PROFILE_NOT_CLOSED, …). */
+  waiting_for: Nullable(Type.String()),
+});
+export type SyncProgress = Static<typeof SyncProgress>;
+export const SyncStatus = Type.Object({
+  profile_id: Type.String({ pattern: ProfileIdPattern }),
+  linked: Type.Boolean(),
+  org_id: Nullable(Type.String()),
+  org_profile_id: Nullable(Type.String()),
+  /** The organization version this computer's copy is based on (0: never backed up). */
+  synced_version: Type.Integer({ minimum: 0 }),
+  synced_at: Nullable(Type.String()),
+  /** Changed since its last backup. */
+  dirty: Type.Boolean(),
+  auto_backup: Type.Boolean(),
+  /** A newer version made on another computer; nothing was overwritten. */
+  conflict_head: Nullable(Type.Integer()),
+  job: Nullable(SyncJobView),
+  progress: SyncProgress,
+  /** A restore is pending: the profile cannot be opened until it finishes. */
+  restoring: Type.Boolean(),
+  local_backup: Nullable(
+    Type.Object({
+      created_at_unix: Type.Integer(),
+      sealed: Type.Boolean(),
+      /** False when it was sealed with a key this computer's keychain no longer has. */
+      openable: Type.Boolean(),
+      bytes: Type.Integer(),
+      files: Type.Integer(),
+    }),
+  ),
+  /** New local backups are encrypted with this computer's keychain key. */
+  local_backups_sealed: Type.Boolean(),
+});
+export type SyncStatus = Static<typeof SyncStatus>;
+export const CONFLICT_CHOICES = ['upload_mine', 'use_newer', 'open_newer_as_copy'] as const;
+export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
+const ProfileArg = Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }) });
+
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
@@ -971,6 +1051,37 @@ export const COMMANDS = {
     args: Type.Object({ orgId: Type.Optional(Type.String({ pattern: OrgIdPattern })) }),
     result: Type.Array(OrgLink, { maxItems: 10000 }),
   },
+  // Milestone 07: encrypted backups and restores. Data keys, signed URLs and tokens never reach the window.
+  get_sync_status: { args: ProfileArg, result: SyncStatus },
+  sync_backup_now: { args: ProfileArg, result: SyncStatus },
+  sync_cancel: { args: ProfileArg, result: SyncStatus },
+  sync_set_auto_backup: {
+    args: Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }), enabled: Type.Boolean() }),
+    result: SyncStatus,
+  },
+  sync_resolve_conflict: {
+    args: Type.Object({
+      profileId: Type.String({ pattern: ProfileIdPattern }),
+      choice: Type.Enum(CONFLICT_CHOICES),
+    }),
+    result: SyncStatus,
+  },
+  sync_restore: {
+    args: Type.Object({
+      profileId: Type.String({ pattern: ProfileIdPattern }),
+      snapshotId: Type.Optional(Type.String({ pattern: '^snp_[0-9A-HJKMNP-TV-Z]{26}$' })),
+      asCopy: Type.Boolean(),
+    }),
+    result: SyncStatus,
+  },
+  sync_restore_here: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      orgProfileId: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+      name: Label,
+    }),
+    result: ProfileView,
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -982,6 +1093,15 @@ export const EVENTS = {
   'profiles-changed': Type.Object({ running: Type.Integer() }),
   'quit-requested': Type.Object({ running: Type.Integer(), unresponsive: Type.Integer() }),
   'deep-link': Type.Object({ kind: Type.Literal('auth-callback'), outcome: Type.Unknown() }),
+  /** A sync job changed state (`state`), or a restore finished switching folders (`restored`). */
+  sync: Type.Object({
+    profile_id: Type.String({ pattern: ProfileIdPattern }),
+    job_id: Type.String(),
+    kind: Type.Enum(['upload', 'restore']),
+    state: Type.String(),
+    version: Type.Optional(Type.Integer()),
+    portability: Type.Optional(Portability),
+  }),
   account: Type.Object({
     status: Type.Enum(['signed_in', 'signed_out', 'expired', 'failed']),
     reauth: Type.Optional(Type.Boolean()),

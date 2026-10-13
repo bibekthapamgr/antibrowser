@@ -369,6 +369,14 @@ pub const SYNC_ALREADY_HERE: IpcError = IpcError::new(
     "SYNC_ALREADY_HERE",
     "This organization profile is already on this computer.",
 );
+pub const SYNC_NO_BACKUP: IpcError = IpcError::new(
+    "SYNC_NO_BACKUP",
+    "This organization profile has no backup yet. Back it up from the computer that has it first.",
+);
+pub const SYNC_FORBIDDEN: IpcError = IpcError::new(
+    "SYNC_FORBIDDEN",
+    "Your role does not allow restoring this profile. Ask an admin for access.",
+);
 pub const PROFILE_RESTORING: IpcError = IpcError::new(
     "PROFILE_RESTORING",
     "This profile is being restored from a backup. It opens when the restore is finished.",

@@ -31,6 +31,16 @@ export function tauriBackend(): Backend {
         call('org_import', { workspaceId, orgId, dryRun, ...(mapping ? { mapping } : {}) }),
       links: (orgId) => call('list_org_links', orgId ? { orgId } : {}),
     },
+    sync: {
+      status: (profileId) => call('get_sync_status', { profileId }),
+      backupNow: (profileId) => call('sync_backup_now', { profileId }),
+      cancel: (profileId) => call('sync_cancel', { profileId }),
+      setAutoBackup: (profileId, enabled) => call('sync_set_auto_backup', { profileId, enabled }),
+      resolveConflict: (profileId, choice) => call('sync_resolve_conflict', { profileId, choice }),
+      restore: (profileId, snapshotId, asCopy) =>
+        call('sync_restore', snapshotId ? { profileId, snapshotId, asCopy } : { profileId, asCopy }),
+      restoreHere: (orgId, orgProfileId, name) => call('sync_restore_here', { orgId, orgProfileId, name }),
+    },
     workspaces: {
       appState: () => call('get_app_state', {}),
       createWorkspace: (name) => call('create_workspace', { name }),

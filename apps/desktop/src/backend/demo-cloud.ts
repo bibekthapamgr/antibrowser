@@ -51,6 +51,19 @@ interface OrgRec {
     created_at: string;
     updated_at: string;
     deleted: boolean;
+    deleted_at?: string;
+  }[];
+  /** Committed encrypted snapshots (milestone 07): metadata only, as the API returns it. */
+  snapshots: DemoSnapshot[];
+  policy: { retention_days: number; trash_days: number };
+  keys: {
+    id: string;
+    version: number;
+    status: 'active' | 'retired' | 'destroyed';
+    created_at: string;
+    retired_at: string | null;
+    destroy_after: string | null;
+    destroyed_at: string | null;
   }[];
   invitations: {
     id: string;
@@ -83,6 +96,46 @@ interface OrgRec {
   }[];
 }
 
+export interface DemoSnapshot {
+  id: string;
+  profile_id: string;
+  status: 'committed';
+  version: number;
+  parent_version: number;
+  digest: string;
+  ciphertext_size: number;
+  plaintext_size: number;
+  platform: string;
+  browser_version: string;
+  schema_version: number;
+  encryption_scheme: string;
+  key_version: string;
+  created_by: string;
+  device_id: string | null;
+  created_at: string;
+  committed_at: string;
+}
+
+/** What the demo sync engine (demo.ts) needs from the demo server. */
+export interface DemoCloudSync {
+  deviceId: string;
+  /** The first organization profile (for the `linked` demo mode). */
+  firstProfile(): { orgId: string; profileId: string } | null;
+  link(localId: string, orgId: string, orgProfileId: string): void;
+  unlink(localId: string): void;
+  profileName(orgId: string, orgProfileId: string): string | null;
+  /** Newest committed version (0: none) and its snapshot. */
+  head(orgId: string, orgProfileId: string): { version: number; snapshot: DemoSnapshot | null };
+  snapshot(orgId: string, snapshotId: string): DemoSnapshot | null;
+  /** Compare-and-swap commit; a newer head is a conflict, never an overwrite. */
+  commit(
+    orgId: string,
+    orgProfileId: string,
+    base: number,
+    device: string,
+  ): { version: number; snapshot: DemoSnapshot } | { conflict: number };
+}
+
 interface LocalProfile {
   id: string;
   name: string;
@@ -99,7 +152,7 @@ export function demoCloud(opts: {
     message?: string;
   }) => void;
   localProfiles: (workspaceId: string) => LocalProfile[];
-}): AccountRepository {
+}): AccountRepository & { sync: DemoCloudSync } {
   const me = {
     id: rid('usr'),
     display_name: 'Demo Person',
@@ -155,6 +208,19 @@ export function demoCloud(opts: {
       ]),
       clients: [],
       profiles: [],
+      snapshots: [],
+      policy: { retention_days: 7, trash_days: 30 },
+      keys: [
+        {
+          id: rid('okv'),
+          version: 1,
+          status: 'active',
+          created_at: t,
+          retired_at: null,
+          destroy_after: null,
+          destroyed_at: null,
+        },
+      ],
       invitations: [],
       grants: [],
       audit: [],
@@ -185,6 +251,29 @@ export function demoCloud(opts: {
         created_at: t,
         updated_at: t,
         deleted: false,
+      });
+    }
+    // One profile already has an encrypted backup made on Sam's computer (milestone 07).
+    const backedUp = org.profiles[0];
+    if (backedUp) {
+      org.snapshots.push({
+        id: rid('snp'),
+        profile_id: backedUp.id,
+        status: 'committed',
+        version: 1,
+        parent_version: 0,
+        digest: 'a'.repeat(64),
+        ciphertext_size: 41_000_000,
+        plaintext_size: 96_000_000,
+        platform: 'windows-x64',
+        browser_version: '155.0.8059.39',
+        schema_version: 1,
+        encryption_scheme: 'aes-256-gcm-chunked-v1',
+        key_version: org.keys[0]?.id ?? '',
+        created_by: sam.id,
+        device_id: rid('dev'),
+        created_at: new Date(Date.now() - DAY).toISOString(),
+        committed_at: new Date(Date.now() - DAY).toISOString(),
       });
     }
     const grantTo = myRole === 'operator' ? me.id : sam.id;
@@ -336,6 +425,19 @@ export function demoCloud(opts: {
         members: new Map([[me.id, { role: 'owner', version: 1, created_at: t }]]),
         clients: [],
         profiles: [],
+        snapshots: [],
+        policy: { retention_days: 7, trash_days: 30 },
+        keys: [
+          {
+            id: rid('okv'),
+            version: 1,
+            status: 'active',
+            created_at: t,
+            retired_at: null,
+            destroy_after: null,
+            destroyed_at: null,
+          },
+        ],
         invitations: [],
         grants: [],
         audit: [],
@@ -606,8 +708,31 @@ export function demoCloud(opts: {
         audit(org, 'profile.created', p.id);
         return { status: 201, body: view(p) };
       }
+      if (e === 'undelete') {
+        const denied = need('backups.manage');
+        if (denied) return denied;
+        const gone = org.profiles.find((x) => x.id === d && x.deleted);
+        if (!gone) return notFound('Profile in the trash');
+        gone.deleted = false;
+        delete gone.deleted_at;
+        gone.version++;
+        gone.updated_at = t;
+        audit(org, 'profile.undeleted', gone.id);
+        return { status: 200, body: view(gone) };
+      }
       const p = org.profiles.find((x) => x.id === d && visibleProfile(org, x));
       if (!p) return notFound('Profile');
+      if (e === 'snapshots') {
+        return (
+          need('snapshot.read') ??
+          page(
+            org.snapshots
+              .filter((x) => x.profile_id === p.id)
+              .sort((x, y) => y.version - x.version)
+              .map((x) => ({ ...x })),
+          )
+        );
+      }
       if (req.method === 'GET') return need('profile.read') ?? { status: 200, body: view(p) };
       const denied = need(req.method === 'DELETE' ? 'profile.delete' : 'profile.update');
       if (denied) return denied;
@@ -617,6 +742,7 @@ export function demoCloud(opts: {
         });
       if (req.method === 'DELETE') {
         p.deleted = true;
+        p.deleted_at = t;
         audit(org, 'profile.deleted', p.id);
         return { status: 204, body: null };
       }
@@ -629,7 +755,151 @@ export function demoCloud(opts: {
       return { status: 200, body: view(p) };
     }
     if (c === 'audit-events') return need('audit.read') ?? page(org.audit);
+    // Milestone 07: backup policy, trash and key versions.
+    const usedBytes = () => org.snapshots.reduce((n, x) => n + x.ciphertext_size, 0);
+    const policyView = () => ({
+      ...org.policy,
+      quota_bytes: 20 * 1024 ** 3,
+      max_snapshot_bytes: 4 * 1024 ** 3,
+      used_bytes: usedBytes(),
+    });
+    if (c === 'backup-policy') {
+      if (req.method === 'GET') return { status: 200, body: policyView() };
+      const denied = need('backups.manage');
+      if (denied) return denied;
+      for (const k of ['retention_days', 'trash_days'] as const) {
+        const v = body[k];
+        if (v === undefined) continue;
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 90)
+          return err(400, 'VALIDATION_FAILED', `${k} must be 1-90 days`);
+        org.policy[k] = v;
+      }
+      audit(org, 'backup_policy.updated', org.id);
+      return { status: 200, body: policyView() };
+    }
+    if (c === 'trash') {
+      const denied = need('backups.manage');
+      if (denied) return denied;
+      return page(
+        org.profiles
+          .filter((x) => x.deleted && x.deleted_at)
+          .map((x) => ({
+            profile: {
+              id: x.id,
+              org_id: org.id,
+              name: x.name,
+              client_id: x.client_id,
+              notes: x.notes,
+              version: x.version,
+              created_at: x.created_at,
+              updated_at: x.updated_at,
+            },
+            deleted_at: x.deleted_at,
+            purge_after: new Date(Date.parse(x.deleted_at ?? t) + org.policy.trash_days * DAY).toISOString(),
+          })),
+      );
+    }
+    if (c === 'keys') {
+      const keysView = () => ({
+        kms_provider: 'local',
+        keys: [...org.keys]
+          .sort((x, y) => y.version - x.version)
+          .map((k) => ({
+            ...k,
+            snapshots: org.snapshots.filter((x) => x.key_version === k.id).length,
+          })),
+      });
+      if (!d) return need('backups.manage') ?? { status: 200, body: keysView() };
+      const denied = need('keys.manage');
+      if (denied) return denied;
+      if (Date.now() > recentAuthUntil)
+        return err(401, 'REAUTHENTICATION_REQUIRED', 'Sign in again to confirm this action', {
+          max_age_seconds: 600,
+        });
+      const active = org.keys.find((k) => k.status === 'active');
+      if (active) {
+        active.status = 'retired';
+        active.retired_at = t;
+        active.destroy_after = new Date(Date.now() + 30 * DAY).toISOString();
+      }
+      const next = {
+        id: rid('okv'),
+        version: (active?.version ?? 0) + 1,
+        status: 'active' as const,
+        created_at: t,
+        retired_at: null,
+        destroy_after: null,
+        destroyed_at: null,
+      };
+      org.keys.push(next);
+      // Existing snapshots are re-wrapped under the new version (demo: instantly).
+      for (const x of org.snapshots) x.key_version = next.id;
+      audit(org, 'org_key.rotated', next.id);
+      return { status: 200, body: keysView() };
+    }
     return notFound('Route');
+  };
+
+  const sync: DemoCloudSync = {
+    deviceId,
+    firstProfile() {
+      const org = [...orgs.values()][0];
+      const p = org?.profiles[0];
+      return org && p ? { orgId: org.id, profileId: p.id } : null;
+    },
+    link(localId, orgId, orgProfileId) {
+      const i = links.findIndex((l) => l.local_profile_id === localId);
+      if (i >= 0) links.splice(i, 1);
+      links.push({
+        local_profile_id: localId,
+        org_id: orgId,
+        org_profile_id: orgProfileId,
+        linked_at: now(),
+      });
+    },
+    unlink(localId) {
+      const i = links.findIndex((l) => l.local_profile_id === localId);
+      if (i >= 0) links.splice(i, 1);
+    },
+    profileName(orgId, orgProfileId) {
+      return orgs.get(orgId)?.profiles.find((p) => p.id === orgProfileId)?.name ?? null;
+    },
+    head(orgId, orgProfileId) {
+      const list = (orgs.get(orgId)?.snapshots ?? []).filter((x) => x.profile_id === orgProfileId);
+      const top = list.reduce<DemoSnapshot | null>((m, x) => (!m || x.version > m.version ? x : m), null);
+      return { version: top?.version ?? 0, snapshot: top };
+    },
+    snapshot(orgId, snapshotId) {
+      return orgs.get(orgId)?.snapshots.find((x) => x.id === snapshotId) ?? null;
+    },
+    commit(orgId, orgProfileId, base, device) {
+      const org = orgs.get(orgId);
+      const head = sync.head(orgId, orgProfileId).version;
+      if (!org || head !== base) return { conflict: head };
+      const t = now();
+      const snap: DemoSnapshot = {
+        id: rid('snp'),
+        profile_id: orgProfileId,
+        status: 'committed',
+        version: head + 1,
+        parent_version: base,
+        digest: Array.from({ length: 64 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
+        ciphertext_size: 30_000_000 + Math.floor(Math.random() * 20_000_000),
+        plaintext_size: 70_000_000 + Math.floor(Math.random() * 20_000_000),
+        platform: 'linux-x64',
+        browser_version: '155.0.8059.39',
+        schema_version: 1,
+        encryption_scheme: 'aes-256-gcm-chunked-v1',
+        key_version: org.keys.find((k) => k.status === 'active')?.id ?? '',
+        created_by: me.id,
+        device_id: device,
+        created_at: t,
+        committed_at: t,
+      };
+      org.snapshots.push(snap);
+      audit(org, 'snapshot.committed', snap.id);
+      return { version: snap.version, snapshot: snap };
+    },
   };
 
   const view = (): AccountView => ({
@@ -642,6 +912,7 @@ export function demoCloud(opts: {
   });
 
   return {
+    sync,
     async get() {
       return view();
     },

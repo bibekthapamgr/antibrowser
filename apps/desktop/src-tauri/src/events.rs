@@ -8,6 +8,7 @@
 //! | `deep-link`         | `{ "kind": "auth-callback", "outcome": … }` |
 //! | `warning`           | `{ "code": "LOW_DISK_SPACE", "free_bytes": … }` |
 //! | `account`           | `{ "status": "signed_in" \| "signed_out" \| "expired" \| "failed", … }` |
+//! | `sync`              | `{ "profile_id", "job_id", "kind": "upload" \| "restore", "state", "version"?, "portability"? }` |
 
 use serde_json::Value;
 use std::sync::Mutex;
@@ -18,6 +19,7 @@ pub const QUIT_REQUESTED: &str = "quit-requested";
 pub const DEEP_LINK: &str = "deep-link";
 pub const WARNING: &str = "warning";
 pub const ACCOUNT: &str = "account";
+pub const SYNC: &str = "sync";
 
 pub trait EventSink: Send + Sync {
     fn emit_json(&self, event: &str, payload: Value);

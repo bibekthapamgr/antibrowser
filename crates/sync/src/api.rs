@@ -201,6 +201,8 @@ pub trait SyncApi: Send + Sync {
         profile: &str,
         snapshot: Option<&str>,
     ) -> Result<RestorePlan, ApiError>;
+    /// The newest committed snapshot's metadata (no key, no link), or `None` when the profile has no backup yet.
+    fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError>;
 }
 
 pub trait Objects: Send + Sync {

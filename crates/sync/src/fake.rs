@@ -644,18 +644,7 @@ impl SyncApi for FakeClient {
         let url = Self::token(&mut st, &id, 0);
         Self::leave(&mut st, "restore_plan")?;
         Ok(RestorePlan {
-            snapshot: SnapshotInfo {
-                id: id.clone(),
-                version: s.version.unwrap_or(0),
-                digest: s.digest.clone().unwrap_or_default(),
-                ciphertext_size: s.size,
-                plaintext_size: s.plaintext,
-                platform: s.platform.clone(),
-                browser_version: s.browser.clone(),
-                schema_version: 1,
-                device_id: Some(s.device.clone()),
-                committed_at: None,
-            },
+            snapshot: info_of(&id, &s),
             head_version: head.1,
             download_url: url,
             org_id: org.to_owned(),
@@ -663,6 +652,25 @@ impl SyncApi for FakeClient {
             key_version: s.key_version.clone(),
             data_key: SealKey::from_bytes(s.key),
         })
+    }
+
+    fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
+        self.latest_inner(org, profile)
+    }
+}
+
+fn info_of(id: &str, s: &Snap) -> SnapshotInfo {
+    SnapshotInfo {
+        id: id.to_owned(),
+        version: s.version.unwrap_or(0),
+        digest: s.digest.clone().unwrap_or_default(),
+        ciphertext_size: s.size,
+        plaintext_size: s.plaintext,
+        platform: s.platform.clone(),
+        browser_version: s.browser.clone(),
+        schema_version: 1,
+        device_id: Some(s.device.clone()),
+        committed_at: None,
     }
 }
 
@@ -679,6 +687,17 @@ fn etag(bytes: &[u8]) -> String {
     pb_seal::format::digest_reader(bytes)
         .map(|d| d.0[..32].to_owned())
         .unwrap_or_default()
+}
+
+impl FakeClient {
+    fn latest_inner(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
+        let mut st = self.enter("latest")?;
+        self.profile(&st, org, profile)?;
+        let head = st.profiles.get(profile).and_then(|p| p.2.clone());
+        let info = head.and_then(|id| st.snaps.get(&id).map(|s| info_of(&id, s)));
+        Self::leave(&mut st, "latest")?;
+        Ok(info)
+    }
 }
 
 impl Objects for FakeClient {

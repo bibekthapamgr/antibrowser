@@ -38,6 +38,7 @@ import type {
 } from '@pb/contracts/ipc';
 import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
 import { demoCloud } from './demo-cloud.ts';
+import { demoSync } from './demo-sync.ts';
 import type {
   AppView,
   Backend,
@@ -725,6 +726,8 @@ export function demoBackend(mode = ''): Backend {
     if (!p) throw E.UNKNOWN_PROFILE;
     return p;
   };
+  /** Organization backups (milestone 07); set once the demo server exists. */
+  let syncHooks: { afterCleanClose(id: string): void; restoring(id: string): boolean } | null = null;
   const stopNow = (pid: string, outcome: 'clean' | 'forced') => {
     set(pid, {
       state: 'stopped',
@@ -736,6 +739,7 @@ export function demoBackend(mode = ''): Backend {
       launched_key: null,
       ...(outcome === 'clean' ? { last_clean_shutdown_at: now(), crash_count: 0 } : {}),
     });
+    if (outcome === 'clean') syncHooks?.afterCleanClose(pid);
   };
   const launchOps = new Map<string, Operation>();
 
@@ -1239,22 +1243,53 @@ export function demoBackend(mode = ''): Backend {
     },
   });
 
+  const cloud = demoCloud({
+    mode,
+    emit: (e) => emit('account', e),
+    localProfiles: (workspaceId) =>
+      recs
+        .filter((r) => r.workspace_id === workspaceId && !r.trashed_at && !r.archived_at)
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          client_id: r.client_id,
+          client_name: clients.find((c) => c.id === r.client_id)?.name ?? null,
+          notes: r.notes,
+        })),
+  });
+  const sync = demoSync({
+    mode,
+    cloud: cloud.sync,
+    links: (orgId) => cloud.links(orgId),
+    profile: (pid) => {
+      const r = find(pid);
+      return { id: r.id, name: r.name, state: r.state, workspace_id: r.workspace_id };
+    },
+    create: (name, wsId) => {
+      const r = addProfile(name, null, wsId ?? requireWs());
+      changed();
+      return view(r);
+    },
+    emit: (p) => emit('sync', p),
+    changed: () => changed(),
+  });
+  syncHooks = sync;
+  if (mode.includes('linked')) {
+    const first = recs.find((r) => !r.trashed_at && !r.archived_at);
+    const target = cloud.sync.firstProfile();
+    if (first && target) {
+      cloud.sync.link(first.id, target.orgId, target.profileId);
+      sync.seed(
+        first.id,
+        mode.includes('conflict') ? 0 : cloud.sync.head(target.orgId, target.profileId).version,
+      );
+    }
+  }
+
   const backend = {
     kind: 'demo',
-    account: demoCloud({
-      mode,
-      emit: (e) => emit('account', e),
-      localProfiles: (workspaceId) =>
-        recs
-          .filter((r) => r.workspace_id === workspaceId && !r.trashed_at && !r.archived_at)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            client_id: r.client_id,
-            client_name: clients.find((c) => c.id === r.client_id)?.name ?? null,
-            notes: r.notes,
-          })),
-    }),
+    account: cloud,
+    sync,
     workspaces: {
       async appState(): Promise<AppView> {
         return {
@@ -1532,6 +1567,11 @@ export function demoBackend(mode = ''): Backend {
       async launch(pid: string) {
         const p = find(pid);
         if (p.trashed_at) throw E.PROFILE_IN_TRASH;
+        if (syncHooks?.restoring(pid))
+          throw err(
+            'PROFILE_RESTORING',
+            'This profile is being restored from a backup. It opens when the restore is finished.',
+          );
         if (p.state === 'starting' || p.state === 'running') {
           const existing = launchOps.get(pid);
           if (existing) return { operation_id: existing.operation_id };

@@ -801,3 +801,4 @@ export const OrgKeys = Type.Object(
   { keys: Type.Array(OrgKeyVersion), kms_provider: Type.String() },
   { additionalProperties: false },
 );
+export type OrgKeys = Static<typeof OrgKeys>;

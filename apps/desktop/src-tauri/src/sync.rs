@@ -14,7 +14,7 @@
 //!
 //! The window never sees a data key, a signed URL or a token: it gets [`SyncStatus`] and `sync` events.
 
-use crate::events::EventSink;
+use crate::events::{EventSink, SYNC};
 use crate::ipc::{self, IpcError};
 use crate::lifecycle::BackupJob;
 use crate::state::{APP_VERSION, AppState, ProfileChanges, ProfileView, platform};
@@ -41,8 +41,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
-/// Event: `{ profile_id, job_id, kind, state, phase?, done?, total?, error_code?, portability? }`.
-pub const SYNC: &str = "sync";
 /// Keychain account of this device's local-backup key (32 random bytes, base64).
 pub const DEVICE_KEY_ACCOUNT: &str = "backup-key-v1";
 /// Unfinished jobs are retried this often (and immediately when woken).
@@ -354,6 +352,24 @@ impl SyncApi for CloudSync<'_> {
             key_version: s(&v, "/key/key_version")?,
             data_key: data_key(&v)?,
         })
+    }
+    fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
+        self.latest_inner(org, profile)
+    }
+}
+
+impl CloudSync<'_> {
+    fn latest_inner(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
+        let v = self.state.shell_api(
+            Method::Get,
+            &self.path(org, profile, "/snapshots?limit=1")?,
+            None,
+            None,
+        )?;
+        match v.pointer("/items/0") {
+            Some(item) => Ok(Some(snapshot_info(item)?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -1514,6 +1530,18 @@ impl AppState {
             return Err(ipc::SYNC_ALREADY_HERE);
         }
         let ws = self.active_workspace(&store)?.ok_or(ipc::NO_WORKSPACE)?;
+        // Fail before anything is created when there is nothing to restore (or no access).
+        match self.with_backend(|api, _| api.latest(org_id, org_profile_id)) {
+            Ok(Ok(Some(_))) => {}
+            Ok(Ok(None)) => return Err(ipc::SYNC_NO_BACKUP),
+            Ok(Err(ApiError::Offline)) => return Err(ipc::CLOUD_OFFLINE),
+            Ok(Err(ApiError::SignedOut)) | Err(SyncError::Api(ApiError::SignedOut)) => {
+                return Err(ipc::CLOUD_SIGNED_OUT);
+            }
+            Ok(Err(e)) if e.is_code("NOT_FOUND") => return Err(ipc::SYNC_NO_BACKUP),
+            Ok(Err(e)) if e.is_code("FORBIDDEN") => return Err(ipc::SYNC_FORBIDDEN),
+            _ => return Err(ipc::CLOUD_UNAVAILABLE),
+        }
         let id = ProfileId::generate().map_err(|_| ipc::INTERNAL)?;
         let p = store.insert_profile(pb_storage::NewProfile::basic(id, Some(ws), &name, None))?;
         let _ = store.audit(Some(&p.id), "create", "restore_here", None, None);

@@ -12,6 +12,9 @@
  * - milestone 06: account (server, sign-in in the system browser, devices), organizations (switcher, profiles,
  *   clients, members, invitations, access, activity), re-authentication before an ownership transfer, offline
  *   information marked as such, copying a local workspace after a preview
+ * - milestone 07: encrypted backups of linked profiles (progress, version history, restore), conflicts with three
+ *   choices that never overwrite, putting an organization profile on this computer, the organization's retention,
+ *   trash and key rotation with re-authentication
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -163,6 +166,33 @@ async function openOrg(page: Page, section?: string) {
 }
 
 const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) => Promise<void> }[] = [
+  {
+    name: 'profile-backups',
+    demo: 'signedin linked',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await p.waitForFunction(() =>
+        document.querySelector('.drawer')?.textContent?.includes('Organization backup: version 1'),
+      );
+    },
+  },
+  {
+    name: 'profile-backup-conflict',
+    demo: 'signedin linked conflict',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Upload backup now');
+      await p.waitForSelector('.drawer [role=alert]', { timeout: 10_000 });
+    },
+  },
+  {
+    name: 'organization-backups',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Backups');
+      await p.waitForSelector('#org-keys-title');
+    },
+  },
   { name: 'welcome', demo: 'fresh' },
   { name: 'profiles-empty', demo: 'rows:0' },
   { name: 'profiles', demo: '' },
@@ -926,6 +956,111 @@ describe('account and organizations (milestone 06)', () => {
     );
     await page.waitForSelector('[role=grid]');
     expect(await page.$eval('[role=grid]', (g) => g.getAttribute('aria-rowcount'))).toBe(before);
+    await page.close();
+  });
+});
+
+describe('encrypted backups (milestone 07)', () => {
+  const drawerHas = (page: Page, needle: string, timeout = 10_000) =>
+    page.waitForFunction(
+      (t) => document.querySelector('.drawer')?.textContent?.includes(t),
+      { timeout },
+      needle,
+    );
+
+  it('backs up a linked profile with progress, then lists and restores versions', async () => {
+    const page = await open('signedin linked');
+    await clickRow(page, 'Shop admin');
+    await drawerHas(page, 'Organization backup: version 1');
+    await clickButton(page, '.drawer', 'Upload backup now');
+    await page.waitForSelector('.drawer progress[aria-label="Backup progress"]');
+    await drawerHas(page, 'Organization backup: version 2');
+    await clickButton(page, '.drawer', 'Version history…');
+    await page.waitForFunction(() => document.querySelectorAll('[role=dialog] tbody tr').length === 2);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await clickButton(page, '[role=dialog]', 'Restore as copy of version 1');
+    await toastContains(page, 'separate copy');
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('.trow__name')].some((n) => n.textContent?.includes('(restored copy)')),
+      { timeout: 10_000 },
+    );
+    await page.close();
+  });
+
+  it('a newer backup from another computer is a conflict with three choices, never an overwrite', async () => {
+    const page = await open('signedin linked conflict');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Upload backup now');
+    await page.waitForSelector('.drawer [role=alert]', { timeout: 10_000 });
+    await drawerHas(page, 'Nothing was overwritten');
+    for (const label of [
+      'Keep mine as the newest',
+      'Replace mine with the newer one',
+      'Open the newer one as a copy',
+    ]) {
+      await page.waitForFunction(
+        (l) => [...document.querySelectorAll('.drawer [role=alert] button')].some((b) => b.textContent === l),
+        {},
+        label,
+      );
+    }
+    // Backing up again is refused until the user chooses.
+    const disabled = await page.$$eval('.drawer button', (bs) =>
+      bs.filter((b) => b.textContent === 'Upload backup now').map((b) => (b as HTMLButtonElement).disabled),
+    );
+    expect(disabled).toEqual([true]);
+    await clickButton(page, '.drawer', 'Keep mine as the newest');
+    await drawerHas(page, 'Organization backup: version 2');
+    expect(await page.$('.drawer [role=alert]')).toBeNull();
+    await page.close();
+  });
+
+  it('puts an organization profile on this computer and says sign-ins do not carry over', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Profiles');
+    await clickButton(page, '#main', 'Put on this computer North shop admin');
+    await toastContains(page, 'Restoring North shop admin');
+    await page.waitForFunction(
+      () => document.querySelector('table.records')?.textContent?.includes('On this computer'),
+      { timeout: 10_000 },
+    );
+    // A profile without any backup cannot be put here.
+    await clickButton(page, '#main', 'Put on this computer North ads');
+    await toastContains(page, 'has no backup yet');
+    await page.select(
+      '.workspace select',
+      await page.$eval('.workspace option', (o) => (o as HTMLOptionElement).value),
+    );
+    await page.waitForSelector('[role=grid]');
+    await clickRow(page, 'North shop admin');
+    await drawerHas(page, 'sign in to websites again');
+    await page.close();
+  });
+
+  it('owners set retention, restore from the trash and rotate the key after confirming it is them', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Profiles');
+    await clickButton(page, '#main', 'Delete South support desk');
+    await clickButton(page, '[role=alertdialog]', 'Delete profile');
+    await toastContains(page, 'Deleted South support desk');
+    await clickButton(page, '.org-nav', 'Backups');
+    await page.waitForSelector('#org-keys-title');
+    const retention = await page.waitForSelector('#main input[type=number]');
+    await retention?.click({ count: 3 });
+    await retention?.type('14');
+    await clickButton(page, '#main', 'Save retention');
+    await toastContains(page, 'Backup policy saved');
+    await clickButton(page, '#main', 'Restore South support desk');
+    await toastContains(page, 'Restored South support desk from the trash');
+    await clickButton(page, '#main', 'Rotate key…');
+    await clickButton(page, '[role=alertdialog]', 'Rotate key');
+    await clickButton(page, '[role=alertdialog]', "Confirm it's me");
+    await toastContains(page, 'The organization key was rotated');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('#main table.records tbody th')].some((t) => t.textContent === '2'),
+    );
     await page.close();
   });
 });

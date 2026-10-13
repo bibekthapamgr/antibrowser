@@ -10,6 +10,7 @@ import type {
   ProfileView,
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
+import { BackupSection } from './backups.tsx';
 import { Dialog } from './components.tsx';
 import { NetworkCell, NetworkSection, PrivacySection } from './network.tsx';
 import { nameKey, secretHint } from './notes.ts';
@@ -274,16 +275,12 @@ export function ProfileDrawer(props: {
           {p.proxy_label ? <NetworkCell p={p} /> : 'None'}
           {p.proxy_label && !p.fail_closed && <span className="muted small"> (fail-closed off)</span>}
         </dd>
-        <dt>Sync</dt>
-        <dd>Local only (this device)</dd>
         <dt>Browser</dt>
         <dd>{p.runtime_version ?? 'Not opened yet'}</dd>
         <dt>Last opened</dt>
         <dd>{when(p.last_started_at)}</dd>
         <dt>Last closed normally</dt>
         <dd>{when(p.last_clean_shutdown_at)}</dd>
-        <dt>Backup</dt>
-        <dd>{backup ? new Date(backup.created_at_unix * 1000).toLocaleString() : 'None yet'}</dd>
         {template && (
           <>
             <dt>Template</dt>
@@ -352,6 +349,10 @@ export function ProfileDrawer(props: {
             repeated.
           </p>
         </fieldset>
+      )}
+
+      {!trashed && (
+        <BackupSection backend={backend} profile={p} refreshKey={props.refreshKey} notify={notify} />
       )}
 
       <form className="stack" onSubmit={save} aria-label="Edit profile">
