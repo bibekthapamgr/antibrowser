@@ -85,6 +85,7 @@ interface VerifyRow {
   fencing_token: string;
   sealed_key_version: string;
   schema_version: number;
+  purpose: 'snapshot' | 'recovery';
 }
 
 export interface SyncWorkResult {
@@ -121,7 +122,7 @@ async function loadOperation(c: pg.PoolClient, opId: string, lock = false): Prom
   const { rows } = await c.query<VerifyRow>(
     `select o.id, o.state, o.base_version, o.attempts, o.user_id, o.device_id, o.profile_id, s.id as snapshot_id,
             s.object_key, s.sha256, s.size_bytes::float8 as size_bytes, s.fencing_token::text as fencing_token,
-            s.sealed_key_version, s.schema_version
+            s.sealed_key_version, s.schema_version, s.purpose
        from sync_operations o join snapshot_manifests s on s.id = o.snapshot_id
       where o.id = $1 ${lock ? 'for update of o' : ''}`,
     [opId],
@@ -221,6 +222,7 @@ async function verifyOne(d: JobDeps, opId: string, orgId: string): Promise<'comm
       await failOperation(c, orgId, current, failure);
       return 'failed';
     }
+    if (current.purpose === 'recovery') return keepRecovery(c, orgId, current);
     const lease = await c.query<{ fencing_token: string }>(
       'select fencing_token::text as fencing_token from profile_leases where org_id = $1 and profile_id = $2',
       [orgId, current.profile_id],
@@ -231,7 +233,8 @@ async function verifyOne(d: JobDeps, opId: string, orgId: string): Promise<'comm
     }
     const usage = await c.query<{ used: number; quota: number | null }>(
       `select coalesce((select sum(size_bytes) from snapshot_manifests
-                         where org_id = $1 and status in ('committed', 'deleted') and object_deleted_at is null), 0)::float8
+                         where org_id = $1 and status in ('committed', 'deleted', 'recovery')
+                           and object_deleted_at is null), 0)::float8
                 as used,
               app.org_backup_quota($1)::float8 as quota`,
       [orgId],
@@ -279,6 +282,60 @@ async function verifyOne(d: JobDeps, opId: string, orgId: string): Promise<'comm
     });
     return 'committed';
   });
+}
+
+/**
+ * Milestone 08: an upload from a device that lost its session lease is kept as a recovery copy once verified (the
+ * same size, header and SHA-256 checks): never the head, no version, restorable as a copy by admins.
+ */
+async function keepRecovery(
+  c: pg.PoolClient,
+  orgId: string,
+  current: VerifyRow,
+): Promise<'committed' | 'failed'> {
+  const usage = await c.query<{ used: number; quota: number | null }>(
+    `select coalesce((select sum(size_bytes) from snapshot_manifests
+                       where org_id = $1 and status in ('committed', 'deleted', 'recovery')
+                         and object_deleted_at is null), 0)::float8 as used,
+            app.org_backup_quota($1)::float8 as quota`,
+    [orgId],
+  );
+  const u = usage.rows[0];
+  if (!u || u.quota === null || u.used + (current.size_bytes ?? 0) > u.quota) {
+    await failOperation(c, orgId, current, 'QUOTA_EXCEEDED');
+    return 'failed';
+  }
+  await c.query(
+    `update snapshot_manifests set status = 'recovery', committed_at = now(), error_code = null where id = $1`,
+    [current.snapshot_id],
+  );
+  await c.query(
+    `update sync_operations set state = 'kept', error_code = null, locked_until = null, updated_at = now()
+      where id = $1`,
+    [current.id],
+  );
+  await appendEvent(c, {
+    orgId,
+    actorId: current.user_id,
+    aggregateId: current.snapshot_id,
+    aggregateVersion: 1,
+    eventType: 'snapshot.recovery_kept',
+    payload: { profile_id: current.profile_id, ciphertext_size: current.size_bytes },
+  });
+  await audit(c, {
+    ...systemAudit(orgId, 'snapshot.recovery_kept', 'snapshot', current.snapshot_id, {
+      profile_id: current.profile_id,
+    }),
+    actorUserId: current.user_id,
+    actorDeviceId: current.device_id,
+  });
+  return 'committed';
+}
+
+/** Recovery copies past the organization's trash period are marked deleted (then erased like any snapshot). */
+export async function expireRecoveryCopies(d: JobDeps, limit = 500): Promise<number> {
+  const { rows } = await d.pool.query<{ n: number }>('select app.expire_recovery_copies($1) as n', [limit]);
+  return rows[0]?.n ?? 0;
 }
 
 async function expireOne(d: JobDeps, opId: string, orgId: string): Promise<void> {
@@ -353,9 +410,11 @@ export async function purgeTrash(d: JobDeps, limit = 20): Promise<number> {
         [r.org_id, r.profile_id],
       );
       await c.query(
-        `update snapshot_manifests set status = case when status in ('committed', 'deleted') then 'deleted' else 'canceled' end,
+        `update snapshot_manifests
+            set status = case when status in ('committed', 'deleted', 'recovery') then 'deleted' else 'canceled' end,
                 deleted_at = coalesce(deleted_at, now()), purge_after = now()
-          where org_id = $1 and profile_id = $2 and status in ('pending', 'verifying', 'committed', 'deleted')`,
+          where org_id = $1 and profile_id = $2
+            and status in ('pending', 'verifying', 'committed', 'deleted', 'recovery')`,
         [r.org_id, r.profile_id],
       );
       const res = await c.query<{ object_key: string; upload_id: string | null }>(

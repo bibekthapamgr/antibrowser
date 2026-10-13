@@ -23,6 +23,7 @@ import { audit, changeEntry } from '../audit.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
+import { endLeasesOutOfReach } from '../sessions.ts';
 import { requirePermission, requireRecentAuth, resolveTenant, type TenantAccess } from '../tenancy.ts';
 import {
   errors,
@@ -225,6 +226,21 @@ export function organizationRoutes(app: App, deps: Deps): void {
             where org_id = $1 and user_id = $2`,
           [access.orgId, req.params.userId, req.body.role],
         );
+        // Milestone 08: viewers' grants carry no capabilities; a viewer who becomes an operator gets the defaults.
+        if (req.body.role === 'viewer') {
+          await c.query(
+            `update permission_grants set capabilities = '{}', updated_at = now() where org_id = $1 and user_id = $2`,
+            [access.orgId, req.params.userId],
+          );
+        } else if (req.body.role === 'operator' && target.role === 'viewer') {
+          await c.query(
+            `update permission_grants set capabilities = '{launch,backup_download}', updated_at = now()
+              where org_id = $1 and user_id = $2 and capabilities = '{}'`,
+            [access.orgId, req.params.userId],
+          );
+        }
+        // Someone who may no longer open a profile they have open: their session ends (fenced out).
+        await endLeasesOutOfReach(c, access, req.params.userId, 'role_changed');
         const row = await memberRow(c, access.orgId, req.params.userId);
         await audit(
           c,
@@ -273,6 +289,13 @@ export function organizationRoutes(app: App, deps: Deps): void {
           access.orgId,
           req.params.userId,
         ]);
+        // Their open sessions end with the membership (their app closes them at its next heartbeat).
+        await endLeasesOutOfReach(
+          c,
+          access,
+          req.params.userId,
+          leaving ? 'left_organization' : 'member_removed',
+        );
         await audit(
           c,
           changeEntry(access, leaving ? 'membership.left' : 'membership.removed', 'user', req.params.userId, {

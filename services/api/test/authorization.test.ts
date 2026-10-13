@@ -6,8 +6,17 @@
  *  - inside the scope, a role without the permission answers 403 (and the denial is audited);
  *  - otherwise the operation proceeds (writes use a stale version where possible, so they answer 409 without changing
  *    anything).
+ * Milestone 08: members who reach profiles through grants also need the grant's capability (launch, edit,
+ * backup_download); the fixture operator's grant has the defaults (launch, backup_download), the viewer's none.
  */
-import { type Permission, ROLE_SCOPE, type Role, roleAllows } from '@pb/contracts';
+import {
+  type GrantCapability,
+  PERMISSION_CAPABILITY,
+  type Permission,
+  ROLE_SCOPE,
+  type Role,
+  roleAllows,
+} from '@pb/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FIXTURES } from '../src/fixtures.ts';
 import { type Harness, harness, idemKey } from './helpers.ts';
@@ -188,10 +197,10 @@ const OPS: Op[] = [
     }),
   },
   {
-    name: 'export profiles',
+    name: 'export profiles (no recent sign-in)',
     permission: 'profile.export',
     scoped: false,
-    ok: 200,
+    ok: 401,
     request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/profiles/export` }),
   },
   {
@@ -281,6 +290,54 @@ const OPS: Op[] = [
     ok: 200,
     request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/trash` }),
   },
+  // Milestone 08: sessions and handoff.
+  {
+    name: 'see who has a granted profile open',
+    permission: 'profile.read',
+    scoped: true,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/profiles/${shop}/leases/current` }),
+  },
+  {
+    name: 'ask for a granted profile nobody has open',
+    permission: 'profile.launch',
+    scoped: true,
+    ok: 409,
+    request: () => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/profiles/${shop}/handoff-requests`,
+      payload: { note: 'please' },
+    }),
+  },
+  {
+    name: 'force a takeover of a granted profile nobody has open',
+    permission: 'lease.force_release',
+    scoped: true,
+    ok: 409,
+    request: () => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/profiles/${shop}/force-takeover`,
+      payload: { reason: 'matrix', confirm: true },
+    }),
+  },
+  {
+    name: 'list recovery copies',
+    permission: 'backups.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/recovery-copies` }),
+  },
+  {
+    name: 'change a grant’s capabilities (no such grant)',
+    permission: 'grants.manage',
+    scoped: false,
+    ok: 404,
+    request: () => ({
+      method: 'PATCH',
+      url: `/v1/orgs/${acme.id}/grants/grt_01J9ZSEED0ZZZZ000000000000`,
+      payload: { capabilities: [] },
+    }),
+  },
   {
     name: 'read the audit log',
     permission: 'audit.read',
@@ -313,9 +370,20 @@ afterAll(async () => {
   await h.close();
 });
 
+/** Capabilities of the fixture grants covering the shop profile (defaults from the milestone 08 migration). */
+const FIXTURE_CAPABILITIES: Partial<Record<Role, GrantCapability[]>> = {
+  operator: ['launch', 'backup_download'],
+  viewer: [],
+};
+
 const expected = (role: Role, op: Op): number => {
   if (op.scoped && ROLE_SCOPE[role] === 'none') return 404;
-  return roleAllows(role, op.permission) ? op.ok : 403;
+  if (!roleAllows(role, op.permission)) return 403;
+  const capability = PERMISSION_CAPABILITY[op.permission];
+  if (op.scoped && ROLE_SCOPE[role] === 'granted' && capability) {
+    return FIXTURE_CAPABILITIES[role]?.includes(capability) ? op.ok : 403;
+  }
+  return op.ok;
 };
 
 describe.each(Object.keys(MEMBERS) as Role[])('%s', (role) => {

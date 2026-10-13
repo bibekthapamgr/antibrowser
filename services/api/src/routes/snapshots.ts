@@ -41,7 +41,7 @@ import { normalizeEtag } from '../backup/objects.ts';
 import { ts, withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey } from '../idempotency.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
-import { profileFor, resolveTenant, type TenantAccess } from '../tenancy.ts';
+import { profileFor, requirePermission, resolveTenant, type TenantAccess } from '../tenancy.ts';
 import { errors, ProfileParams, pageOf, pageWindow, SnapshotParams } from './common.ts';
 
 /** Upload parts: 16 MiB each (S3 needs at least 5 MiB for every part but the last). */
@@ -86,6 +86,7 @@ interface OpRow {
   key_version_id: string;
   wrapped_dek: Buffer;
   sha256: string | null;
+  purpose: 'snapshot' | 'recovery';
 }
 
 function backupOf(deps: Deps) {
@@ -125,7 +126,7 @@ async function operationRow(c: pg.PoolClient, access: TenantAccess, snapshotId: 
   const { rows } = await c.query<OpRow>(
     `select o.id, o.profile_id, o.snapshot_id, o.state, o.base_version, o.user_id, o.device_id, o.request_digest,
             s.object_key, s.upload_id, s.fencing_token::text as fencing_token, s.sealed_key_version,
-            s.key_version_id, s.wrapped_dek, s.sha256
+            s.key_version_id, s.wrapped_dek, s.sha256, s.purpose
        from sync_operations o join snapshot_manifests s on s.id = o.snapshot_id
       where o.org_id = $1 and o.snapshot_id = $2 ${lock ? 'for update of o' : ''}`,
     [access.orgId, snapshotId],
@@ -232,15 +233,36 @@ export function snapshotRoutes(app: App, deps: Deps): void {
           }
         }
 
-        await requireLease(c, access, profileId, req.body.fencing_token);
-        if (profile.snapshot_version !== req.body.base_version) {
-          throw new ApiError('VERSION_CONFLICT', 'A newer snapshot was committed from another device', {
-            head_version: profile.snapshot_version,
-          });
+        const recovery = req.body.recovery === true;
+        let recoveryLease: string | null = null;
+        if (recovery) {
+          // A device that lost its session lease (taken over, revoked) may keep what it had as a recovery copy: it
+          // must have held that lease (this person, this device), and the lease must be over.
+          const held = await c.query<{ id: string; current: boolean }>(
+            `select h.id, coalesce((select l.fencing_token = h.fencing_token and l.state = 'active'
+                                      from profile_leases l where l.profile_id = h.profile_id), false) as current
+               from lease_history h
+              where h.org_id = $1 and h.profile_id = $2 and h.fencing_token = $3::bigint and h.purpose = 'session'
+                and h.holder_user_id = $4 and ($5::text is null or h.holder_device_id = $5)`,
+            [access.orgId, profileId, req.body.fencing_token, access.userId, principal.deviceId],
+          );
+          const h = held.rows[0];
+          if (!h) throw new ApiError('LEASE_NOT_HELD', 'This device never held that lease');
+          if (h.current) {
+            throw new ApiError('VALIDATION_FAILED', 'The lease is still yours: upload a normal snapshot');
+          }
+          recoveryLease = h.id;
+        } else {
+          await requireLease(c, access, profileId, req.body.fencing_token);
+          if (profile.snapshot_version !== req.body.base_version) {
+            throw new ApiError('VERSION_CONFLICT', 'A newer snapshot was committed from another device', {
+              head_version: profile.snapshot_version,
+            });
+          }
         }
         const policy = await c.query<{ used: number; quota: number }>(
           `select coalesce((select sum(size_bytes) from snapshot_manifests
-                             where org_id = $1 and status in ('committed', 'deleted')
+                             where org_id = $1 and status in ('committed', 'deleted', 'recovery')
                                and object_deleted_at is null), 0)::float8 as used,
                   backup_quota_bytes::float8 as quota
              from organizations where id = $1`,
@@ -272,8 +294,9 @@ export function snapshotRoutes(app: App, deps: Deps): void {
           await c.query(
             `insert into snapshot_manifests (id, org_id, profile_id, fencing_token, object_key, platform,
                browser_revision, encryption_scheme, key_id, created_by, status, base_version, schema_version,
-               key_version_id, sealed_key_version, wrapped_dek, upload_id, part_size, device_id)
-             values ($1, $2, $3, $4::bigint, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $9, $9, $13, $14, $15, $16)`,
+               key_version_id, sealed_key_version, wrapped_dek, upload_id, part_size, device_id, purpose, lease_id)
+             values ($1, $2, $3, $4::bigint, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $9, $9, $13, $14, $15, $16,
+                     $17, $18)`,
             [
               snapshotId,
               access.orgId,
@@ -291,6 +314,8 @@ export function snapshotRoutes(app: App, deps: Deps): void {
               uploadId,
               PART_SIZE,
               principal.deviceId,
+              recovery ? 'recovery' : 'snapshot',
+              recoveryLease,
             ],
           );
           await c.query(
@@ -315,6 +340,7 @@ export function snapshotRoutes(app: App, deps: Deps): void {
             changeEntry(access, 'snapshot.upload_started', 'snapshot', snapshotId, {
               profile_id: profileId,
               base_version: req.body.base_version,
+              ...(recovery ? { recovery: true, lease_id: recoveryLease } : {}),
             }),
           );
           const op = await ownOperation(c, access, profileId, snapshotId);
@@ -368,7 +394,7 @@ export function snapshotRoutes(app: App, deps: Deps): void {
             state: o.state,
           });
         }
-        await requireLease(c, access, req.params.profileId, o.fencing_token);
+        if (o.purpose !== 'recovery') await requireLease(c, access, req.params.profileId, o.fencing_token);
         return o;
       });
       const expires = new Date(Date.now() + URL_TTL_SECONDS * 1000).toISOString();
@@ -443,8 +469,9 @@ export function snapshotRoutes(app: App, deps: Deps): void {
         if (body.fencing_token !== op.fencing_token) {
           throw new ApiError('FENCING_TOKEN_STALE', 'The upload was started under another lease');
         }
-        await requireLease(c, access, req.params.profileId, op.fencing_token);
-        if (profile.snapshot_version !== op.base_version) {
+        // A recovery copy never becomes the head: no lease and no version check (milestone 08).
+        if (op.purpose !== 'recovery') await requireLease(c, access, req.params.profileId, op.fencing_token);
+        if (op.purpose !== 'recovery' && profile.snapshot_version !== op.base_version) {
           await c.query(
             `update sync_operations set state = 'failed', error_code = 'VERSION_CONFLICT', updated_at = now()
               where id = $1`,
@@ -660,10 +687,12 @@ export function snapshotRoutes(app: App, deps: Deps): void {
           [access.orgId, req.params.profileId, snapshotId],
         );
         const row = rows[0];
-        if (!row || !['committed', 'deleted'].includes(row.status)) {
+        if (!row || !['committed', 'deleted', 'recovery'].includes(row.status)) {
           throw new ApiError('NOT_FOUND', 'Snapshot not found');
         }
-        if (row.status !== 'committed') {
+        // Recovery copies (milestone 08) are restored only by owners and admins, as a separate copy.
+        if (row.status === 'recovery') requirePermission(access, 'backups.manage');
+        else if (row.status !== 'committed') {
           throw new ApiError('SNAPSHOT_UNAVAILABLE', 'This snapshot was removed by the retention policy');
         }
         const orgKey = await orgKeyById(c, backup.kms, access.orgId, row.key_version_id);

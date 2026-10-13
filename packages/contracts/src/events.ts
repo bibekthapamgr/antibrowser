@@ -31,6 +31,14 @@ export const EVENT_TYPES = [
   'snapshot.commit_failed',
   'snapshot.expired',
   'org_key.rotated',
+  // Milestone 08
+  'lease.taken_over',
+  'lease.revoked',
+  'session.state_changed',
+  'handoff.requested',
+  'handoff.answered',
+  'grant.updated',
+  'snapshot.recovery_kept',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

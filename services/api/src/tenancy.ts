@@ -11,6 +11,7 @@
 import {
   ApiError,
   isId,
+  PERMISSION_CAPABILITY,
   type Permission,
   type ResourceScope,
   ROLE_SCOPE,
@@ -117,7 +118,9 @@ export function clientVisible(access: TenantAccess, c: string, userParam: string
 
 /**
  * Loads one profile for an operation: NOT_FOUND unless it exists in this organization, is not deleted and is inside
- * the member's scope; then FORBIDDEN unless the role allows `permission`.
+ * the member's scope; then FORBIDDEN unless the role allows `permission` and, for members who reach profiles through
+ * grants, a grant covering this profile carries the capability the permission needs (milestone 08: launch, edit,
+ * backup_download).
  */
 export async function profileFor<T extends Record<string, unknown>>(
   c: pg.PoolClient,
@@ -136,7 +139,32 @@ export async function profileFor<T extends Record<string, unknown>>(
   const row = rows[0];
   if (!row) throw new ApiError('NOT_FOUND', 'Profile not found');
   requirePermission(access, permission);
+  await requireCapability(c, access, profileId, permission);
   return row;
+}
+
+/** For granted-scope members: a grant covering the profile must carry the capability `permission` needs. */
+export async function requireCapability(
+  c: pg.PoolClient,
+  access: TenantAccess,
+  profileId: string,
+  permission: Permission,
+): Promise<void> {
+  const capability = PERMISSION_CAPABILITY[permission];
+  if (access.scope !== 'granted' || !capability) return;
+  const { rowCount } = await c.query(
+    `select 1 from permission_grants g join profiles p on p.org_id = g.org_id and p.id = $3
+      where g.org_id = $1 and g.user_id = $2
+        and (g.profile_id = p.id or (g.client_id is not null and g.client_id = p.client_id))
+        and $4 = any(g.capabilities)`,
+    [access.orgId, access.userId, profileId, capability],
+  );
+  if (!rowCount) {
+    throw new ApiError('FORBIDDEN', 'Your access to this profile does not include this action', {
+      permission,
+      capability,
+    });
+  }
 }
 
 /** Same as profileFor for clients. */

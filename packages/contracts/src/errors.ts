@@ -33,6 +33,17 @@ export const ERROR_CODES = {
   SYNC_STATE_CONFLICT: { status: 409, retryable: false },
   SNAPSHOT_UNAVAILABLE: { status: 410, retryable: false },
   STORAGE_UNAVAILABLE: { status: 503, retryable: true },
+  // Milestone 08
+  /** The last session ended without closing (expired, not released): its browser may still be open. */
+  LEASE_UNCERTAIN: { status: 409, retryable: false },
+  /** The profile is not open anywhere (a handoff request has nobody to ask). */
+  PROFILE_NOT_IN_USE: { status: 409, retryable: false },
+  /** The device's browser is older than the profile's newest backup, or its platform is not supported. */
+  RUNTIME_TOO_OLD: { status: 409, retryable: false },
+  /** The organization's plan does not include this feature (milestone 11 sets plans). */
+  ENTITLEMENT_REQUIRED: { status: 403, retryable: false },
+  /** A note that looks like a password, key, token or card number. Notes are not a place for secrets. */
+  NOTE_LOOKS_SECRET: { status: 422, retryable: false },
   INTERNAL: { status: 500, retryable: true },
   UNAVAILABLE: { status: 503, retryable: true },
 } as const;

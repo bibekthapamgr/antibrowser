@@ -3,6 +3,8 @@
  * Refused outside APP_ENV=dev|test. Runs as the schema owner (row-level security is not forced for the owner) because
  * it writes across tenants.
  */
+
+import { defaultCapabilities } from '@pb/contracts';
 import pg from 'pg';
 import { DEV_ISSUER, FIXTURES } from '../src/fixtures.ts';
 import { nameKey } from '../src/names.ts';
@@ -91,8 +93,8 @@ export async function seedWith(client: pg.ClientBase): Promise<void> {
   }
   for (const g of Object.values(FIXTURES.grants)) {
     await client.query(
-      `insert into permission_grants (id, org_id, user_id, client_id, profile_id, created_by)
-         values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
+      `insert into permission_grants (id, org_id, user_id, client_id, profile_id, created_by, capabilities)
+         values ($1, $2, $3, $4, $5, $6, $7) on conflict do nothing`,
       [
         g.id,
         FIXTURES.orgs[g.org].id,
@@ -100,6 +102,7 @@ export async function seedWith(client: pg.ClientBase): Promise<void> {
         g.client ? clientId(g.client) : null,
         g.profile ? FIXTURES.profiles[g.profile].id : null,
         ownerOf(g.org).id,
+        defaultCapabilities(FIXTURES.users[g.user].role),
       ],
     );
   }

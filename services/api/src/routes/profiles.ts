@@ -16,19 +16,22 @@ import {
   ProfileExport,
   ProfileUpdate,
   roleAllows,
+  secretHint,
 } from '@pb/contracts';
 import type pg from 'pg';
 import Type from 'typebox';
-import type { App, Deps } from '../app.ts';
+import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
 import { withTx } from '../db.ts';
 import { likePattern } from '../names.ts';
 import { appendEvent } from '../outbox.ts';
+import { capabilitiesSql, inUseJson } from '../sessions.ts';
 import {
   clientFor,
   profileFor,
   profileVisible,
   requirePermission,
+  requireRecentAuth,
   resolveTenant,
   type TenantAccess,
 } from '../tenancy.ts';
@@ -59,6 +62,14 @@ const ExportQuery = Type.Object(
   { additionalProperties: false },
 );
 const MAX_EXPORT = 10_000;
+/** The configuration export needs a sign-in this recent (milestone 08: sensitive export). */
+export const EXPORT_REAUTH_SECONDS = 600;
+
+/** Organization notes are not a place for secrets (same rule as the window, milestone 08). */
+function checkNotes(notes: string | undefined): void {
+  const hint = notes ? secretHint(notes) : null;
+  if (hint) throw new ApiError('NOTE_LOOKS_SECRET', hint, { field: 'notes' });
+}
 
 export function profileRoutes(app: App, deps: Deps): void {
   app.get(
@@ -78,7 +89,9 @@ export function profileRoutes(app: App, deps: Deps): void {
       const window = pageWindow(req.query);
       const rows = await withTx(deps.pool, access, async (c) => {
         const result = await c.query<ProfileRow>(
-          `select ${PROFILE_COLUMNS} from profiles p
+          `select ${PROFILE_COLUMNS}, ${inUseJson('p', '$5')} as in_use,
+                  ${capabilitiesSql(access, 'p', '$5')} as capabilities
+             from profiles p
             where p.org_id = $1 and p.deleted_at is null and ${profileVisible(access, 'p', '$5')}
               and ($6::text is null or p.name ilike $6)
               and ($7::text is null or p.client_id = $7)
@@ -114,6 +127,7 @@ export function profileRoutes(app: App, deps: Deps): void {
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'profile.create');
+      checkNotes(req.body.notes);
       const id = newId('profile');
       const profile = await withTx(deps.pool, access, async (c) => {
         const clientId = req.body.client_id ?? null;
@@ -147,7 +161,7 @@ export function profileRoutes(app: App, deps: Deps): void {
         tags: ['profiles'],
         description:
           `Configuration export (names, client, notes) of up to ${MAX_EXPORT} profiles. No browser data or session ` +
-          'material. Owners and admins only.',
+          `material. Owners and admins only, after a sign-in within ${EXPORT_REAUTH_SECONDS / 60} minutes.`,
         params: OrgParams,
         querystring: ExportQuery,
         response: { 200: ProfileExport, ...errors },
@@ -156,6 +170,7 @@ export function profileRoutes(app: App, deps: Deps): void {
     async (req) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'profile.export');
+      requireRecentAuth(principalOf(req), EXPORT_REAUTH_SECONDS);
       const profiles = await withTx(deps.pool, access, async (c) => {
         const { rows } = await c.query<{ id: string; name: string; client: string | null; notes: string }>(
           `select p.id, p.name, cl.name as client, p.notes from profiles p
@@ -217,7 +232,8 @@ export function profileRoutes(app: App, deps: Deps): void {
         const found = new Map(visible.rows.map((r) => [r.id, r]));
         const outcome = new Map<string, 'changed' | 'unchanged' | 'not_found' | 'forbidden' | 'in_use'>();
         for (const id of body.profile_ids) outcome.set(id, found.has(id) ? 'forbidden' : 'not_found');
-        if (!roleAllows(access.role, permission)) {
+        // Bulk changes are for owners and admins (operators edit one granted profile at a time).
+        if (!roleAllows(access.role, permission) || access.scope !== 'organization') {
           return { results: body.profile_ids.map((id) => ({ id, outcome: outcome.get(id) ?? 'not_found' })) };
         }
 
@@ -234,7 +250,8 @@ export function profileRoutes(app: App, deps: Deps): void {
         } else {
           const leased = await c.query<{ profile_id: string }>(
             `select profile_id from profile_leases
-              where org_id = $1 and profile_id = any($2::text[]) and released_at is null and expires_at > now()`,
+              where org_id = $1 and profile_id = any($2::text[]) and state = 'active'
+                and (expires_at > now() or purpose = 'session')`,
             [access.orgId, [...found.keys()]],
           );
           const inUse = new Set(leased.rows.map((r) => r.profile_id));
@@ -275,7 +292,13 @@ export function profileRoutes(app: App, deps: Deps): void {
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       const profile = await withTx(deps.pool, access, (c) =>
-        profileFor<ProfileRow>(c, access, req.params.profileId, 'profile.read', PROFILE_COLUMNS),
+        profileFor<ProfileRow>(
+          c,
+          access,
+          req.params.profileId,
+          'profile.read',
+          `${PROFILE_COLUMNS}, ${inUseJson('p', '$3')} as in_use, ${capabilitiesSql(access, 'p', '$3')} as capabilities`,
+        ),
       );
       return reply.header('etag', `"${profile.version}"`).send(profile);
     },
@@ -297,6 +320,13 @@ export function profileRoutes(app: App, deps: Deps): void {
       const { expected_version: bodyVersion, ...changes } = req.body;
       const expected = expectedVersion(req.headers['if-match'], bodyVersion);
       if (Object.keys(changes).length === 0) throw new ApiError('VALIDATION_FAILED', 'No fields to update');
+      checkNotes(changes.notes);
+      // Moving a profile to another client changes who can reach it: owners and admins only.
+      if ('client_id' in changes && access.scope !== 'organization') {
+        throw new ApiError('FORBIDDEN', 'Only owners and admins move profiles between clients', {
+          permission: 'clients.manage',
+        });
+      }
 
       const profile = await withTx(deps.pool, access, async (c) => {
         const current = await profileFor<{ version: number }>(
@@ -374,7 +404,8 @@ export function profileRoutes(app: App, deps: Deps): void {
         if (current.version !== expected) throw versionConflict(current.version);
         const leased = await c.query(
           `select 1 from profile_leases
-            where profile_id = $1 and org_id = $2 and released_at is null and expires_at > now()`,
+            where profile_id = $1 and org_id = $2 and state = 'active'
+              and (expires_at > now() or purpose = 'session')`,
           [req.params.profileId, access.orgId],
         );
         if ((leased.rowCount ?? 0) > 0) {

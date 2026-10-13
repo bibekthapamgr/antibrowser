@@ -19,13 +19,13 @@ web UIs may hide controls but are never the authority. Decisions: [ADR-0013](adr
 | `clients.manage` | yes | yes | — | — | — |
 | `profile.read` | yes | yes | yes | yes | — |
 | `profile.create` | yes | yes | — | — | — |
-| `profile.update` | yes | yes | — | — | — |
+| `profile.update` | yes | yes | with `edit` | — | — |
 | `profile.delete` | yes | yes | — | — | — |
 | `profile.export` | yes | yes | — | — | — |
-| `profile.launch` | yes | yes | yes | — | — |
+| `profile.launch` | yes | yes | with `launch` | — | — |
 | `snapshot.read` | yes | yes | yes | — | — |
-| `snapshot.commit` | yes | yes | yes | — | — |
-| `snapshot.restore` | yes | yes | yes | — | — |
+| `snapshot.commit` | yes | yes | with `launch` | — | — |
+| `snapshot.restore` | yes | yes | with `backup_download` | — | — |
 | `backups.manage` | yes | yes | — | — | — |
 | `keys.manage` | yes | — | — | — | — |
 | `lease.force_release` | yes | yes | — | — | — |
@@ -41,14 +41,27 @@ web UIs may hide controls but are never the authority. Decisions: [ADR-0013](adr
 A permission on a client or profile applies only inside that reach. **Granted only**: the member's permission grants name
 a whole client (all its profiles, including ones added later) or single profiles. Deny by default: no grant, no access.
 
+## Grant capabilities (milestone 08)
+
+Members who reach profiles through grants also need the capability for the action, in a grant that covers the profile
+("with `launch`" above). New operator grants get `launch` and `backup_download` unless the admin chooses; viewers'
+grants carry none. Permanent deletion, export and sharing (grants) are never grantable.
+
+| Capability | Permissions it gates |
+|---|---|
+| `launch` | `profile.launch`, `snapshot.commit` |
+| `edit` | `profile.update` |
+| `backup_download` | `snapshot.restore` |
+
 ## How a request is decided
 1. **Organization**: the caller must be a member. Otherwise the answer is `404 NOT_FOUND`, exactly as for an
    organization that does not exist (the attempt is audited as `org.access` / denied).
 2. **Reach**: a client or profile outside the member's reach answers `404 NOT_FOUND`, exactly as for a nonexistent id.
    Bulk operations report such ids as `not_found`; lists, search and export leave them out.
 3. **Permission**: inside the reach, a role without the permission answers `403 FORBIDDEN` (audited as
-   `access.denied`).
-4. Every check runs on every request, so a removed membership, grant or role change applies to the next request.
+   `access.denied`); so does a granted profile whose grants lack the capability (`safe_details.capability`).
+4. Every check runs on every request, so a removed membership, grant or role change applies to the next request. A
+   change that takes away someone's right to open a profile they have open also ends that session lease (milestone 08).
 
 ## Notes
 - **owner**: everything, including ownership transfer and billing. Ownership moves only through
@@ -56,7 +69,11 @@ a whole client (all its profiles, including ones added later) or single profiles
   be removed or demoted (API and a deferred database constraint).
 - **admin**: members, invitations, clients, grants, profiles and the audit log; no billing, no ownership transfer, and
   cannot change or remove an owner.
-- **operator**: uses granted profiles (open, save snapshots) but cannot create, rename, delete or export them.
+- **operator**: uses granted profiles as their grants allow: open them (`launch`, including the closing backup), edit
+  their configuration (`edit`: name, notes; never moving them to another client) and restore backups
+  (`backup_download`). Cannot create, delete, bulk-change or export profiles, or grant access.
 - **viewer**: sees granted metadata only; cannot open profiles, read snapshots (logged-in sessions) or export.
 - **billing**: subscription data only (milestone 11); no client or profile access at all.
-- `lease.force_release` and `billing.*` are reserved for milestones 08 and 11; no endpoint uses them yet.
+- `lease.force_release`: forced takeover of a session (owners and admins, reason required, audited; milestone 08).
+- `profile.export` additionally needs a sign-in within the last 10 minutes (milestone 08).
+- `billing.*` are reserved for milestone 11; no endpoint uses them yet.

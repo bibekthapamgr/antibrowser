@@ -1,6 +1,7 @@
 export * from './errors.ts';
 export * from './events.ts';
 export * from './ids.ts';
+export * from './notes.ts';
 export * from './pagination.ts';
 export * from './resources.ts';
 

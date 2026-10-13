@@ -1,18 +1,19 @@
 import { ApiError, LEASE_TTL, Lease, LeaseAcquire, LeaseRelease, LeaseRenew } from '@pb/contracts';
 import Type, { type Static } from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
-import { audit, changeEntry } from '../audit.ts';
 import { withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { appendEvent } from '../outbox.ts';
 import { profileFor, resolveTenant } from '../tenancy.ts';
 import { errors, LEASE_COLUMNS, ProfileParams } from './common.ts';
+import { takeLease } from './sessions.ts';
 
 type LeaseRow = Static<typeof Lease>;
 
 /**
- * Authoritative profile leases (milestone 01 data contract; full handoff UX is milestone 08).
- * - One row per profile; held iff released_at is null and expires_at > now() (database clock only).
+ * Upload leases (milestone 01 data contract, used by backups of closed profiles since milestone 07). Sessions, handoff
+ * and takeover are in sessions.ts (milestone 08); both share one row per profile and one fencing-token sequence.
+ * - Held iff state = 'active' and expires_at > now() (database clock only); an expired upload lease is free.
  * - Every acquisition takes a new value from a monotonically increasing sequence: the fencing token.
  * - Writes that depend on holding the lease (renew, release, snapshot commit) must present the current token.
  */
@@ -32,7 +33,7 @@ export function leaseRoutes(app: App, deps: Deps): void {
         await profileFor(c, access, req.params.profileId, 'profile.read', 'p.id');
         const { rows } = await c.query<LeaseRow>(
           `select ${LEASE_COLUMNS} from profile_leases
-            where profile_id = $1 and released_at is null and expires_at > now()`,
+            where profile_id = $1 and state = 'active' and expires_at > now()`,
           [req.params.profileId],
         );
         return { lease: rows[0] ?? null };
@@ -70,61 +71,23 @@ export function leaseRoutes(app: App, deps: Deps): void {
           c,
           { orgId: access.orgId, operation: 'lease.acquire', key, digest },
           async () => {
-            // A signed-in device can only take the lease for itself.
-            if (principal.deviceId && principal.deviceId !== req.body.device_id) {
-              throw new ApiError('FORBIDDEN', 'device_id must be the device making the request');
-            }
-            const device = await c.query(
-              'select 1 from devices where id = $1 and user_id = $2 and revoked_at is null',
-              [req.body.device_id, access.userId],
-            );
-            if (device.rowCount === 0) {
-              throw new ApiError('FORBIDDEN', 'device_id is not an active device of the caller');
-            }
-
-            const held = await c.query<{ holder_device_id: string; expires_at: string }>(
-              `select holder_device_id, expires_at from profile_leases
-              where profile_id = $1 and released_at is null and expires_at > now()
-              for update`,
+            // Milestone 08: this route takes an *upload* lease (a backup of the closed profile); sessions use
+            // POST .../leases. The shared rules apply: an open session elsewhere (even uncertain) blocks it.
+            await takeLease(c, access, principal.deviceId, {
+              profileId: req.params.profileId,
+              deviceId: req.body.device_id,
+              purpose: 'upload',
+              ttl,
+              platform: null,
+              browserVersion: null,
+              headBrowser: null,
+            });
+            const { rows } = await c.query<LeaseRow>(
+              `select ${LEASE_COLUMNS} from profile_leases where profile_id = $1`,
               [req.params.profileId],
             );
-            const current = held.rows[0];
-            if (current && current.holder_device_id !== req.body.device_id) {
-              throw new ApiError('LEASE_HELD', 'Profile is in use on another device', {
-                expires_at: new Date(current.expires_at).toISOString(),
-              });
-            }
-
-            const { rows } = await c.query<LeaseRow & { version: number }>(
-              `insert into profile_leases
-               (profile_id, org_id, holder_device_id, holder_user_id, fencing_token, acquired_at, expires_at)
-             values ($1, $2, $3, $4, nextval('lease_fencing_seq'), now(), now() + make_interval(secs => $5))
-             on conflict (profile_id) do update set
-               holder_device_id = excluded.holder_device_id,
-               holder_user_id   = excluded.holder_user_id,
-               fencing_token    = excluded.fencing_token,
-               acquired_at      = excluded.acquired_at,
-               expires_at       = excluded.expires_at,
-               released_at      = null,
-               version          = profile_leases.version + 1
-             returning ${LEASE_COLUMNS}, version`,
-              [req.params.profileId, access.orgId, req.body.device_id, access.userId, ttl],
-            );
-            const { version, ...lease } = rows[0] as LeaseRow & { version: number };
-            await appendEvent(c, {
-              orgId: access.orgId,
-              actorId: access.userId,
-              aggregateId: lease.profile_id,
-              aggregateVersion: version,
-              eventType: 'lease.acquired',
-              payload: { device_id: lease.holder_device_id, fencing_token: lease.fencing_token },
-            });
-            await audit(
-              c,
-              changeEntry(access, 'lease.acquired', 'profile', lease.profile_id, {
-                device_id: lease.holder_device_id,
-              }),
-            );
+            const lease = rows[0];
+            if (!lease) throw new ApiError('INTERNAL', 'Lease was not created');
             return { status: 201, body: lease };
           },
         );
@@ -157,7 +120,7 @@ export function leaseRoutes(app: App, deps: Deps): void {
               set expires_at = now() + make_interval(secs => $3), version = version + 1
             where profile_id = $1 and fencing_token = $2::bigint and holder_user_id = $4
               and ($5::text is null or holder_device_id = $5)
-              and released_at is null and expires_at > now()
+              and state = 'active' and expires_at > now()
             returning ${LEASE_COLUMNS}, version`,
           [req.params.profileId, req.body.fencing_token, ttl, access.userId, device],
         );
@@ -204,10 +167,16 @@ export function leaseRoutes(app: App, deps: Deps): void {
         const current = existing.rows[0];
         if (!current) throw await leaseFailure(c, req.params.profileId, req.body.fencing_token);
         if (current.released) return; // idempotent no-op
-        const { rows } = await c.query<{ version: number }>(
-          `update profile_leases set released_at = now(), version = version + 1
-            where profile_id = $1 returning version`,
+        const { rows } = await c.query<{ version: number; id: string }>(
+          `update profile_leases set released_at = now(), state = 'released', end_reason = 'closed', run_state = null,
+                  version = version + 1
+            where profile_id = $1 returning version, id`,
           [req.params.profileId],
+        );
+        await c.query(
+          `update lease_history set ended_at = now(), end_state = 'released', end_reason = 'closed', ended_by = $2
+            where id = $1`,
+          [rows[0]?.id, access.userId],
         );
         await appendEvent(c, {
           orgId: access.orgId,

@@ -48,7 +48,8 @@ export function deviceRoutes(app: App, deps: Deps): void {
         tags: ['devices'],
         description:
           'Signs a device out everywhere: its sessions end and it cannot refresh or call the API again until it is ' +
-          'enrolled anew. Local browser data on that device is not deleted (the server cannot reach it).',
+          'enrolled anew. Profiles it had open are released from it (a new fencing token). Local browser data on ' +
+          'that device is not deleted (the server cannot reach it).',
         params: DeviceParams,
         response: { 200: Device, ...errors },
       },
@@ -71,6 +72,12 @@ export function deviceRoutes(app: App, deps: Deps): void {
             where device_id = $1 and user_id = $2 and revoked_at is null`,
           [req.params.deviceId, principal.userId],
         );
+        // Milestone 08: the profiles this device has open are released from it (fenced out, audited per profile).
+        await c.query('select app.end_device_leases($1, $2, $3)', [
+          req.params.deviceId,
+          principal.userId,
+          'device_signed_out',
+        ]);
         if (!row.was_revoked) {
           await audit(c, {
             orgId: null,

@@ -2,6 +2,7 @@ import {
   applyRetention,
   eraseObjects,
   errorInfo,
+  expireRecoveryCopies,
   type JobDeps,
   maintainKeys,
   processSyncWork,
@@ -69,6 +70,7 @@ while (running) {
       if (counters) log('info', 'purged rate-limit counters', { counters });
       if (jobs) {
         await task('snapshot retention', () => applyRetention(jobs));
+        await task('recovery copies expired', () => expireRecoveryCopies(jobs));
         await task('snapshot objects erased', () => eraseObjects(jobs));
         await task('trash purged', () => purgeTrash(jobs));
         await task('key maintenance', () => maintainKeys(jobs));

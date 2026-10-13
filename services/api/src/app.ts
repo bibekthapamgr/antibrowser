@@ -29,6 +29,7 @@ import { leaseRoutes } from './routes/leases.ts';
 import { meRoutes } from './routes/me.ts';
 import { organizationRoutes } from './routes/organizations.ts';
 import { profileRoutes } from './routes/profiles.ts';
+import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
 import { createSessionKeys, type SessionKeys } from './session.ts';
 import type { TenantAccess } from './tenancy.ts';
@@ -255,6 +256,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       grantRoutes(scoped, deps);
       profileRoutes(scoped, deps);
       leaseRoutes(scoped, deps);
+      sessionRoutes(scoped, deps);
       snapshotRoutes(scoped, deps);
       backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);

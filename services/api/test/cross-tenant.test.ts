@@ -26,6 +26,8 @@ const MISSING = {
   grant: fx('grt', 'ZZZZ'),
   snapshot: fx('snp', 'ZZZZ'),
   operation: fx('syn', 'ZZZZ'),
+  lease: fx('lse', 'ZZZZ'),
+  request: fx('hrq', 'ZZZZ'),
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -37,6 +39,8 @@ const FOREIGN: Ids = {
   grant: '',
   snapshot: '',
   operation: '',
+  lease: '',
+  request: '',
 };
 
 let h: Harness;
@@ -58,6 +62,8 @@ async function betaState(): Promise<string> {
     'snapshot_manifests o where o.org_id = $1',
     'sync_operations o where o.org_id = $1',
     'organization_key_versions o where o.org_id = $1',
+    'lease_history o where o.org_id = $1',
+    'handoff_requests o where o.org_id = $1',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -99,6 +105,32 @@ beforeAll(async () => {
   const own = await snapshotOf(acme.id, ACME.profile, FIXTURES.devices.acmeOwnerLaptop.id, attacker);
   acmeSnapshot = own.snapshot;
   acmeOperation = own.operation;
+  // Milestone 08: a beta session lease (released, so the beta profile stays usable) and an access request.
+  const opened = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/profiles/${FOREIGN.profile}/leases`,
+    headers: { ...betaOwner, 'idempotency-key': idemKey() },
+    payload: {
+      device_id: FIXTURES.devices.betaOwnerLaptop.id,
+      platform: 'windows-x64',
+      browser_version: '155.0.1.2',
+    },
+  });
+  expect(opened.statusCode).toBe(201);
+  FOREIGN.lease = opened.json().lease.id;
+  const released = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/profiles/${FOREIGN.profile}/leases/${FOREIGN.lease}/release`,
+    headers: betaOwner,
+    payload: { fencing_token: opened.json().lease.fencing_token, outcome: 'closed' },
+  });
+  expect(released.statusCode).toBe(204);
+  FOREIGN.request = fx('hrq', 'B1R1');
+  await h.owner.query(
+    `insert into handoff_requests (id, org_id, profile_id, requested_by, holder_user_id, note, status, expires_at)
+     values ($1, $2, $3, $4, $4, '', 'open', now() + interval '1 hour') on conflict do nothing`,
+    [FOREIGN.request, beta.id, FOREIGN.profile, FIXTURES.users.betaOwner.id],
+  );
 });
 afterAll(async () => {
   await h.close();
@@ -174,6 +206,12 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
       payload: { user_id: ids.user, client_id: ids.client },
     },
     { name: 'remove grant', method: 'DELETE', url: `${base}/grants/${ids.grant}` },
+    {
+      name: 'change grant capabilities',
+      method: 'PATCH',
+      url: `${base}/grants/${ids.grant}`,
+      payload: { capabilities: ['launch'] },
+    },
     { name: 'list profiles', method: 'GET', url: `${base}/profiles` },
     { name: 'search profiles', method: 'GET', url: `${base}/profiles?q=Support&client_id=${ids.client}` },
     {
@@ -202,6 +240,43 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
     },
     { name: 'renew lease', method: 'POST', url: `${p}/lease/renew`, payload: { fencing_token: '1' } },
     { name: 'release lease', method: 'POST', url: `${p}/lease/release`, payload: { fencing_token: '1' } },
+    // Milestone 08: sessions and handoff.
+    { name: 'current session', method: 'GET', url: `${p}/leases/current` },
+    {
+      name: 'open session',
+      method: 'POST',
+      url: `${p}/leases`,
+      headers: { 'idempotency-key': idemKey() },
+      payload: {
+        device_id: FIXTURES.devices.acmeOwnerLaptop.id,
+        platform: 'linux-x64',
+        browser_version: '1.0',
+      },
+    },
+    {
+      name: 'heartbeat',
+      method: 'POST',
+      url: `${p}/leases/${ids.lease}/heartbeat`,
+      payload: { fencing_token: '1', run_state: 'running' },
+    },
+    {
+      name: 'release session',
+      method: 'POST',
+      url: `${p}/leases/${ids.lease}/release`,
+      payload: { fencing_token: '1', outcome: 'closed' },
+    },
+    { name: 'ask for the profile', method: 'POST', url: `${p}/handoff-requests`, payload: { note: 'hi' } },
+    { name: 'requests for the profile', method: 'GET', url: `${p}/handoff-requests` },
+    { name: 'my requests', method: 'GET', url: `${base}/handoff-requests?mine=true` },
+    { name: 'decline request', method: 'POST', url: `${p}/handoff-requests/${ids.request}/decline` },
+    { name: 'cancel request', method: 'POST', url: `${p}/handoff-requests/${ids.request}/cancel` },
+    {
+      name: 'force takeover',
+      method: 'POST',
+      url: `${p}/force-takeover`,
+      payload: { reason: 'swap test', confirm: true },
+    },
+    { name: 'recovery copies', method: 'GET', url: `${base}/recovery-copies` },
     { name: 'list snapshots', method: 'GET', url: `${p}/snapshots` },
     {
       name: 'start snapshot upload',
@@ -275,6 +350,8 @@ describe('coverage', () => {
       grant: '{grantId}',
       snapshot: '{snapshotId}',
       operation: '{operationId}',
+      lease: '{leaseId}',
+      request: '{requestId}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),
@@ -313,10 +390,22 @@ describe('another organization’s ids inside our own organization', () => {
       grant: MISSING.grant,
       snapshot: acmeSnapshot,
       operation: acmeOperation,
+      lease: MISSING.lease,
+      request: MISSING.request,
       [kind]: value,
     } as Ids);
 
-  for (const kind of ['client', 'profile', 'user', 'invitation', 'grant', 'snapshot', 'operation'] as const) {
+  for (const kind of [
+    'client',
+    'profile',
+    'user',
+    'invitation',
+    'grant',
+    'snapshot',
+    'operation',
+    'lease',
+    'request',
+  ] as const) {
     it(`${kind} ids answer like nonexistent ids on every endpoint that takes one`, async () => {
       const before = await betaState();
       const f = variants(kind, FOREIGN[kind]);
@@ -363,15 +452,32 @@ describe('another organization’s ids inside our own organization', () => {
       url: `/v1/orgs/${acme.id}/profiles?q=Support%20desk`,
     });
     expect(search.json().items).toEqual([]);
-    const exported = await send({ name: 'e', method: 'GET', url: `/v1/orgs/${acme.id}/profiles/export` });
+    // The export needs a recent sign-in (milestone 08): an acme admin who just signed in.
+    const admin = await h.signIn();
+    await h.owner.query("insert into memberships (org_id, user_id, role) values ($1, $2, 'admin')", [
+      acme.id,
+      admin.session.user.id,
+    ]);
+    const exported = await send(
+      { name: 'e', method: 'GET', url: `/v1/orgs/${acme.id}/profiles/export` },
+      admin.headers,
+    );
     expect(exported.json().profiles.length).toBeGreaterThan(0);
     expect(JSON.stringify(exported.json())).not.toContain(FOREIGN.profile);
-    const filtered = await send({
-      name: 'f',
-      method: 'GET',
-      url: `/v1/orgs/${acme.id}/profiles/export?client_id=${FOREIGN.client}`,
-    });
+    const filtered = await send(
+      {
+        name: 'f',
+        method: 'GET',
+        url: `/v1/orgs/${acme.id}/profiles/export?client_id=${FOREIGN.client}`,
+      },
+      admin.headers,
+    );
     expect(filtered.json().profiles).toEqual([]);
+    // Other test files count Acme's members: leave none behind.
+    await h.owner.query('delete from memberships where org_id = $1 and user_id = $2', [
+      acme.id,
+      admin.session.user.id,
+    ]);
     const grants = await send({
       name: 'g',
       method: 'GET',

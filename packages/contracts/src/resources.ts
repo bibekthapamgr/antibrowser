@@ -2,6 +2,7 @@ import Type, { type Static } from 'typebox';
 import { ID_PATTERN } from './ids.ts';
 
 const Id = (prefix: Parameters<typeof ID_PATTERN>[0]) => Type.String({ pattern: ID_PATTERN(prefix) });
+const FencingTokenString = () => Type.String({ pattern: '^[1-9][0-9]{0,18}$' });
 const Timestamp = Type.String({ format: 'date-time', description: 'UTC, RFC 3339' });
 
 // ---------------------------------------------------------------- Roles & permissions
@@ -47,10 +48,12 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     (p) =>
       p !== 'org.transfer_ownership' && p !== 'billing.read' && p !== 'billing.manage' && p !== 'keys.manage',
   ),
+  // Operators act only on granted profiles, and only with the capability the grant carries (GRANT_CAPABILITIES).
   operator: [
     'org.read',
     'clients.read',
     'profile.read',
+    'profile.update',
     'profile.launch',
     'snapshot.read',
     'snapshot.commit',
@@ -80,6 +83,25 @@ export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
 
 export function roleAllows(role: Role, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role].includes(permission);
+}
+
+/**
+ * Milestone 08: what a grant lets a member do with the profiles it covers. Members with a `granted` scope need the
+ * capability in a grant covering the profile, on top of their role's permission. Launch, configuration edit and backup
+ * download are separate; permanent deletion, export and sharing are never grantable (owners and admins only).
+ */
+export const GRANT_CAPABILITIES = ['launch', 'edit', 'backup_download'] as const;
+export type GrantCapability = (typeof GRANT_CAPABILITIES)[number];
+/** The capability a permission needs on a granted profile (permissions not listed need none beyond the grant). */
+export const PERMISSION_CAPABILITY: Partial<Record<Permission, GrantCapability>> = {
+  'profile.launch': 'launch',
+  'snapshot.commit': 'launch',
+  'profile.update': 'edit',
+  'snapshot.restore': 'backup_download',
+};
+/** Capabilities of a new grant when none are given: operators open and restore, viewers nothing. */
+export function defaultCapabilities(role: Role): GrantCapability[] {
+  return role === 'operator' ? ['launch', 'backup_download'] : [];
 }
 
 // ---------------------------------------------------------------- Identity, sessions and devices
@@ -336,21 +358,31 @@ export const ClientUpdate = Type.Object(
   { additionalProperties: false, minProperties: 1 },
 );
 
+const Capabilities = Type.Array(Type.Enum(GRANT_CAPABILITIES), { uniqueItems: true, maxItems: 3 });
 export const Grant = Type.Object(
   {
     id: Id('grt'),
     user_id: Id('usr'),
     client_id: Type.Union([Id('cli'), Type.Null()]),
     profile_id: Type.Union([Id('prf'), Type.Null()]),
+    /** Milestone 08: launch, edit (configuration) and backup_download (restore). Viewers' grants carry none. */
+    capabilities: Capabilities,
     created_at: Timestamp,
   },
   { additionalProperties: false },
 );
 export type Grant = Static<typeof Grant>;
 export const GrantCreate = Type.Union([
-  Type.Object({ user_id: Id('usr'), client_id: Id('cli') }, { additionalProperties: false }),
-  Type.Object({ user_id: Id('usr'), profile_id: Id('prf') }, { additionalProperties: false }),
+  Type.Object(
+    { user_id: Id('usr'), client_id: Id('cli'), capabilities: Type.Optional(Capabilities) },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { user_id: Id('usr'), profile_id: Id('prf'), capabilities: Type.Optional(Capabilities) },
+    { additionalProperties: false },
+  ),
 ]);
+export const GrantUpdate = Type.Object({ capabilities: Capabilities }, { additionalProperties: false });
 
 // ---------------------------------------------------------------- Audit
 export const AuditEvent = Type.Object(
@@ -374,6 +406,35 @@ export type AuditEvent = Static<typeof AuditEvent>;
 /** Labels are display text only. They are never used to build disk paths (see ADR-0002 and crates/runtime). */
 const Label = Type.String({ minLength: 1, maxLength: 120 });
 
+export const LEASE_PURPOSES = ['session', 'upload'] as const;
+/** What a holder reports about the browser run on its device (milestone 08; audited on change). */
+export const RUN_STATES = ['starting', 'restoring', 'running', 'stopping', 'uploading', 'closed'] as const;
+
+/**
+ * Milestone 08: the profile is open (or being backed up) on a device. `uncertain`: a session whose lease expired
+ * without a release; its browser may still be open, so nobody else can open the profile until that device confirms it
+ * closed or an admin forces a takeover.
+ */
+export const ProfileInUse = Type.Object(
+  {
+    lease_id: Id('lse'),
+    purpose: Type.Enum(LEASE_PURPOSES),
+    state: Type.Enum(['active', 'uncertain'] as const),
+    holder_user_id: Id('usr'),
+    holder_name: Type.String(),
+    device_id: Id('dev'),
+    device_name: Type.String(),
+    run_state: Type.Union([Type.Enum(RUN_STATES), Type.Null()]),
+    since: Timestamp,
+    heartbeat_at: Type.Union([Timestamp, Type.Null()]),
+    expires_at: Timestamp,
+    /** The caller holds it (this person, any of their devices). */
+    mine: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type ProfileInUse = Static<typeof ProfileInUse>;
+
 /** Every profile has exactly one owner organization; moving between organizations is an export/import. */
 export const Profile = Type.Object(
   {
@@ -386,6 +447,10 @@ export const Profile = Type.Object(
     /** Version of the newest committed snapshot (0: never backed up). Milestone 07. */
     snapshot_version: Type.Integer({ minimum: 0 }),
     last_snapshot_at: Type.Union([Timestamp, Type.Null()]),
+    /** Milestone 08: who has it open right now (null: nobody). Lists and single reads only. */
+    in_use: Type.Optional(Type.Union([ProfileInUse, Type.Null()])),
+    /** Milestone 08: what the caller may do with this profile (from role and grants). Lists and single reads only. */
+    capabilities: Type.Optional(Capabilities),
     created_at: Timestamp,
     updated_at: Timestamp,
   },
@@ -582,6 +647,167 @@ export const Lease = Type.Object(
 );
 export type Lease = Static<typeof Lease>;
 
+// ---------------------------------------------------------------- Session leases and handoff (milestone 08)
+/**
+ * Session leases: one writer per shared profile. The holder heartbeats every `heartbeat_seconds`; the lease lasts
+ * `ttl_seconds` past the last heartbeat (database clock). Tunable starting values (handoff file: 15 s / 60 s).
+ */
+export const SESSION_LEASE = { ttlSeconds: 60, heartbeatSeconds: 15, uploadTtlSeconds: 600 } as const;
+/** How long an access request waits for an answer before it expires. */
+export const HANDOFF_REQUEST_HOURS = 4;
+const Note = Type.String({ maxLength: 500 });
+
+export const LEASE_STATES = [
+  'active',
+  'uncertain',
+  'released',
+  'taken_over',
+  'revoked',
+  'superseded',
+] as const;
+export const SessionLease = Type.Object(
+  {
+    id: Id('lse'),
+    profile_id: Id('prf'),
+    purpose: Type.Enum(LEASE_PURPOSES),
+    state: Type.Enum(LEASE_STATES),
+    holder_user_id: Id('usr'),
+    holder_name: Type.String(),
+    device_id: Id('dev'),
+    device_name: Type.String(),
+    /** Decimal string (64-bit). Every fenced write must present it. */
+    fencing_token: FencingTokenString(),
+    run_state: Type.Union([Type.Enum(RUN_STATES), Type.Null()]),
+    acquired_at: Timestamp,
+    expires_at: Timestamp,
+    heartbeat_at: Type.Union([Timestamp, Type.Null()]),
+    ttl_seconds: Type.Integer({ minimum: 30, maximum: 600 }),
+    heartbeat_seconds: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type SessionLease = Static<typeof SessionLease>;
+
+/** POST /orgs/{org}/profiles/{prf}/leases (Idempotency-Key required). */
+export const LeaseOpen = Type.Object(
+  {
+    device_id: Id('dev'),
+    /** `session` (default): the browser will run on this device. `upload`: a backup of the closed profile. */
+    purpose: Type.Optional(Type.Enum(LEASE_PURPOSES)),
+    platform: Type.Enum(PLATFORMS),
+    /** The browser this device will open the profile with (checked against the newest backup). */
+    browser_version: Type.String({ minLength: 1, maxLength: 64, pattern: '^[0-9A-Za-z._+-]+$' }),
+  },
+  { additionalProperties: false },
+);
+export type LeaseOpen = Static<typeof LeaseOpen>;
+
+export const HandoffNote = Type.Object(
+  { text: Type.String(), by_user_id: Id('usr'), by_name: Type.String(), at: Timestamp },
+  { additionalProperties: false },
+);
+export const LeaseOpened = Type.Object(
+  {
+    lease: SessionLease,
+    /** Left by the previous holder when they released the profile. */
+    handoff_note: Type.Union([HandoffNote, Type.Null()]),
+    /** The newest committed backup (0: none): restore it first when this device's copy is older. */
+    head_version: Type.Integer({ minimum: 0 }),
+    server_time: Timestamp,
+  },
+  { additionalProperties: false },
+);
+export type LeaseOpened = Static<typeof LeaseOpened>;
+
+export const LeaseHeartbeat = Type.Object(
+  { fencing_token: FencingTokenString(), run_state: Type.Optional(Type.Enum(RUN_STATES)) },
+  { additionalProperties: false },
+);
+
+export const HANDOFF_STATUSES = ['open', 'declined', 'canceled', 'fulfilled', 'expired'] as const;
+export const HandoffRequest = Type.Object(
+  {
+    id: Id('hrq'),
+    profile_id: Id('prf'),
+    requested_by: Id('usr'),
+    requested_by_name: Type.String(),
+    holder_user_id: Type.Union([Id('usr'), Type.Null()]),
+    note: Type.String(),
+    status: Type.Enum(HANDOFF_STATUSES),
+    created_at: Timestamp,
+    responded_at: Type.Union([Timestamp, Type.Null()]),
+    expires_at: Timestamp,
+    /** The caller asked. */
+    mine: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type HandoffRequest = Static<typeof HandoffRequest>;
+export const HandoffRequestCreate = Type.Object(
+  { note: Type.Optional(Note), device_id: Type.Optional(Id('dev')) },
+  { additionalProperties: false },
+);
+
+export const LeaseBeat = Type.Object(
+  {
+    lease: SessionLease,
+    /** Lease had expired (uncertain) and this heartbeat confirmed the holder is still here. */
+    revived: Type.Boolean(),
+    /** Open requests from teammates who want this profile. */
+    handoff_requests: Type.Array(HandoffRequest),
+    server_time: Timestamp,
+  },
+  { additionalProperties: false },
+);
+export type LeaseBeat = Static<typeof LeaseBeat>;
+
+export const LEASE_OUTCOMES = ['committed', 'closed', 'aborted', 'failed'] as const;
+/** Release with the current fencing token; allowed after expiry (the holder confirms its browser closed). */
+export const LeaseEnd = Type.Object(
+  {
+    fencing_token: FencingTokenString(),
+    /** committed: closed and backed up ("handoff ready"); closed: closed without a new backup; aborted: handoff
+     *  given up, the newest backup stays as it was; failed: the launch failed. */
+    outcome: Type.Enum(LEASE_OUTCOMES),
+    handoff_note: Type.Optional(Note),
+  },
+  { additionalProperties: false },
+);
+
+export const ForceTakeover = Type.Object(
+  {
+    reason: Type.String({ minLength: 3, maxLength: 500 }),
+    /** The caller saw the warning: the other device may still be open and its unsynced changes are not merged. */
+    confirm: Type.Literal(true),
+  },
+  { additionalProperties: false },
+);
+export const TakeoverResult = Type.Object(
+  { previous: SessionLease, fencing_token: FencingTokenString() },
+  { additionalProperties: false },
+);
+
+/** An upload kept from a device that lost its session lease: never the head, restorable as a copy by admins. */
+export const RecoveryCopy = Type.Object(
+  {
+    id: Id('snp'),
+    profile_id: Id('prf'),
+    profile_name: Type.String(),
+    lease_id: Type.Union([Id('lse'), Type.Null()]),
+    created_by: Id('usr'),
+    created_by_name: Type.String(),
+    device_id: Type.Union([Id('dev'), Type.Null()]),
+    ciphertext_size: Type.Integer({ minimum: 1 }),
+    plaintext_size: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    platform: Type.String(),
+    browser_version: Type.String(),
+    kept_at: Timestamp,
+    erase_after: Timestamp,
+  },
+  { additionalProperties: false },
+);
+export type RecoveryCopy = Static<typeof RecoveryCopy>;
+
 // ---------------------------------------------------------------- Snapshots and synchronization (milestone 07)
 /** Snapshot container scheme (pb-seal): tar + zstd + chunked AES-256-GCM (STREAM). */
 export const SNAPSHOT_SCHEME = 'aes-256-gcm-chunked-v1' as const;
@@ -591,7 +817,16 @@ const Digest = Type.String({ pattern: '^[0-9a-f]{64}$' });
 const FencingToken = Type.String({ pattern: '^[1-9][0-9]{0,18}$' });
 const PartNumber = Type.Integer({ minimum: 1, maximum: 10000 });
 
-export const SYNC_STATES = ['uploading', 'verifying', 'committed', 'failed', 'canceled', 'expired'] as const;
+/** `kept`: a recovery copy was verified and stored (it never becomes the head). Milestone 08. */
+export const SYNC_STATES = [
+  'uploading',
+  'verifying',
+  'committed',
+  'kept',
+  'failed',
+  'canceled',
+  'expired',
+] as const;
 export type SyncState = (typeof SYNC_STATES)[number];
 
 export const SNAPSHOT_STATUSES = [
@@ -602,6 +837,7 @@ export const SNAPSHOT_STATUSES = [
   'canceled',
   'expired',
   'deleted',
+  'recovery',
 ] as const;
 
 /** A committed (or in-progress) snapshot manifest. Object locations and wrapped keys are never returned. */
@@ -673,6 +909,11 @@ export const SnapshotInit = Type.Object(
     browser_version: Type.String({ minLength: 1, maxLength: 64, pattern: '^[0-9A-Za-z._+-]+$' }),
     /** Optional estimate (bytes of profile data) for an early quota check. */
     estimated_size: Type.Optional(Type.Integer({ minimum: 0 })),
+    /**
+     * Milestone 08: keep this upload as a recovery copy. `fencing_token` is then the token of a session lease this
+     * device held and lost (taken over or revoked); the upload never becomes the head.
+     */
+    recovery: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

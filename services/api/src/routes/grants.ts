@@ -2,17 +2,45 @@
  * Client and profile grants (milestone 06). Operators and viewers reach only what they are granted: a whole client
  * (all its profiles, including ones added later) or a single profile. Deny by default; removing a grant or the
  * membership takes effect at the member's next request.
+ *
+ * Milestone 08: a grant carries capabilities (launch, edit, backup_download). Viewers' grants carry none. Taking away
+ * the last grant (or capability) that let someone open a profile they have open ends their session lease: their app
+ * is told to close it at its next heartbeat.
  */
-import { ApiError, Grant, GrantCreate, ID_PATTERN, newId, Page, PageQuery } from '@pb/contracts';
+import {
+  ApiError,
+  defaultCapabilities,
+  Grant,
+  GrantCreate,
+  GrantUpdate,
+  ID_PATTERN,
+  newId,
+  Page,
+  PageQuery,
+  type Role,
+} from '@pb/contracts';
 import Type from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
+import { endLeasesOutOfReach } from '../sessions.ts';
 import { clientFor, profileFor, requirePermission, resolveTenant } from '../tenancy.ts';
 import { errors, GrantParams, isUniqueViolation, OrgParams, pageOf, pageWindow } from './common.ts';
 
-const GRANT_COLUMNS = `g.id, g.user_id, g.client_id, g.profile_id, ${ts('g.created_at')} as created_at`;
+const GRANT_COLUMNS = `g.id, g.user_id, g.client_id, g.profile_id, g.capabilities,
+  ${ts('g.created_at')} as created_at`;
+
+/** Viewers cannot be given capabilities (they never open profiles or download backups). */
+function capabilitiesFor(role: Role, asked: string[] | undefined): string[] {
+  if (asked === undefined) return defaultCapabilities(role);
+  if (role !== 'operator' && asked.length > 0) {
+    throw new ApiError('VALIDATION_FAILED', 'Only operators can be given capabilities on granted profiles', {
+      role,
+    });
+  }
+  return [...new Set(asked)].sort();
+}
 
 const GrantQuery = Type.Object(
   { ...PageQuery.properties, user_id: Type.Optional(Type.String({ pattern: ID_PATTERN('usr') })) },
@@ -72,11 +100,13 @@ export function grantRoutes(app: App, deps: Deps): void {
       const clientId = 'client_id' in body ? body.client_id : null;
       const profileId = 'profile_id' in body ? body.profile_id : null;
       const grant = await withTx(deps.pool, access, async (c) => {
-        const member = await c.query('select 1 from memberships where org_id = $1 and user_id = $2', [
-          access.orgId,
-          body.user_id,
-        ]);
-        if (member.rowCount === 0) throw new ApiError('NOT_FOUND', 'Member not found');
+        const member = await c.query<{ role: Role }>(
+          'select role from memberships where org_id = $1 and user_id = $2',
+          [access.orgId, body.user_id],
+        );
+        const role = member.rows[0]?.role;
+        if (!role) throw new ApiError('NOT_FOUND', 'Member not found');
+        const capabilities = capabilitiesFor(role, body.capabilities);
         if (clientId) await clientFor(c, access, clientId, 'grants.manage', 'c.id');
         if (profileId) await profileFor(c, access, profileId, 'grants.manage', 'p.id');
         const id = newId('grant');
@@ -85,9 +115,9 @@ export function grantRoutes(app: App, deps: Deps): void {
           ({
             rows: [row],
           } = await c.query<Grant>(
-            `insert into permission_grants as g (id, org_id, user_id, client_id, profile_id, created_by)
-             values ($1, $2, $3, $4, $5, $6) returning ${GRANT_COLUMNS}`,
-            [id, access.orgId, body.user_id, clientId, profileId, access.userId],
+            `insert into permission_grants as g (id, org_id, user_id, client_id, profile_id, created_by, capabilities)
+             values ($1, $2, $3, $4, $5, $6, $7) returning ${GRANT_COLUMNS}`,
+            [id, access.orgId, body.user_id, clientId, profileId, access.userId, capabilities],
           ));
         } catch (err) {
           if (isUniqueViolation(err))
@@ -95,7 +125,7 @@ export function grantRoutes(app: App, deps: Deps): void {
           throw err;
         }
         if (!row) throw new ApiError('INTERNAL', 'Grant was not created');
-        const details = { user_id: body.user_id, client_id: clientId, profile_id: profileId };
+        const details = { user_id: body.user_id, client_id: clientId, profile_id: profileId, capabilities };
         await audit(c, changeEntry(access, 'grant.created', 'grant', id, details));
         await appendEvent(c, {
           orgId: access.orgId,
@@ -108,6 +138,60 @@ export function grantRoutes(app: App, deps: Deps): void {
         return row;
       });
       return reply.status(201).send(grant);
+    },
+  );
+
+  app.patch(
+    '/orgs/:orgId/grants/:grantId',
+    {
+      schema: {
+        tags: ['grants'],
+        description:
+          'Changes what a grant allows: launch (open, including uploading the session), edit (configuration) and ' +
+          'backup_download (restore). Removing launch from someone who has a profile open ends that session.',
+        params: GrantParams,
+        body: GrantUpdate,
+        response: { 200: Grant, ...errors },
+      },
+    },
+    async (req) => {
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requirePermission(access, 'grants.manage');
+      return withTx(deps.pool, access, async (c) => {
+        const current = await c.query<{ user_id: string; role: Role; capabilities: string[] }>(
+          `select g.user_id, m.role, g.capabilities from permission_grants g
+             join memberships m on m.org_id = g.org_id and m.user_id = g.user_id
+            where g.id = $1 and g.org_id = $2 for update of g`,
+          [req.params.grantId, access.orgId],
+        );
+        const cur = current.rows[0];
+        if (!cur) throw new ApiError('NOT_FOUND', 'Grant not found');
+        const capabilities = capabilitiesFor(cur.role, req.body.capabilities);
+        const { rows } = await c.query<Grant>(
+          `update permission_grants g set capabilities = $3, updated_at = now()
+            where g.id = $1 and g.org_id = $2 returning ${GRANT_COLUMNS}`,
+          [req.params.grantId, access.orgId, capabilities],
+        );
+        const row = rows[0];
+        if (!row) throw new ApiError('NOT_FOUND', 'Grant not found');
+        const ended = await endLeasesOutOfReach(c, access, cur.user_id, 'access_removed');
+        const details = {
+          user_id: cur.user_id,
+          from: cur.capabilities,
+          to: capabilities,
+          sessions_ended: ended.length,
+        };
+        await audit(c, changeEntry(access, 'grant.updated', 'grant', req.params.grantId, details));
+        await appendEvent(c, {
+          orgId: access.orgId,
+          actorId: access.userId,
+          aggregateId: req.params.grantId,
+          aggregateVersion: 2,
+          eventType: 'grant.updated',
+          payload: { user_id: cur.user_id, capabilities },
+        });
+        return row;
+      });
     },
   );
 
@@ -134,7 +218,14 @@ export function grantRoutes(app: App, deps: Deps): void {
         );
         const row = rows[0];
         if (!row) throw new ApiError('NOT_FOUND', 'Grant not found');
-        await audit(c, changeEntry(access, 'grant.removed', 'grant', req.params.grantId, row));
+        const ended = await endLeasesOutOfReach(c, access, row.user_id, 'access_removed');
+        await audit(
+          c,
+          changeEntry(access, 'grant.removed', 'grant', req.params.grantId, {
+            ...row,
+            sessions_ended: ended.length,
+          }),
+        );
         await appendEvent(c, {
           orgId: access.orgId,
           actorId: access.userId,

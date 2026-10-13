@@ -32,6 +32,9 @@ export const ID_PREFIXES = {
   // Milestone 07: encrypted snapshots and synchronization.
   orgKeyVersion: 'okv',
   syncOperation: 'syn',
+  // Milestone 08: session leases and handoff requests.
+  lease: 'lse',
+  handoffRequest: 'hrq',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;
