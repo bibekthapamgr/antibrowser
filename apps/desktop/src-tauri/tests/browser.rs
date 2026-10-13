@@ -658,12 +658,15 @@ fn platform_name() -> &'static str {
     pb_desktop_lib::state::platform()
 }
 
-/// Milestone 03 step 8 (portability spike with real cookie encryption). Driven by the runtime pipeline:
+/// Milestone 03 step 8, sealed since milestone 07 (portability with real cookie encryption, through the same
+/// encrypted snapshot format organization backups use). Driven by the runtime pipeline:
 /// - `PB_PORTABILITY=create PB_PORTABILITY_DIR=<dir>`: a profile signs in to the test page (cookie, localStorage,
-///   IndexedDB), closes cleanly, and its data is copied (caches and lock files excluded, as in a backup) to
-///   `<dir>/user-data`. The same machine then restores it into a NEW profile directory and records the result.
+///   IndexedDB), closes cleanly, and is sealed (caches and lock files excluded, compressed, AES-256-GCM, bound to
+///   a test organization/profile/snapshot) to `<dir>/profile.pbseal`. The same machine then opens it into a NEW
+///   profile directory and records the result with the label the app shows (`supported`).
 /// - `PB_PORTABILITY=verify PB_PORTABILITY_DIR=<dir> PB_PORTABILITY_RESULT=<file>`: on another machine (a fresh
-///   CI runner), restore that copy into a new profile and record what survived.
+///   CI runner), open that file into a new profile and record what survived, with the label the app shows there
+///   (`sign_in_required`). The test data key travels with the file: it protects nothing but test data.
 #[test]
 fn portability_spike() {
     let Ok(mode) = std::env::var("PB_PORTABILITY") else {
@@ -674,31 +677,74 @@ fn portability_spike() {
     let dir = PathBuf::from(
         std::env::var("PB_PORTABILITY_DIR").unwrap_or_else(|_| panic!("PB_PORTABILITY_DIR")),
     );
-    let copy = dir.join("user-data");
+    let sealed = dir.join("profile.pbseal");
+    let binding = pb_seal::Binding {
+        kind: pb_seal::Kind::OrgSnapshot,
+        org_id: Some("org_01J9ZSEED0PORTAB1E000000000".into()),
+        profile_id: "prf_01J9ZSEED0PORTAB1E000000000".into(),
+        object_id: "snp_01J9ZSEED0PORTAB1E000000000".into(),
+        key_version: "okv_01J9ZSEED0PORTAB1E000000000".into(),
+    };
+    let browser = std::env::var("PB_TEST_BROWSER_VERSION").unwrap_or_else(|_| "0.0.0.0".into());
 
     let restore_and_read = |who: &str| -> Value {
+        let key = pb_seal::SealKey::from_base64(
+            &std::fs::read_to_string(dir.join("key.b64")).unwrap_or_else(|e| panic!("{e}")),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
         let target = env.profile("Restored");
         let dirs = env
             .state
             .root
             .ensure(&target)
             .unwrap_or_else(|e| panic!("{e}"));
+        let fresh = dirs.root.join("user-data.incoming");
+        std::fs::create_dir_all(&fresh).unwrap_or_else(|e| panic!("{e}"));
+        pb_seal::open_profile(
+            &sealed,
+            &key,
+            &binding,
+            &fresh,
+            &pb_seal::Limits::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap_or_else(|e| panic!("open: {e}"));
         std::fs::remove_dir_all(&dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
-        pb_runtime::backup::copy_tree(&copy, &dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
+        std::fs::rename(fresh.join("user-data"), &dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
+        let _ = std::fs::remove_dir_all(&fresh);
         let r = env.visit(&target, "read", who, "-");
         env.close(&target);
         r
     };
     let summarize = |source: &str, same_machine: bool, r: &Value| {
+        // The label the app shows after this restore (ADR-0002; pb_sync::portability).
+        let label = pb_sync::portability::classify(
+            source,
+            &browser,
+            1,
+            Some(if same_machine {
+                "this-machine"
+            } else {
+                "source-machine"
+            }),
+            &pb_sync::portability::Here {
+                platform: platform_name(),
+                device_id: Some("this-machine"),
+                browser_version: Some(&browser),
+            },
+        );
         json!({
             "source": source,
             "target": platform_name(),
             "same_machine": same_machine,
             "browser_version": std::env::var("PB_TEST_BROWSER_VERSION").ok(),
+            "sealed": true,
             "opened": true,
             "cookie": r["cookie"].as_str().is_some_and(|c| c.contains("pb_iso=portable")),
             "local_storage": r["local"] == json!("portable"),
             "indexeddb": r["idb"] == json!("portable"),
+            "label": label.portability,
         })
     };
 
@@ -712,8 +758,23 @@ fn portability_spike() {
             }
             env.close(&source);
             std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{e}"));
-            pb_runtime::backup::copy_tree(&env.user_data(&source), &copy)
+            let key = pb_seal::SealKey::generate().unwrap_or_else(|e| panic!("{e}"));
+            std::fs::write(dir.join("key.b64"), key.to_base64().as_bytes())
                 .unwrap_or_else(|e| panic!("{e}"));
+            let outcome = pb_seal::seal_profile(
+                &env.user_data(&source),
+                &[],
+                &key,
+                &binding,
+                &sealed,
+                &std::sync::atomic::AtomicBool::new(false),
+                &mut |_| {},
+            )
+            .unwrap_or_else(|e| panic!("seal: {e}"));
+            eprintln!(
+                "sealed {} files ({} bytes) into {} bytes",
+                outcome.stats.files, outcome.stats.bytes, outcome.sealed_bytes
+            );
             std::fs::write(
                 dir.join("meta.json"),
                 json!({ "platform": platform_name() }).to_string(),
@@ -725,9 +786,16 @@ fn portability_spike() {
             if let Ok(out) = std::env::var("PB_PORTABILITY_RESULT") {
                 std::fs::write(out, result.to_string()).unwrap_or_else(|e| panic!("{e}"));
             }
-            // Same machine, new directory must keep site data (ADR-0002 v1 promise).
+            // Same machine, new directory must keep site data (ADR-0002 v1 promise), and the label the app shows
+            // ("supported": sign-ins kept) must be true.
             assert_eq!(result["local_storage"], json!(true), "{result}");
             assert_eq!(result["indexeddb"], json!(true), "{result}");
+            assert_eq!(result["label"], json!("supported"), "{result}");
+            assert_eq!(
+                result["cookie"],
+                json!(true),
+                "the label promises kept sign-ins: {result}"
+            );
         }
         "verify" => {
             let meta: Value =
@@ -736,6 +804,10 @@ fn portability_spike() {
             let source = meta["platform"].as_str().unwrap_or("unknown").to_owned();
             let r = restore_and_read("p-other");
             let result = summarize(&source, false, &r);
+            // Another machine is labelled "sign-in required": site data must be back (the label's promise).
+            assert_eq!(result["label"], json!("sign_in_required"), "{result}");
+            assert_eq!(result["local_storage"], json!(true), "{result}");
+            assert_eq!(result["indexeddb"], json!(true), "{result}");
             eprintln!("portability (other machine): {result}");
             let out = std::env::var("PB_PORTABILITY_RESULT")
                 .unwrap_or_else(|_| panic!("PB_PORTABILITY_RESULT"));

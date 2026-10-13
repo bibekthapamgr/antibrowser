@@ -194,6 +194,8 @@ jobs:
           node scripts/runtime/portability-report.mjs results "${{ needs.resolve.outputs.version }}" > portability-matrix.md
           cat portability-matrix.md >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=portability matrix::$(grep '^|' portability-matrix.md | tail -n +3 | tr '\n' ';')"
+          # A label must never promise more than was measured.
+          grep -q "; 0 dishonest label(s)." portability-matrix.md
       - uses: actions/upload-artifact@v4
         with: { name: portability-matrix, path: portability-matrix.md }
 
