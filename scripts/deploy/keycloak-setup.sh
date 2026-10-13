@@ -272,7 +272,12 @@ if [[ ! -x $KC_HOME/bin/kc.sh ]]; then
 else
   ok "installed in $KC_HOME"
 fi
-previous=$(readlink -f "$KC_LINK" 2>/dev/null || true)
+previous=""
+if [[ -L $KC_LINK ]]; then
+  previous=$(readlink -f "$KC_LINK")
+elif [[ -e $KC_LINK ]]; then
+  die "$KC_LINK exists and is not a link made by this script (an earlier manual install?). Move it away, then re-run."
+fi
 ln -sfn "$KC_HOME" "$KC_LINK"
 if [[ -n $previous && $previous != "$KC_HOME" ]]; then
   CHANGED=1

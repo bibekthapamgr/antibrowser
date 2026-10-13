@@ -5,6 +5,7 @@
  */
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { seedWith } from '../scripts/seed.ts';
 import { FIXTURES } from '../src/fixtures.ts';
 import { type Harness, harness } from './helpers.ts';
 import { LEGACY } from './legacy-fixtures.ts';
@@ -68,6 +69,57 @@ describe('upgrade of milestone 01 data (migration 0003)', () => {
     const names = columns.rows.map((r) => r.column_name);
     expect(names).not.toContain('client_label');
     expect(names).not.toContain('folder_label');
+  });
+});
+
+describe('seeding a development database first seeded in milestone 01', () => {
+  it('reuses the client that migration 0003 made from a fixture profile label (other id, same name)', async () => {
+    const c = await h.owner.connect();
+    const acme = FIXTURES.orgs.acme.id;
+    const north = FIXTURES.clients.acmeNorth;
+    try {
+      await c.query('begin');
+      // Recreate that server state: "Client North" exists under the id the migration generated, not the fixture id.
+      await c.query('update profiles set client_id = null where org_id = $1 and client_id = $2', [
+        acme,
+        north.id,
+      ]);
+      await c.query('delete from clients where org_id = $1 and id = $2', [acme, north.id]); // its grants cascade
+      const { rows } = await c.query<{ id: string }>(
+        `insert into clients (id, org_id, name, name_key, created_by)
+         values (app.new_id('cli'), $1, $2, 'client north', $3) returning id`,
+        [acme, north.name, FIXTURES.users.acmeOwner.id],
+      );
+      const migrated = rows[0]?.id;
+      expect(migrated).toMatch(/^cli_/);
+      expect(migrated).not.toBe(north.id);
+      await c.query('update profiles set client_id = $2 where org_id = $1 and id = $3', [
+        acme,
+        migrated,
+        FIXTURES.profiles.acmeShop.id,
+      ]);
+
+      await seedWith(c); // failed before with permission_grants_org_id_client_id_fkey
+
+      const grant = await c.query('select client_id from permission_grants where id = $1', [
+        FIXTURES.grants.operatorNorth.id,
+      ]);
+      expect(grant.rows).toEqual([{ client_id: migrated }]);
+      const clients = await c.query('select id from clients where org_id = $1 and name_key = $2', [
+        acme,
+        'client north',
+      ]);
+      expect(clients.rows).toEqual([{ id: migrated }]);
+      // Seeding again changes nothing.
+      const count = async () =>
+        (await c.query('select count(*)::int as n from clients where org_id = $1', [acme])).rows[0].n;
+      const before = await count();
+      await seedWith(c);
+      expect(await count()).toBe(before);
+    } finally {
+      await c.query('rollback');
+      c.release();
+    }
   });
 });
 
