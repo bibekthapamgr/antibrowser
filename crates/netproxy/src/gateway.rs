@@ -55,6 +55,8 @@ pub struct GatewayStatus {
     pub consecutive_failures: u64,
     /// Connections made without the proxy (only with [`Fallback::Direct`]).
     pub direct_connections: u64,
+    /// Websites the proxy answered it could not reach (the proxy itself worked).
+    pub website_errors: u64,
     pub last_error: Option<&'static str>,
     pub last_error_at: Option<SystemTime>,
     pub last_success_at: Option<SystemTime>,
@@ -76,6 +78,7 @@ struct Stats {
     failures: AtomicU64,
     consecutive: AtomicU64,
     direct: AtomicU64,
+    website: AtomicU64,
     last: Mutex<Last>,
 }
 
@@ -86,7 +89,13 @@ impl Stats {
             l.success_at = Some(SystemTime::now());
         }
     }
+    /// Records a failed connection. A website the proxy could not reach does not make the proxy "failing".
     fn fail(&self, e: &ProxyError) {
+        if e.is_website_error() {
+            self.ok();
+            self.website.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.failures.fetch_add(1, Ordering::Relaxed);
         self.consecutive.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut l) = self.last.lock() {
@@ -198,6 +207,7 @@ impl Gateway {
             failures: self.stats.failures.load(Ordering::Relaxed),
             consecutive_failures: self.stats.consecutive.load(Ordering::Relaxed),
             direct_connections: self.stats.direct.load(Ordering::Relaxed),
+            website_errors: self.stats.website.load(Ordering::Relaxed),
             last_error: last.error,
             last_error_at: last.error_at,
             last_success_at: last.success_at,

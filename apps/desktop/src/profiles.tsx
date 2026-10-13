@@ -22,6 +22,7 @@ import { errorMessage, isIpcError } from './backend/types.ts';
 import { Cell, Dialog, useDebounced, useElementHeight, VirtualList } from './components.tsx';
 import { NameDialog, ProfileDrawer } from './drawer.tsx';
 import { ExportDialog, ImportDialog } from './importer.tsx';
+import { CredentialPrompt, NetworkCell, SetProxyDialog } from './network.tsx';
 import { nameKey } from './notes.ts';
 import {
   ACTION_LABEL,
@@ -238,10 +239,15 @@ const ACTION_DONE: Record<
       : `Removed ${plural(n, 'profile')} from favourites.`,
   trash: (n) => `Moved ${plural(n, 'profile')} to the trash.`,
   restore: (n) => `Restored ${plural(n, 'profile')} from the trash.`,
+  set_proxy: (n, a) =>
+    a.action === 'set_proxy' && a.proxy_id
+      ? `Set the proxy of ${plural(n, 'profile')}. Open profiles use it after they are reopened.`
+      : `Removed the proxy from ${plural(n, 'profile')}.`,
 };
 
 type BulkDialog =
-  | { kind: 'add_tag' | 'remove_tag' | 'move' | 'export' | 'delete' }
+  | { kind: 'add_tag' | 'remove_tag' | 'move' | 'export' | 'delete' | 'set_proxy' }
+  | { kind: 'credentials'; proxyId: string; profile: ProfileView }
   | { kind: 'failures'; title: string; result: BulkResult };
 
 export function ProfilesScreen(props: {
@@ -370,6 +376,11 @@ export function ProfilesScreen(props: {
         notify(`Force closing ${withClient(p)}…`);
       }
     } catch (e) {
+      // The proxy's login is gone from the keychain: ask for it again, then open the profile.
+      if (isIpcError(e) && e.code === 'PROXY_CREDENTIALS_MISSING' && p.proxy_id) {
+        setDialog({ kind: 'credentials', proxyId: p.proxy_id, profile: p });
+        return;
+      }
       notify(errorMessage(e), 'error');
     }
   };
@@ -804,6 +815,30 @@ export function ProfilesScreen(props: {
           }}
         />
       )}
+      {dialog?.kind === 'set_proxy' && (
+        <SetProxyDialog
+          backend={backend}
+          count={count}
+          onClose={() => setDialog(null)}
+          onSubmit={async (a) => {
+            setDialog(null);
+            await runBulk(a);
+          }}
+        />
+      )}
+      {dialog?.kind === 'credentials' && (
+        <CredentialPrompt
+          backend={backend}
+          proxyId={dialog.proxyId}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            const p = dialog.profile;
+            setDialog(null);
+            notify('Login saved.');
+            void toggleOpen(p);
+          }}
+        />
+      )}
       {dialog?.kind === 'failures' && (
         <FailuresDialog title={dialog.title} result={dialog.result} onClose={() => setDialog(null)} />
       )}
@@ -907,7 +942,9 @@ function ProfileRow(props: {
         )}
       </Cell>
       <Cell className="col-used small">{relative(p.last_started_at)}</Cell>
-      <Cell className="col-proxy muted">{p.proxy_label ?? '—'}</Cell>
+      <Cell className="col-proxy">
+        <NetworkCell p={p} />
+      </Cell>
       <Cell className="col-sync muted small">Local</Cell>
       <Cell className="trow__actions">
         <button
@@ -937,7 +974,7 @@ function BulkBar(props: {
   onSelectAll: () => void;
   onClear: () => void;
   onAction: (a: BulkAction) => void;
-  onDialog: (kind: 'add_tag' | 'remove_tag' | 'move' | 'export' | 'delete') => void;
+  onDialog: (kind: 'add_tag' | 'remove_tag' | 'move' | 'export' | 'delete' | 'set_proxy') => void;
 }) {
   const { count, view } = props;
   const n = count.toLocaleString();
@@ -990,6 +1027,9 @@ function BulkBar(props: {
             </button>
             <button type="button" className="pb-button" onClick={() => props.onDialog('move')}>
               Move to client…
+            </button>
+            <button type="button" className="pb-button" onClick={() => props.onDialog('set_proxy')}>
+              Set proxy…
             </button>
             <button
               type="button"

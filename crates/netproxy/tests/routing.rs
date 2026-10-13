@@ -115,6 +115,15 @@ fn http_proxy_with_basic_login_carries_tunnels_and_plain_http() {
     let st = gw.status();
     assert_eq!((st.failures, st.consecutive_failures), (0, 0));
     assert!(st.last_success_at.is_some());
+
+    // A website the proxy cannot reach is that website's problem: the proxy is not reported as failing.
+    let (head, _) = browser_tunnel(gw.port(), "down.pb.test:443", "/");
+    assert!(head.contains("X-Pb-Error: PROXY_TARGET_FAILED"), "{head}");
+    let st = gw.status();
+    assert_eq!(
+        (st.failures, st.consecutive_failures, st.website_errors),
+        (0, 0, 1)
+    );
 }
 
 #[test]

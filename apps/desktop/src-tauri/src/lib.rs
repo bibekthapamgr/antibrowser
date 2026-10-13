@@ -309,6 +309,7 @@ pub fn run() {
         if let RunEvent::Exit = event {
             if let Some(state) = handle.try_state::<Arc<AppState>>() {
                 state.supervisor.detach_all();
+                state.stop_all_gateways();
             }
             if let Ok(dir) = handle.path().app_local_data_dir() {
                 recovery::end_session(&dir);

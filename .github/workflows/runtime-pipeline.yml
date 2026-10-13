@@ -99,15 +99,16 @@ jobs:
           PB_TEST_BROWSER_REQUIRED: "1"
           PB_TEST_SWITCHES: ${{ matrix.switches }}
         run: |
-          cargo test --locked -p pb-desktop --test browser --no-run
+          cargo test --locked -p pb-desktop --test browser --test browser_network --no-run
           # Written to a file, never a pipe: browsers inherit handles on Windows and would hold a pipe open.
+          # browser_network (milestone 05 leak tests) prints its findings as ::notice lines (leak-test evidence).
           status=0
           scripts/ci/annotate.sh "browser tests ${{ matrix.platform }}" \
-            scripts/ci/with-timeout.sh 1200 cargo test --locked -p pb-desktop --test browser -- --test-threads=1 --nocapture \
+            scripts/ci/with-timeout.sh 1500 cargo test --locked -p pb-desktop --test browser --test browser_network -- --test-threads=1 --nocapture \
             > "$RUNNER_TEMP/browser-tests.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/browser-tests.log"
           [ "$status" -eq 0 ] || exit "$status"
-          passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | tail -1)
+          passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$RUNNER_TEMP/browser-tests.log" | grep -Eo '[0-9]+' | awk '{ s += $1 } END { print s }')
           mkdir -p out
           cp "${{ steps.rt.outputs.artifact }}" out/
           echo "{\"platform\":\"${{ matrix.platform }}\",\"result\":\"pass\",\"tests\":${passed:-0},\"run_url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > "out/compat-${{ matrix.platform }}.json"

@@ -157,6 +157,11 @@ impl ProxyError {
         matches!(self, Self::DnsFailed | Self::Unreachable | Self::Timeout)
     }
 
+    /// The proxy answered but could not or would not reach the website: the proxy itself works.
+    pub fn is_website_error(&self) -> bool {
+        matches!(self, Self::TargetFailed | Self::TargetBlocked)
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::DnsFailed => "PROXY_DNS_FAILED",

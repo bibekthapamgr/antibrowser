@@ -71,6 +71,21 @@ export function tauriBackend(): Backend {
       export: (selection, format, includeNotes) =>
         call('export_profiles', { selection, format, includeNotes }),
     },
+    network: {
+      proxies: () => call('list_proxies', {}),
+      createProxy: (proxy) => call('create_proxy', { proxy }),
+      updateProxy: (proxyId, expectedVersion, changes) =>
+        call('update_proxy', { proxyId, expectedVersion, changes }),
+      deleteProxy: async (proxyId) => {
+        await call('delete_proxy', { proxyId });
+      },
+      testProxy: (proxyId) => call('test_proxy', { proxyId }),
+      checks: (proxyId) => call('list_proxy_checks', { proxyId }),
+      assign: (profileId, proxyId, failClosed, expectedVersion) =>
+        call('assign_proxy', { profileId, proxyId, failClosed, expectedVersion }),
+      validatePrivacy: (config, failClosedProxy) => call('validate_privacy', { config, failClosedProxy }),
+      privacyOptions: () => call('get_privacy_options', {}),
+    },
     system: {
       runtimeStatus: () => call('get_runtime_status', {}),
       installRuntime: (version) => call('install_runtime', { version }),

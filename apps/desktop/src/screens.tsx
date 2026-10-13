@@ -128,6 +128,7 @@ export function SettingsScreen(props: {
   const crash = setting(app, 'privacy.crash_reports')?.value === true;
   const downloads = setting(app, 'downloads.directory')?.value as string | null | undefined;
   const retention = String(setting(app, 'profiles.trash_retention_days')?.value ?? '30');
+  const localProxies = setting(app, 'proxies.allow_private_addresses')?.value === true;
 
   return (
     <section className="screen settings" aria-labelledby="settings-title">
@@ -207,6 +208,22 @@ export function SettingsScreen(props: {
         <p className="muted small">
           Applies to profiles moved to the trash from now on. Permanent deletion removes a profile’s sign-ins
           and site data from this device; open profiles are never deleted.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Proxies</legend>
+        <label className="choice">
+          <input
+            type="checkbox"
+            checked={localProxies}
+            onChange={(e) => update('proxies.allow_private_addresses', e.target.checked)}
+          />
+          Allow proxies on this computer or my local network
+        </label>
+        <p className="muted small">
+          Off by default. Turn it on to use a proxy running on this computer (127.0.0.1) or another device on
+          your network. Link-local and cloud metadata addresses (such as 169.254.169.254) are never allowed.
         </p>
       </fieldset>
 

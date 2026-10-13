@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { demoBackend } from '../src/backend/demo.ts';
 import type { Backend, ProfileView } from '../src/backend/types.ts';
 import { nameKey, sanitizeNotes, secretHint } from '../src/notes.ts';
+import { parseProxyLine } from '../src/proxy-line.ts';
 
 const code = async (p: Promise<unknown>) =>
   p.then(
@@ -281,5 +282,96 @@ describe('demo backend library (milestone 04)', () => {
     expect(secretHint('4111 1111 1111 1111')).not.toBeNull();
     expect(secretHint('Uses the password manager')).toBeNull();
     expect(sanitizeNotes(`a\r\nb${RLO}c${BELL}  `)).toBe('a\nbc');
+  });
+});
+
+describe('proxies and privacy (milestone 05)', () => {
+  const secret = ['pw', 'Zq7', 'Lm'].join('-');
+
+  it('parses pasted proxy lines into fields without keeping a URL', () => {
+    expect(parseProxyLine('proxy.example.net:8080')).toEqual({ host: 'proxy.example.net', port: 8080 });
+    expect(parseProxyLine('proxy.example.net:8080:alice:pa:ss')).toEqual({
+      host: 'proxy.example.net',
+      port: 8080,
+      username: 'alice',
+      password: 'pa:ss',
+    });
+    expect(parseProxyLine('socks5://bob:p%40ss@10.0.0.2:1080/')).toEqual({
+      type: 'socks5',
+      host: '10.0.0.2',
+      port: 1080,
+      username: 'bob',
+      password: 'p@ss',
+    });
+    expect(parseProxyLine('https://[2001:db8::1]:443')).toEqual({
+      type: 'https',
+      host: '2001:db8::1',
+      port: 443,
+    });
+    expect(parseProxyLine('host:99999')).toBeNull();
+    expect(parseProxyLine('  ')).toBeNull();
+  });
+
+  it('validates proxies like the Rust commands and never returns a login', async () => {
+    const b = demoBackend();
+    const base = { name: 'P', type: 'http' as const, host: 'proxy.example.net', port: 8080 };
+    expect(await code(b.network.createProxy({ ...base, host: 'http://x.example' }))).toBe('PROXY_BAD_HOST');
+    expect(await code(b.network.createProxy({ ...base, port: 0 }))).toBe('PROXY_BAD_PORT');
+    expect(await code(b.network.createProxy({ ...base, host: '127.0.0.1' }))).toBe('PROXY_PRIVATE_ADDRESS');
+    expect(await code(b.network.createProxy({ ...base, host: '169.254.169.254' }))).toBe(
+      'PROXY_FORBIDDEN_ADDRESS',
+    );
+    expect(await code(b.network.createProxy({ ...base, login: { username: 'a:b', password: 'c' } }))).toBe(
+      'PROXY_BAD_CREDENTIALS',
+    );
+    expect(await code(b.network.createProxy({ ...base, expires_at: '2026-13-40' }))).toBe('INVALID_DATE');
+    const p = await b.network.createProxy({ ...base, login: { username: 'alice', password: secret } });
+    expect(p.has_login).toBe(true);
+    expect(JSON.stringify(await b.network.proxies())).not.toContain(secret);
+    await b.system.updateSetting('proxies.allow_private_addresses', true);
+    expect((await b.network.createProxy({ ...base, name: 'Local', host: '127.0.0.1' })).host).toBe(
+      '127.0.0.1',
+    );
+  });
+
+  it('assigns proxies with versions, protects used proxies and reports checks', async () => {
+    const b = demoBackend();
+    const shop = await first(b, (p) => p.name === 'Ads QA');
+    const [px] = await b.network.proxies();
+    if (!px) throw new Error('no proxy');
+    expect(await code(b.network.assign(shop.id, px.id, true, shop.version + 5))).toBe('VERSION_CONFLICT');
+    const v = await b.network.assign(shop.id, px.id, true, shop.version);
+    expect([v.proxy_label, v.network.status]).toEqual([px.name, 'ready']);
+    expect(await code(b.network.deleteProxy(px.id))).toBe('PROXY_IN_USE');
+    const c = await b.network.testProxy(px.id);
+    expect([c.result, c.egress_ip !== null]).toEqual(['ok', true]);
+    expect((await b.network.checks(px.id))[0]?.id).toBe(c.id);
+  });
+
+  it('asks for a missing login before opening and shows a failing proxy', async () => {
+    const missing = demoBackend('nologin');
+    const shop = await first(missing, (p) => p.name === 'Shop admin');
+    expect(await code(missing.profiles.launch(shop.id))).toBe('PROXY_CREDENTIALS_MISSING');
+    const down = demoBackend('proxydown');
+    const s = await first(down, (p) => p.name === 'Shop admin');
+    await down.profiles.launch(s.id);
+    await settle();
+    expect((await first(down, (p) => p.id === s.id)).network.status).toBe('failing');
+  });
+
+  it('validates privacy settings and reports what this OS cannot apply', async () => {
+    const b = demoBackend('win');
+    const v = await b.network.validatePrivacy({ timezone: 'Asia/Kathmandu', language: 'ne-NP' }, false);
+    expect(v.valid).toBe(true);
+    expect(v.report.find((r) => r.field === 'timezone')?.support).toBe('unavailable');
+    expect((await b.network.validatePrivacy({ language: 'xx-XX' }, false)).error?.code).toBe(
+      'INVALID_LANGUAGE',
+    );
+    const p = await first(b);
+    expect(
+      await code(b.profiles.update(p.id, { expectedVersion: p.version, privacy: { timezone: 'Mars/Base' } })),
+    ).toBe('INVALID_TIMEZONE');
+    const options = await b.network.privacyOptions();
+    expect(options.presets.every((x) => x.config.preset === x.id)).toBe(true);
   });
 });

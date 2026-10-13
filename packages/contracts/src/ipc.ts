@@ -1,6 +1,7 @@
 /**
  * Desktop IPC contract (milestone 02 deliverable "IPC schemas"; milestone 03 adds the runtime lifecycle; milestone 04
- * adds profile/client management, bulk actions, the trash, templates, and configuration import/export).
+ * adds profile/client management, bulk actions, the trash, templates, and configuration import/export; milestone 05
+ * adds proxies, routing, connectivity checks and privacy/environment settings).
  *
  * The manager webview talks to the Rust shell only through these commands and events. Rust validates every input
  * again (apps/desktop/src-tauri); these schemas document the shapes and let the UI type-check its calls.
@@ -17,6 +18,8 @@ const TagIdPattern = '^tag_[0-9A-HJKMNP-TV-Z]{26}$';
 const TemplateIdPattern = '^tpl_[0-9A-HJKMNP-TV-Z]{26}$';
 const ImportJobIdPattern = '^imp_[0-9A-HJKMNP-TV-Z]{26}$';
 const FilterIdPattern = '^flt_[0-9A-HJKMNP-TV-Z]{26}$';
+const ProxyIdPattern = '^prx_[0-9A-HJKMNP-TV-Z]{26}$';
+const NetworkCheckIdPattern = '^nck_[0-9A-HJKMNP-TV-Z]{26}$';
 
 export const IpcError = Type.Object({
   code: Type.String(),
@@ -46,6 +49,50 @@ export const TagRef = Type.Object({
 });
 export type TagRef = Static<typeof TagRef>;
 
+// ------------------------------------------------------------------------------------------------ milestone 05
+export const WebRtcPolicy = Type.Enum(['default', 'public_interface_only', 'disable_non_proxied_udp']);
+export const TextSize = Type.Enum(['default', 'large', 'larger']);
+/**
+ * Privacy and environment settings: configuration and QA controls the browser itself supports. They change what
+ * the browser sends and shows; they do not make a profile look like a different device, and nothing is randomised.
+ */
+export const PrivacyConfig = Type.Object(
+  {
+    webrtc: Type.Optional(WebRtcPolicy),
+    block_third_party_cookies: Type.Optional(Type.Boolean()),
+    do_not_track: Type.Optional(Type.Boolean()),
+    language: Type.Optional(Nullable(Type.String({ maxLength: 16 }))),
+    timezone: Type.Optional(Nullable(Type.String({ maxLength: 40 }))),
+    window: Type.Optional(
+      Nullable(
+        Type.Object(
+          {
+            width: Type.Integer({ minimum: 800, maximum: 3840 }),
+            height: Type.Integer({ minimum: 600, maximum: 2160 }),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
+    text_size: Type.Optional(TextSize),
+    reduced_motion: Type.Optional(Type.Boolean()),
+    preset: Type.Optional(Nullable(Type.String({ maxLength: 40 }))),
+  },
+  { additionalProperties: false },
+);
+export type PrivacyConfig = Static<typeof PrivacyConfig>;
+
+export const NetworkView = Type.Object({
+  status: Type.Enum(['off', 'ready', 'active', 'failing', 'bypassing', 'lost'], {
+    description:
+      'off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile.',
+  }),
+  last_error: Nullable(Type.String({ maxLength: 64 })),
+  direct_connections: Type.Integer({ minimum: 0 }),
+  restart_required: Type.Boolean({ description: 'Settings changed while the profile was open.' }),
+});
+export type NetworkView = Static<typeof NetworkView>;
+
 export const ProfileView = Type.Object({
   id: Type.String({ pattern: ProfileIdPattern }),
   workspace_id: Nullable(Type.String({ pattern: WorkspaceIdPattern })),
@@ -60,7 +107,11 @@ export const ProfileView = Type.Object({
   trashed_at: Nullable(Type.String({ description: 'Set while the profile is in the trash.' })),
   purge_after: Nullable(Type.String({ description: 'When a trashed profile is deleted permanently.' })),
   template_id: Nullable(Type.String({ pattern: TemplateIdPattern })),
-  proxy_label: Nullable(Type.String({ description: 'Placeholder until milestone 05 assigns proxies.' })),
+  proxy_id: Nullable(Type.String({ pattern: ProxyIdPattern })),
+  proxy_label: Nullable(Type.String({ description: 'Name of the assigned proxy.' })),
+  fail_closed: Type.Boolean({ description: 'With a proxy: block traffic that cannot go through it.' }),
+  network: NetworkView,
+  privacy: PrivacyConfig,
   sync_status: Type.Literal('local_only', { description: 'Cloud sync arrives in milestone 07.' }),
   version: Type.Integer({ minimum: 1 }),
   created_at: Type.String(),
@@ -98,6 +149,7 @@ export const SettingValue = Type.Object({
     'downloads.directory',
     'workspace.active',
     'profiles.trash_retention_days',
+    'proxies.allow_private_addresses',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -276,6 +328,7 @@ export const ProfileFilter = Type.Object(
     states: Type.Optional(Type.Array(RunState)),
     favourites_only: Type.Optional(Type.Boolean()),
     template: Type.Optional(Nullable(Type.String({ pattern: TemplateIdPattern }))),
+    proxy: Type.Optional(Nullable(Type.String({ pattern: ProxyIdPattern }))),
   },
   { additionalProperties: false },
 );
@@ -386,6 +439,11 @@ export const BulkAction = Type.Union([
   Type.Object({ action: Type.Literal('favourite'), value: Type.Boolean() }),
   Type.Object({ action: Type.Literal('trash') }),
   Type.Object({ action: Type.Literal('restore') }),
+  Type.Object({
+    action: Type.Literal('set_proxy'),
+    proxy_id: Nullable(Type.String({ pattern: ProxyIdPattern })),
+    fail_closed: Type.Boolean(),
+  }),
 ]);
 export type BulkAction = Static<typeof BulkAction>;
 
@@ -477,6 +535,100 @@ export type ImportSettings = Static<typeof ImportSettings>;
 
 const Label = Type.String({ minLength: 1, maxLength: 120 });
 
+export const ProxyType = Type.Enum(['http', 'https', 'socks5']);
+/** A proxy login. It is sent to Rust once and stored only in the OS keychain; it is never returned. */
+export const ProxyLogin = Type.Object(
+  {
+    username: Type.String({ minLength: 1, maxLength: 255 }),
+    password: Type.String({ maxLength: 255 }),
+  },
+  { additionalProperties: false },
+);
+const ProxyDate = Type.String({ pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' });
+export const ProxyInput = Type.Object(
+  {
+    name: Type.String({ minLength: 1, maxLength: 80 }),
+    type: ProxyType,
+    host: Type.String({ minLength: 1, maxLength: 253 }),
+    port: Type.Integer({ minimum: 1, maximum: 65535 }),
+    login: Type.Optional(ProxyLogin),
+    expires_at: Type.Optional(ProxyDate),
+    notes: Type.Optional(Type.String({ maxLength: 500 })),
+  },
+  { additionalProperties: false },
+);
+export type ProxyInput = Static<typeof ProxyInput>;
+export const ProxyEdit = Type.Object(
+  {
+    name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+    type: Type.Optional(ProxyType),
+    host: Type.Optional(Type.String({ minLength: 1, maxLength: 253 })),
+    port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
+    login: Type.Optional(ProxyLogin),
+    remove_login: Type.Optional(Type.Boolean()),
+    expires_at: Type.Optional(ProxyDate),
+    clear_expiry: Type.Optional(Type.Boolean()),
+    notes: Type.Optional(Type.String({ maxLength: 500 })),
+  },
+  { additionalProperties: false },
+);
+export type ProxyEdit = Static<typeof ProxyEdit>;
+export const NetworkCheck = Type.Object({
+  id: Type.String({ pattern: NetworkCheckIdPattern }),
+  proxy_id: Type.String({ pattern: ProxyIdPattern }),
+  result: Type.Enum(['ok', 'error']),
+  error_code: Nullable(Type.String({ maxLength: 64 })),
+  latency_ms: Nullable(Type.Integer({ minimum: 0 })),
+  egress_ip: Nullable(Type.String({ maxLength: 45, description: 'The address the check service saw.' })),
+  checked_at: Type.String(),
+});
+export type NetworkCheck = Static<typeof NetworkCheck>;
+export const ProxyView = Type.Object({
+  id: Type.String({ pattern: ProxyIdPattern }),
+  workspace_id: Type.String({ pattern: WorkspaceIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 80 }),
+  type: ProxyType,
+  host: Type.String(),
+  port: Type.Integer({ minimum: 1, maximum: 65535 }),
+  has_login: Type.Boolean({ description: 'A login is saved in the keychain (never returned).' }),
+  expires_at: Nullable(ProxyDate),
+  expiry: Nullable(Type.Enum(['expired', 'expires_soon'])),
+  days_left: Nullable(Type.Integer()),
+  notes: Type.String({ maxLength: 500 }),
+  version: Type.Integer({ minimum: 1 }),
+  created_at: Type.String(),
+  updated_at: Type.String(),
+  profiles: Type.Integer({ minimum: 0 }),
+  last_check: Nullable(NetworkCheck),
+});
+export type ProxyView = Static<typeof ProxyView>;
+const Support = Type.Enum(['applied', 'partial', 'unavailable']);
+export const FieldReport = Type.Object({ field: Type.String(), support: Support, message: Type.String() });
+export type FieldReport = Static<typeof FieldReport>;
+export const PrivacyValidation = Type.Object({
+  valid: Type.Boolean(),
+  error: Nullable(IpcError),
+  platform: Type.Enum(['windows', 'macos', 'linux']),
+  report: Type.Array(FieldReport),
+});
+export type PrivacyValidation = Static<typeof PrivacyValidation>;
+export const Preset = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  description: Type.String(),
+  config: PrivacyConfig,
+});
+export type Preset = Static<typeof Preset>;
+export const PrivacyOptions = Type.Object({
+  platform: Type.Enum(['windows', 'macos', 'linux']),
+  languages: Type.Array(Type.Object({ tag: Type.String(), name: Type.String() })),
+  time_zones: Type.Array(Type.String()),
+  window_min: Type.Tuple([Type.Integer(), Type.Integer()]),
+  window_max: Type.Tuple([Type.Integer(), Type.Integer()]),
+  presets: Type.Array(Preset),
+});
+export type PrivacyOptions = Static<typeof PrivacyOptions>;
+
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
@@ -518,6 +670,7 @@ export const COMMANDS = {
       camera: Type.Optional(PermissionDefault),
       microphone: Type.Optional(PermissionDefault),
       location: Type.Optional(PermissionDefault),
+      privacy: Type.Optional(PrivacyConfig),
     }),
     result: ProfileView,
   },
@@ -696,6 +849,44 @@ export const COMMANDS = {
       notes_withheld: Type.Integer(),
     }),
   },
+
+  // milestone 05 (roadmap names: proxies.test / profiles.assign_proxy / privacy.validate)
+  list_proxies: { args: Type.Object({}), result: Type.Array(ProxyView, { maxItems: 1000 }) },
+  create_proxy: { args: Type.Object({ proxy: ProxyInput }), result: ProxyView },
+  update_proxy: {
+    args: Type.Object({
+      proxyId: Type.String({ pattern: ProxyIdPattern }),
+      expectedVersion: Type.Integer({ minimum: 1 }),
+      changes: ProxyEdit,
+    }),
+    result: ProxyView,
+  },
+  delete_proxy: {
+    args: Type.Object({ proxyId: Type.String({ pattern: ProxyIdPattern }) }),
+    result: Type.Null(),
+  },
+  test_proxy: {
+    args: Type.Object({ proxyId: Type.String({ pattern: ProxyIdPattern }) }),
+    result: NetworkCheck,
+  },
+  list_proxy_checks: {
+    args: Type.Object({ proxyId: Type.String({ pattern: ProxyIdPattern }) }),
+    result: Type.Array(NetworkCheck, { maxItems: 50 }),
+  },
+  assign_proxy: {
+    args: Type.Object({
+      profileId: Type.String({ pattern: ProfileIdPattern }),
+      proxyId: Nullable(Type.String({ pattern: ProxyIdPattern })),
+      failClosed: Type.Boolean(),
+      expectedVersion: Type.Integer({ minimum: 1 }),
+    }),
+    result: ProfileView,
+  },
+  validate_privacy: {
+    args: Type.Object({ config: PrivacyConfig, failClosedProxy: Type.Optional(Type.Boolean()) }),
+    result: PrivacyValidation,
+  },
+  get_privacy_options: { args: Type.Object({}), result: PrivacyOptions },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -707,7 +898,32 @@ export const EVENTS = {
   'profiles-changed': Type.Object({ running: Type.Integer() }),
   'quit-requested': Type.Object({ running: Type.Integer(), unresponsive: Type.Integer() }),
   'deep-link': Type.Object({ kind: Type.Literal('auth-callback'), outcome: Type.Unknown() }),
-  warning: Type.Object({ code: Type.Literal('LOW_DISK_SPACE'), free_bytes: Type.Integer() }),
+  warning: Type.Union([
+    Type.Object({ code: Type.Literal('LOW_DISK_SPACE'), free_bytes: Type.Integer() }),
+    Type.Object({
+      code: Type.Literal('PROXY_FAILING'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      error: Type.String(),
+      fail_closed: Type.Boolean(),
+    }),
+    Type.Object({
+      code: Type.Literal('PROXY_BYPASSED'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      direct_connections: Type.Integer(),
+    }),
+    Type.Object({
+      code: Type.Literal('PROXY_CONNECTION_LOST'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      reason: Type.String(),
+    }),
+    Type.Object({
+      code: Type.Union([Type.Literal('PROXY_EXPIRING'), Type.Literal('PROXY_EXPIRED')]),
+      proxy_id: Type.String({ pattern: ProxyIdPattern }),
+      profile_id: Type.Optional(Type.String({ pattern: ProfileIdPattern })),
+      expires_at: Nullable(Type.String()),
+      days_left: Type.Optional(Nullable(Type.Integer())),
+    }),
+  ]),
 } satisfies Record<string, TSchema>;
 
 export type EventName = keyof typeof EVENTS;

@@ -24,6 +24,9 @@ export const ID_PREFIXES = {
   template: 'tpl',
   importJob: 'imp',
   savedFilter: 'flt',
+  // Milestone 05: proxies and connectivity-check records.
+  proxy: 'prx',
+  networkCheck: 'nck',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

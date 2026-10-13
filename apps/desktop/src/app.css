@@ -841,3 +841,44 @@ details summary {
   justify-self: start;
   min-width: 180px;
 }
+
+/* ---------------------------------------------------------------- milestone 05: proxies and privacy */
+.badge {
+  display: inline-block;
+  margin-left: var(--pb-space-1);
+  padding: 0 6px;
+  border: 1px solid var(--pb-border-strong);
+  border-radius: 999px;
+  font-size: var(--pb-text-sm);
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--pb-text);
+  background: var(--pb-surface-muted);
+}
+.badge:first-child {
+  margin-left: 0;
+}
+.badge--warn {
+  border-color: var(--pb-warn);
+  color: var(--pb-warn);
+  font-weight: 600;
+}
+.badge--error {
+  border-color: var(--pb-danger);
+  color: var(--pb-danger);
+  font-weight: 600;
+}
+.row--nowrap {
+  flex-wrap: nowrap;
+}
+.grow {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+table.simple.proxy-table td,
+table.simple.proxy-table th {
+  vertical-align: top;
+}
+.proxies > p.small {
+  max-width: 70ch;
+}

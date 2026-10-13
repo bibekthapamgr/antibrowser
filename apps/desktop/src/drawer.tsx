@@ -11,6 +11,7 @@ import type {
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog } from './components.tsx';
+import { NetworkSection, PrivacySection } from './network.tsx';
 import { nameKey, secretHint } from './notes.ts';
 import { day, LAST_ERROR, type Notify, primaryAction, StatusText, when, withClient } from './status.tsx';
 
@@ -270,8 +271,8 @@ export function ProfileDrawer(props: {
         <dd>{p.tags.length ? p.tags.map((t) => t.name).join(', ') : '—'}</dd>
         <dt>Proxy</dt>
         <dd>
-          {p.proxy_label ?? 'None assigned'}
-          <span className="muted small"> (proxy settings arrive in a later update)</span>
+          {p.proxy_label ?? 'None'}
+          {p.proxy_label && !p.fail_closed && <span className="muted small"> (fail-closed off)</span>}
         </dd>
         <dt>Sync</dt>
         <dd>Local only (this device)</dd>
@@ -449,6 +450,25 @@ export function ProfileDrawer(props: {
         </fieldset>
       </form>
 
+      <NetworkSection
+        backend={backend}
+        profile={p}
+        notify={notify}
+        onSaved={(saved) => {
+          props.onSaved(saved);
+          setStatus((s) => (s ? { ...s, profile: saved } : s));
+        }}
+      />
+      <PrivacySection
+        backend={backend}
+        profile={p}
+        notify={notify}
+        onSaved={(saved) => {
+          props.onSaved(saved);
+          setStatus((s) => (s ? { ...s, profile: saved } : s));
+        }}
+      />
+
       {!trashed && (
         <fieldset>
           <legend>Downloads</legend>
@@ -497,8 +517,8 @@ export function ProfileDrawer(props: {
       )}
 
       <p className="muted small">
-        Separate profiles keep stored website data apart. They do not make profiles look like different
-        devices or networks to websites.
+        Separate profiles keep stored website data apart. A proxy changes the network path a profile uses.
+        Neither makes profiles look like different devices to websites.
       </p>
 
       {confirmFresh && (

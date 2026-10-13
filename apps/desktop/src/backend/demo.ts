@@ -8,7 +8,8 @@
  * `migration` (database recovery screen), `running` (a profile left open, for the quit prompt), `crashed` (a profile
  * that closed unexpectedly, with a backup), `stuck` (closing times out and offers a force close), `noruntime` (the
  * browser is not installed yet), `bigimport` (the import file has 10,000 rows), `unsafeimport` (the import file is
- * an unsafe archive).
+ * an unsafe archive), `proxydown` (the first proxy does not answer), `nologin` (a proxy's saved login is missing from
+ * the keychain), `win` (Windows: the time zone setting is unavailable).
  */
 import type {
   BulkAction,
@@ -20,9 +21,15 @@ import type {
   ImportPreview,
   ImportSettings,
   Library,
+  NetworkCheck,
   Operation,
+  PrivacyConfig,
+  PrivacyValidation,
   ProfileFilter,
   ProfileStatus,
+  ProxyEdit,
+  ProxyInput,
+  ProxyView,
   SavedFilter,
   Selection,
   Sort,
@@ -99,13 +106,216 @@ const E = {
   UNKNOWN_FILE: err('UNKNOWN_FILE', 'Choose the file again.'),
   UNKNOWN_IMPORT: err('UNKNOWN_IMPORT', 'That import does not exist or has expired. Preview the file again.'),
   IMPORT_IN_PROGRESS: err('IMPORT_IN_PROGRESS', 'An import is already running.'),
+  UNKNOWN_PROXY: err('UNKNOWN_PROXY', 'That proxy does not exist in this workspace.'),
+  PROXY_IN_USE: err(
+    'PROXY_IN_USE',
+    'Profiles still use this proxy. Give them another proxy (or none) first.',
+  ),
+  INVALID_PROXY_TYPE: err('INVALID_PROXY_TYPE', 'Choose HTTP, HTTPS or SOCKS5.'),
+  INVALID_PROXY_NAME: err('INVALID_PROXY_NAME', 'Proxy names must be 1-80 visible characters.'),
+  PROXY_BAD_HOST: err(
+    'PROXY_BAD_HOST',
+    "Enter the proxy's host name or IP address only (no http://, path or login).",
+  ),
+  PROXY_BAD_PORT: err('PROXY_BAD_PORT', 'The port must be between 1 and 65535.'),
+  PROXY_BAD_CREDENTIALS: err(
+    'PROXY_BAD_CREDENTIALS',
+    'Usernames and passwords can be at most 255 bytes without control characters; HTTP usernames cannot contain a colon.',
+  ),
+  PROXY_PRIVATE_ADDRESS: err(
+    'PROXY_PRIVATE_ADDRESS',
+    'This proxy is on this computer or the local network. Allow local proxies in Settings to use it.',
+  ),
+  PROXY_FORBIDDEN_ADDRESS: err(
+    'PROXY_FORBIDDEN_ADDRESS',
+    'This address can never be used as a proxy (link-local, multicast or unspecified).',
+  ),
+  INVALID_DATE: err('INVALID_DATE', 'Enter the date as YYYY-MM-DD.'),
+  PROXY_CREDENTIALS_MISSING: err(
+    'PROXY_CREDENTIALS_MISSING',
+    "The proxy's saved login is missing from this computer's secure storage. Enter it again.",
+  ),
+  INVALID_LANGUAGE: err('INVALID_LANGUAGE', 'Choose one of the listed page languages.'),
+  INVALID_TIMEZONE: err('INVALID_TIMEZONE', 'Choose one of the listed time zones.'),
+  INVALID_WINDOW_SIZE: err('INVALID_WINDOW_SIZE', 'Window size must be between 800×600 and 3840×2160.'),
 } as const;
 
-/** Stored profile: the client and tags are references, resolved when a view is built. */
-type Rec = Omit<ProfileView, 'client_name' | 'client_colour' | 'tags'> & {
+/** Stored profile: the client, tags and proxy are references, resolved when a view is built. */
+type Rec = Omit<ProfileView, 'client_name' | 'client_colour' | 'tags' | 'proxy_label' | 'network'> & {
   tag_ids: string[];
   import_ref: string | null;
+  /** Routing and environment the open browser was started with (restart-required detection). */
+  launched_key: string | null;
 };
+
+// ---------------------------------------------------------------------------------------- milestone 05
+type FullPrivacy = Required<PrivacyConfig>;
+const DEFAULT_PRIVACY: FullPrivacy = {
+  webrtc: 'default',
+  block_third_party_cookies: false,
+  do_not_track: false,
+  language: null,
+  timezone: null,
+  window: null,
+  text_size: 'default',
+  reduced_motion: false,
+  preset: null,
+};
+const LANGUAGES: [string, string][] = [
+  ['en-US', 'English (United States)'],
+  ['en-GB', 'English (United Kingdom)'],
+  ['de-DE', 'German (Germany)'],
+  ['fr-FR', 'French (France)'],
+  ['es-ES', 'Spanish (Spain)'],
+  ['es-MX', 'Spanish (Mexico)'],
+  ['it-IT', 'Italian (Italy)'],
+  ['pt-BR', 'Portuguese (Brazil)'],
+  ['nl-NL', 'Dutch (Netherlands)'],
+  ['pl-PL', 'Polish (Poland)'],
+  ['sv-SE', 'Swedish (Sweden)'],
+  ['tr-TR', 'Turkish (Turkey)'],
+  ['ru-RU', 'Russian (Russia)'],
+  ['ar-SA', 'Arabic (Saudi Arabia)'],
+  ['hi-IN', 'Hindi (India)'],
+  ['ne-NP', 'Nepali (Nepal)'],
+  ['id-ID', 'Indonesian (Indonesia)'],
+  ['ja-JP', 'Japanese (Japan)'],
+  ['ko-KR', 'Korean (South Korea)'],
+  ['zh-CN', 'Chinese (Simplified, China)'],
+];
+const TIME_ZONES = [
+  'UTC',
+  'Europe/London',
+  'Europe/Dublin',
+  'Europe/Lisbon',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Madrid',
+  'Europe/Rome',
+  'Europe/Amsterdam',
+  'Europe/Stockholm',
+  'Europe/Warsaw',
+  'Europe/Istanbul',
+  'Europe/Moscow',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Mexico_City',
+  'America/Sao_Paulo',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Kathmandu',
+  'Asia/Singapore',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+];
+const preset = (id: string, name: string, description: string, config: PrivacyConfig) => ({
+  id,
+  name,
+  description,
+  config: { ...DEFAULT_PRIVACY, ...config, preset: id },
+});
+const PRESETS = [
+  preset('standard', 'Standard', "The browser's own defaults.", {}),
+  preset(
+    'privacy',
+    'Stricter privacy',
+    'Blocks third-party cookies, sends Do Not Track and limits the addresses WebRTC shares.',
+    { webrtc: 'public_interface_only', block_third_party_cookies: true, do_not_track: true },
+  ),
+  preset(
+    'accessibility',
+    'Accessibility review',
+    'Larger text, reduced motion and a 1280×800 window, for checking pages with these needs.',
+    { text_size: 'larger', reduced_motion: true, window: { width: 1280, height: 800 } },
+  ),
+  preset('laptop', 'Small laptop window', 'Opens at 1366×768 to check layouts on common laptop sizes.', {
+    window: { width: 1366, height: 768 },
+  }),
+  preset('desktop', 'Full HD window', 'Opens at 1920×1080.', { window: { width: 1920, height: 1080 } }),
+  preset(
+    'locale-en-us',
+    'English (US), New York time',
+    'Pages in US English with Eastern time, for checking dates and formats.',
+    { language: 'en-US', timezone: 'America/New_York' },
+  ),
+  preset('locale-en-gb', 'English (UK), London time', 'Pages in UK English with London time.', {
+    language: 'en-GB',
+    timezone: 'Europe/London',
+  }),
+  preset('locale-de-de', 'German, Berlin time', 'Pages in German with Central European time.', {
+    language: 'de-DE',
+    timezone: 'Europe/Berlin',
+  }),
+  preset('locale-ja-jp', 'Japanese, Tokyo time', 'Pages in Japanese with Japan time.', {
+    language: 'ja-JP',
+    timezone: 'Asia/Tokyo',
+  }),
+  preset('locale-ne-np', 'Nepali, Kathmandu time', 'Pages in Nepali with Nepal time.', {
+    language: 'ne-NP',
+    timezone: 'Asia/Kathmandu',
+  }),
+];
+interface ProxyRec {
+  id: string;
+  workspace_id: string;
+  name: string;
+  type: ProxyView['type'];
+  host: string;
+  port: number;
+  /** Stands in for the OS keychain entry. */
+  login: { username: string; password: string } | null;
+  /** The keychain entry was removed outside the app. */
+  login_missing: boolean;
+  expires_at: string | null;
+  notes: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** Demo: the proxy does not answer. */
+  down: boolean;
+}
+const ipv4 = (h: string) => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  return m ? m.slice(1).map(Number) : null;
+};
+/** Mirrors the Rust address policy: public always; private with the setting; link-local etc. never. */
+const addressClass = (host: string): 'public' | 'private' | 'forbidden' => {
+  const h = host.toLowerCase();
+  const v4 = ipv4(h);
+  if (v4) {
+    const [a = 0, b = 0] = v4;
+    if (a === 0 || a >= 224 || (a === 169 && b === 254) || (a === 192 && b === 0 && v4[2] === 2))
+      return 'forbidden';
+    if (a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168))
+      return 'private';
+    if (a === 100 && b >= 64 && b <= 127) return 'private';
+    return 'public';
+  }
+  if (h.includes(':')) {
+    if (h === '::' || h.startsWith('fe80') || h.startsWith('ff')) return 'forbidden';
+    if (h === '::1' || h.startsWith('fc') || h.startsWith('fd')) return 'private';
+    return 'public';
+  }
+  if (h === 'localhost' || h.endsWith('.localhost')) return 'private';
+  return 'public';
+};
+const daysLeft = (date: string | null) =>
+  date
+    ? Math.floor(
+        (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${now().slice(0, 10)}T00:00:00Z`)) / 86_400_000,
+      )
+    : null;
+const demoPlatform = (mode: string): PrivacyValidation['platform'] =>
+  mode === 'win' || navigator.userAgent.includes('Windows')
+    ? 'windows'
+    : navigator.userAgent.includes('Mac')
+      ? 'macos'
+      : 'linux';
 interface TagRec {
   id: string;
   workspace_id: string;
@@ -117,7 +327,12 @@ interface TemplateRec extends Template {
 interface FilterRec extends SavedFilter {
   workspace_id: string;
 }
-type Prior = Partial<Pick<Rec, 'client_id' | 'archived_at' | 'favourite' | 'trashed_at' | 'purge_after'>> & {
+type Prior = Partial<
+  Pick<
+    Rec,
+    'client_id' | 'archived_at' | 'favourite' | 'trashed_at' | 'purge_after' | 'proxy_id' | 'fail_closed'
+  >
+> & {
   tag_ids?: string[];
 };
 interface UndoEntry {
@@ -187,6 +402,9 @@ export function demoBackend(mode = ''): Backend {
   const jobs: (ImportJob & { workspace_id: string })[] = [];
   const undo: UndoEntry[] = [];
   const backups = new Map<string, { created_at_unix: number; files: number }>();
+  const proxies: ProxyRec[] = [];
+  const checks: NetworkCheck[] = [];
+  const platform = demoPlatform(mode);
   const ops: Operation[] = [];
   let opSeq = 0;
   let crashed = mode === 'crash';
@@ -205,8 +423,15 @@ export function demoBackend(mode = ''): Backend {
       version: 0,
       ui_settable: true,
     },
+    'proxies.allow_private_addresses': {
+      key: 'proxies.allow_private_addresses',
+      value: false,
+      version: 0,
+      ui_settable: true,
+    },
   };
   const ENUMS: Record<string, unknown[]> = {
+    'proxies.allow_private_addresses': [true, false],
     'appearance.theme': ['system', 'light', 'dark'],
     'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
     'profiles.trash_retention_days': ['7', '30', '90'],
@@ -241,11 +466,35 @@ export function demoBackend(mode = ''): Backend {
     tags.push(t);
     return t;
   };
+  const netKey = (r: Rec) =>
+    JSON.stringify([
+      r.proxy_id,
+      r.fail_closed,
+      r.privacy,
+      proxies.find((x) => x.id === r.proxy_id)?.version ?? 0,
+    ]);
+  const networkOf = (r: Rec): ProfileView['network'] => {
+    const px = proxies.find((x) => x.id === r.proxy_id);
+    const open = r.state === 'starting' || r.state === 'running' || r.state === 'stopping';
+    const restart_required = open && r.launched_key !== null && r.launched_key !== netKey(r);
+    if (!open || !r.launched_key) {
+      return { status: px ? 'ready' : 'off', last_error: null, direct_connections: 0, restart_required };
+    }
+    const launchedProxy = (JSON.parse(r.launched_key) as [string | null, boolean])[0];
+    const lp = proxies.find((x) => x.id === launchedProxy);
+    if (!lp) return { status: 'off', last_error: null, direct_connections: 0, restart_required };
+    if (!lp.down) return { status: 'active', last_error: null, direct_connections: 0, restart_required };
+    return r.fail_closed
+      ? { status: 'failing', last_error: 'PROXY_UNREACHABLE', direct_connections: 0, restart_required }
+      : { status: 'bypassing', last_error: 'PROXY_UNREACHABLE', direct_connections: 3, restart_required };
+  };
   const view = (r: Rec): ProfileView => {
-    const { tag_ids, import_ref: _ref, ...rest } = r;
+    const { tag_ids, import_ref: _ref, launched_key: _launched, ...rest } = r;
     const c = clients.find((x) => x.id === r.client_id);
     return {
       ...rest,
+      proxy_label: proxies.find((x) => x.id === r.proxy_id)?.name ?? null,
+      network: networkOf(r),
       client_name: c?.name ?? null,
       client_colour: c?.colour ?? null,
       tags: tag_ids
@@ -268,7 +517,10 @@ export function demoBackend(mode = ''): Backend {
       trashed_at: null,
       purge_after: null,
       template_id: null,
-      proxy_label: null,
+      proxy_id: null,
+      fail_closed: true,
+      privacy: { ...DEFAULT_PRIVACY },
+      launched_key: null,
       sync_status: 'local_only',
       version: 1,
       created_at: now(),
@@ -357,6 +609,50 @@ export function demoBackend(mode = ''): Backend {
       const north = clients.find((c) => c.name === 'Client North');
       if (north) north.colour = '#0e7490';
     }
+    if (mode === '' || mode === 'proxydown' || mode === 'nologin' || mode === 'win') {
+      const soon = new Date(Date.now() + 5 * day).toISOString().slice(0, 10);
+      const de: ProxyRec = {
+        id: id('prx'),
+        workspace_id: ws.id,
+        name: 'Residential DE',
+        type: 'http',
+        host: 'de.proxy-provider.example',
+        port: 8080,
+        login: { username: 'agency-de', password: 'demo-only' },
+        login_missing: mode === 'nologin',
+        expires_at: soon,
+        notes: 'Provider plan renews monthly.',
+        version: 1,
+        created_at: now(),
+        updated_at: now(),
+        down: mode === 'proxydown',
+      };
+      const socks: ProxyRec = {
+        ...de,
+        id: id('prx'),
+        name: 'SOCKS backup',
+        type: 'socks5',
+        host: '203.0.113.40',
+        port: 1080,
+        login: null,
+        login_missing: false,
+        expires_at: null,
+        notes: '',
+        down: false,
+      };
+      proxies.push(de, socks);
+      const shop = recs.find((r) => r.name === 'Shop admin');
+      if (shop) shop.proxy_id = de.id;
+      checks.push({
+        id: id('nck'),
+        proxy_id: socks.id,
+        result: 'ok',
+        error_code: null,
+        latency_ms: 182,
+        egress_ip: '203.0.113.40',
+        checked_at: new Date(Date.now() - 3_600_000).toISOString(),
+      });
+    }
     const first = recs[0];
     if (first && (mode === 'running' || mode === 'stuck')) {
       set(first.id, {
@@ -436,10 +732,146 @@ export function demoBackend(mode = ''): Backend {
       ready: false,
       window_open: false,
       force_available: false,
+      launched_key: null,
       ...(outcome === 'clean' ? { last_clean_shutdown_at: now(), crash_count: 0 } : {}),
     });
   };
   const launchOps = new Map<string, Operation>();
+
+  // ------------------------------------------------------------------ proxies and privacy (milestone 05)
+  const allowPrivate = () => settings['proxies.allow_private_addresses']?.value === true;
+  const checkHost = (raw: string) => {
+    let h = raw.trim().toLowerCase().replace(/\.$/, '');
+    if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+    if (!h || h.length > 253 || /[\s/@?#]/.test(h) || h.includes('://')) throw E.PROXY_BAD_HOST;
+    if (!h.includes(':') && !/^[a-z0-9.-]+$/.test(h)) throw E.PROXY_BAD_HOST;
+    const cls = addressClass(h);
+    if (cls === 'forbidden') throw E.PROXY_FORBIDDEN_ADDRESS;
+    if (cls === 'private' && !allowPrivate()) throw E.PROXY_PRIVATE_ADDRESS;
+    return h;
+  };
+  const checkLogin = (type: string, login: { username: string; password: string } | undefined) => {
+    if (!login) return null;
+    const bad = (v: string) => new TextEncoder().encode(v).length > 255 || /\p{Cc}/u.test(v);
+    if (!login.username || bad(login.username) || bad(login.password)) throw E.PROXY_BAD_CREDENTIALS;
+    if (type !== 'socks5' && login.username.includes(':')) throw E.PROXY_BAD_CREDENTIALS;
+    return { username: login.username, password: login.password };
+  };
+  const checkDate = (d: string | undefined) => {
+    if (d === undefined) return;
+    const t = Date.parse(`${d}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(t)) throw E.INVALID_DATE;
+  };
+  const proxyNotes = (v: string | undefined) => {
+    const n = cleanNotes(v ?? '');
+    if ([...n].length > 500) throw err('NOTES_TOO_LONG', 'Proxy notes can be at most 500 characters.');
+    return n;
+  };
+  const proxyView = (x: ProxyRec): ProxyView => {
+    const left = daysLeft(x.expires_at);
+    return {
+      id: x.id,
+      workspace_id: x.workspace_id,
+      name: x.name,
+      type: x.type,
+      host: x.host,
+      port: x.port,
+      has_login: x.login !== null,
+      expires_at: x.expires_at,
+      expiry: left === null ? null : left < 0 ? 'expired' : left <= 7 ? 'expires_soon' : null,
+      days_left: left,
+      notes: x.notes,
+      version: x.version,
+      created_at: x.created_at,
+      updated_at: x.updated_at,
+      profiles: recs.filter((r) => r.proxy_id === x.id).length,
+      last_check: checks.find((c) => c.proxy_id === x.id) ?? null,
+    };
+  };
+  const ownProxy = (pid: string) => {
+    const ws = requireWs();
+    const x = proxies.find((p) => p.id === pid && p.workspace_id === ws);
+    if (!x) throw E.UNKNOWN_PROXY;
+    return x;
+  };
+  function checkPrivacy(c: PrivacyConfig): FullPrivacy {
+    const known = Object.keys(DEFAULT_PRIVACY);
+    if (Object.keys(c).some((k) => !known.includes(k)))
+      throw err('INVALID_ARGUMENT', 'The request was not valid.');
+    const full: FullPrivacy = { ...DEFAULT_PRIVACY, ...c };
+    if (full.language && !LANGUAGES.some(([t]) => t === full.language)) throw E.INVALID_LANGUAGE;
+    if (full.timezone && !TIME_ZONES.includes(full.timezone)) throw E.INVALID_TIMEZONE;
+    const w = full.window;
+    if (w && (w.width < 800 || w.width > 3840 || w.height < 600 || w.height > 2160))
+      throw E.INVALID_WINDOW_SIZE;
+    return full;
+  }
+  const report = (c: FullPrivacy, failClosed: boolean): PrivacyValidation['report'] => {
+    const out: PrivacyValidation['report'] = [];
+    if (c.timezone)
+      out.push(
+        platform === 'windows'
+          ? {
+              field: 'timezone',
+              support: 'unavailable',
+              message: "On Windows the browser always uses the computer's time zone.",
+            }
+          : { field: 'timezone', support: 'applied', message: 'Pages see this time zone (Date and Intl).' },
+      );
+    if (c.language)
+      out.push(
+        platform === 'macos'
+          ? {
+              field: 'language',
+              support: 'partial',
+              message: "Websites get this language; the browser's own menus follow macOS.",
+            }
+          : {
+              field: 'language',
+              support: 'applied',
+              message: "Websites get this language, and the browser's menus use it where available.",
+            },
+      );
+    if (c.window)
+      out.push({
+        field: 'window',
+        support: 'applied',
+        message: 'The window opens at this size. It is not a screen or device size.',
+      });
+    if (c.text_size !== 'default')
+      out.push({ field: 'text_size', support: 'applied', message: 'Default text size for pages.' });
+    if (c.reduced_motion)
+      out.push({
+        field: 'reduced_motion',
+        support: 'applied',
+        message: 'Pages are told the user prefers reduced motion.',
+      });
+    if (failClosed)
+      out.push({
+        field: 'webrtc',
+        support: 'applied',
+        message: 'WebRTC can use only the proxy (set by fail-closed routing).',
+      });
+    else if (c.webrtc !== 'default')
+      out.push({
+        field: 'webrtc',
+        support: 'applied',
+        message: "Applied by the browser's WebRTC address handling.",
+      });
+    if (c.block_third_party_cookies)
+      out.push({
+        field: 'block_third_party_cookies',
+        support: 'applied',
+        message: 'Cookies of embedded third-party sites are blocked; some sign-in widgets may stop working.',
+      });
+    if (c.do_not_track)
+      out.push({
+        field: 'do_not_track',
+        support: 'applied',
+        message: 'Sends a Do Not Track request; websites may ignore it.',
+      });
+    return out;
+  };
 
   // ------------------------------------------------------------------ query
   const validateFilter = (f: ProfileFilter) => {
@@ -447,7 +879,7 @@ export function demoBackend(mode = ''): Backend {
     if (f.client?.kind === 'ids' && (f.client.ids.length === 0 || f.client.ids.length > 50))
       throw E.INVALID_FILTER;
     if ((f.tags?.length ?? 0) > 20) throw E.INVALID_FILTER;
-    const known = ['text', 'view', 'client', 'tags', 'states', 'favourites_only', 'template'];
+    const known = ['text', 'view', 'client', 'tags', 'states', 'favourites_only', 'template', 'proxy'];
     if (Object.keys(f).some((k) => !known.includes(k))) throw E.INVALID_FILTER;
   };
   const matches = (r: Rec, f: ProfileFilter) => {
@@ -462,6 +894,7 @@ export function demoBackend(mode = ''): Backend {
     if (f.states?.length && !f.states.includes(r.state)) return false;
     if (f.favourites_only && !r.favourite) return false;
     if (f.template && r.template_id !== f.template) return false;
+    if (f.proxy && r.proxy_id !== f.proxy) return false;
     const text = f.text?.trim();
     if (text) {
       const k = nameKey(text);
@@ -568,6 +1001,10 @@ export function demoBackend(mode = ''): Backend {
         return r.trashed_at ? null : { trashed_at: null, purge_after: null };
       case 'restore':
         return r.trashed_at ? { trashed_at: r.trashed_at, purge_after: r.purge_after } : null;
+      case 'set_proxy':
+        return r.proxy_id === a.proxy_id && r.fail_closed === a.fail_closed
+          ? null
+          : { proxy_id: r.proxy_id, fail_closed: r.fail_closed };
     }
   };
   const patchFor = (a: BulkAction, r: Rec, tagId: string | null): Partial<Rec> => {
@@ -591,6 +1028,8 @@ export function demoBackend(mode = ''): Backend {
         };
       case 'restore':
         return { trashed_at: null, purge_after: null };
+      case 'set_proxy':
+        return { proxy_id: a.proxy_id, fail_closed: a.fail_closed };
     }
   };
 
@@ -804,7 +1243,7 @@ export function demoBackend(mode = ''): Backend {
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.4.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: '0.5.0-demo', platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
@@ -915,6 +1354,7 @@ export function demoBackend(mode = ''): Backend {
         if (c.clientId && !clients.some((x) => x.id === c.clientId && x.workspace_id === ws))
           throw E.UNKNOWN_CLIENT;
         if (c.tags && c.tags.length > 20) throw E.INVALID_TAG;
+        const privacy = c.privacy ? checkPrivacy(c.privacy) : p.privacy;
         const tagIds = c.tags?.map((t) => ensureTag(ws, t).id);
         set(pid, {
           name: c.name !== undefined ? clean(c.name, 120, E.INVALID_LABEL) : p.name,
@@ -929,6 +1369,7 @@ export function demoBackend(mode = ''): Backend {
             location: c.location ?? p.permissions.location,
           },
           notes,
+          privacy,
           version: p.version + 1,
           updated_at: now(),
         });
@@ -945,6 +1386,9 @@ export function demoBackend(mode = ''): Backend {
           permissions: { ...src.permissions },
           tag_ids: [...src.tag_ids],
           template_id: src.template_id,
+          proxy_id: src.proxy_id,
+          fail_closed: src.fail_closed,
+          privacy: { ...src.privacy },
         });
         changed();
         return view(r);
@@ -971,6 +1415,12 @@ export function demoBackend(mode = ''): Backend {
           !clients.some((c) => c.id === action.client_id && c.workspace_id === ws)
         )
           throw E.UNKNOWN_CLIENT;
+        if (
+          action.action === 'set_proxy' &&
+          action.proxy_id &&
+          !proxies.some((x) => x.id === action.proxy_id && x.workspace_id === ws)
+        )
+          throw E.UNKNOWN_PROXY;
         const failed = missing.map((m) => failure(m, E.UNKNOWN_PROFILE));
         const items: UndoEntry['items'] = [];
         let unchanged = 0;
@@ -1082,9 +1532,30 @@ export function demoBackend(mode = ''): Backend {
             'RUNTIME_NOT_INSTALLED',
             'The browser is not installed yet. Install it from Downloads and updates.',
           );
+        const px = proxies.find((x) => x.id === p.proxy_id);
+        if (px?.login_missing) throw E.PROXY_CREDENTIALS_MISSING;
+        if (px && addressClass(px.host) === 'private' && !settings['proxies.allow_private_addresses']?.value)
+          throw E.PROXY_PRIVATE_ADDRESS;
         const op = startOp('launch_profile', pid);
         launchOps.set(pid, op);
-        set(pid, { state: 'starting', last_error: null, last_started_at: now(), pid: 5000 + opSeq });
+        set(pid, {
+          state: 'starting',
+          last_error: null,
+          last_started_at: now(),
+          pid: 5000 + opSeq,
+          launched_key: netKey(p),
+        });
+        if (px?.down)
+          setTimeout(
+            () =>
+              emit(
+                'warning',
+                p.fail_closed
+                  ? { code: 'PROXY_FAILING', profile_id: pid, error: 'PROXY_UNREACHABLE', fail_closed: true }
+                  : { code: 'PROXY_BYPASSED', profile_id: pid, direct_connections: 3 },
+              ),
+            900,
+          );
         changed();
         setTimeout(() => {
           set(pid, { state: 'running', ready: true, window_open: true, runtime_version: RUNTIME_VERSION });
@@ -1531,6 +2002,159 @@ export function demoBackend(mode = ''): Backend {
         };
       },
     },
+    network: {
+      async proxies() {
+        const ws = requireWs();
+        return proxies
+          .filter((x) => x.workspace_id === ws)
+          .sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name)))
+          .map(proxyView);
+      },
+      async createProxy(input: ProxyInput) {
+        const ws = requireWs();
+        const name = clean(input.name, 80, E.INVALID_PROXY_NAME);
+        if (!['http', 'https', 'socks5'].includes(input.type)) throw E.INVALID_PROXY_TYPE;
+        const host = checkHost(input.host);
+        if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw E.PROXY_BAD_PORT;
+        const login = checkLogin(input.type, input.login);
+        checkDate(input.expires_at);
+        const notes = proxyNotes(input.notes);
+        if (proxies.some((x) => x.workspace_id === ws && nameKey(x.name) === nameKey(name)))
+          throw E.DUPLICATE_NAME;
+        const x: ProxyRec = {
+          id: id('prx'),
+          workspace_id: ws,
+          name,
+          type: input.type,
+          host,
+          port: input.port,
+          login,
+          login_missing: false,
+          expires_at: input.expires_at ?? null,
+          notes,
+          version: 1,
+          created_at: now(),
+          updated_at: now(),
+          down: false,
+        };
+        proxies.push(x);
+        return proxyView(x);
+      },
+      async updateProxy(pid: string, expectedVersion: number, c: ProxyEdit) {
+        const x = ownProxy(pid);
+        if (x.version !== expectedVersion)
+          throw {
+            ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
+            current_version: x.version,
+          };
+        if (c.login && c.remove_login) throw err('INVALID_ARGUMENT', 'The request was not valid.');
+        const type = c.type ?? x.type;
+        if (!['http', 'https', 'socks5'].includes(type)) throw E.INVALID_PROXY_TYPE;
+        const name = c.name !== undefined ? clean(c.name, 80, E.INVALID_PROXY_NAME) : x.name;
+        if (
+          proxies.some(
+            (o) => o.id !== x.id && o.workspace_id === x.workspace_id && nameKey(o.name) === nameKey(name),
+          )
+        )
+          throw E.DUPLICATE_NAME;
+        const host = checkHost(c.host ?? x.host);
+        const port = c.port ?? x.port;
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw E.PROXY_BAD_PORT;
+        const login = c.login ? checkLogin(type, c.login) : c.remove_login ? null : x.login;
+        if (!c.login && login) checkLogin(type, login);
+        checkDate(c.expires_at);
+        const notes = c.notes !== undefined ? proxyNotes(c.notes) : x.notes;
+        Object.assign(x, {
+          name,
+          type,
+          host,
+          port,
+          login,
+          login_missing: c.login ? false : c.remove_login ? false : x.login_missing,
+          expires_at: c.clear_expiry ? null : (c.expires_at ?? x.expires_at),
+          notes,
+          version: x.version + 1,
+          updated_at: now(),
+        });
+        changed();
+        return proxyView(x);
+      },
+      async deleteProxy(pid: string) {
+        const x = ownProxy(pid);
+        if (recs.some((r) => r.proxy_id === x.id)) throw E.PROXY_IN_USE;
+        proxies.splice(proxies.indexOf(x), 1);
+        for (let i = checks.length - 1; i >= 0; i--) if (checks[i]?.proxy_id === pid) checks.splice(i, 1);
+      },
+      async testProxy(pid: string) {
+        const x = ownProxy(pid);
+        await new Promise((r) => setTimeout(r, 400));
+        const error = x.login_missing
+          ? 'PROXY_CREDENTIALS_MISSING'
+          : x.down
+            ? 'PROXY_UNREACHABLE'
+            : addressClass(x.host) === 'private' && !allowPrivate()
+              ? 'PROXY_PRIVATE_ADDRESS'
+              : null;
+        const c: NetworkCheck = {
+          id: id('nck'),
+          proxy_id: x.id,
+          result: error ? 'error' : 'ok',
+          error_code: error,
+          latency_ms: error ? null : 120 + Math.floor(Math.random() * 180),
+          egress_ip: error ? null : x.type === 'socks5' ? '203.0.113.40' : '198.51.100.23',
+          checked_at: now(),
+        };
+        checks.unshift(c);
+        return c;
+      },
+      async checks(pid: string) {
+        ownProxy(pid);
+        return checks.filter((c) => c.proxy_id === pid).slice(0, 50);
+      },
+      async assign(profileId: string, proxyId: string | null, failClosed: boolean, expectedVersion: number) {
+        const ws = requireWs();
+        const p = find(profileId);
+        if (p.workspace_id !== ws) throw E.UNKNOWN_PROFILE;
+        if (p.trashed_at) throw E.PROFILE_IN_TRASH;
+        if (proxyId) ownProxy(proxyId);
+        if (p.version !== expectedVersion)
+          throw {
+            ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
+            current_version: p.version,
+          };
+        set(profileId, {
+          proxy_id: proxyId,
+          fail_closed: failClosed,
+          version: p.version + 1,
+          updated_at: now(),
+        });
+        changed();
+        return view(find(profileId));
+      },
+      async validatePrivacy(config: PrivacyConfig, failClosedProxy: boolean): Promise<PrivacyValidation> {
+        try {
+          const full = checkPrivacy(config);
+          return { valid: true, error: null, platform, report: report(full, failClosedProxy) };
+        } catch (e) {
+          return {
+            valid: false,
+            error: e as IpcError,
+            platform,
+            report: report({ ...DEFAULT_PRIVACY, ...config }, failClosedProxy),
+          };
+        }
+      },
+      async privacyOptions() {
+        return {
+          platform,
+          languages: LANGUAGES.map(([tag, name]) => ({ tag, name })),
+          time_zones: TIME_ZONES,
+          window_min: [800, 600] as [number, number],
+          window_max: [3840, 2160] as [number, number],
+          presets: PRESETS,
+        };
+      },
+    },
     system: {
       async runtimeStatus() {
         return runtimeStatus();
@@ -1584,10 +2208,10 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.4.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: { version: '0.5.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
-            schema_version: 4,
+            schema_version: 5,
             journal_mode: 'wal',
             foreign_keys: true,
             integrity_ok: true,

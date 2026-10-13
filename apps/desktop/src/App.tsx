@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { LiveRegion } from './components.tsx';
+import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
 import { ProfilesScreen } from './profiles.tsx';
 import {
   CrashPrompt,
@@ -13,9 +14,10 @@ import {
   Welcome,
 } from './screens.tsx';
 
-type View = 'profiles' | 'downloads' | 'diagnostics' | 'settings';
+type View = 'profiles' | 'proxies' | 'downloads' | 'diagnostics' | 'settings';
 const NAV: [View, string][] = [
   ['profiles', 'Profiles'],
+  ['proxies', 'Proxies'],
   ['downloads', 'Downloads and updates'],
   ['diagnostics', 'Diagnostics'],
   ['settings', 'Settings'],
@@ -95,6 +97,28 @@ export function App({ backend }: { backend: Backend }) {
     const offWarning = backend.on('warning', (w) => {
       if (w.code === 'LOW_DISK_SPACE')
         notify('Your disk is almost full. Close profiles soon so their data can be saved safely.', 'error');
+      else if (w.code === 'PROXY_FAILING')
+        notify(
+          `A profile's proxy stopped working. ${PROXY_ERROR_HELP[w.error] ?? ''} ${
+            w.fail_closed ? 'Its traffic is blocked until the proxy works again.' : ''
+          }`.trim(),
+          'error',
+        );
+      else if (w.code === 'PROXY_BYPASSED')
+        notify(
+          "A profile's proxy cannot be reached, so its traffic is going through this computer's own connection (fail-closed is off for it).",
+          'error',
+        );
+      else if (w.code === 'PROXY_CONNECTION_LOST')
+        notify("A profile's proxy connection could not be restored. Close and reopen that profile.", 'error');
+      else if (w.code === 'PROXY_EXPIRED' || w.code === 'PROXY_EXPIRING') {
+        notify(
+          w.code === 'PROXY_EXPIRED'
+            ? `A proxy's expiry date (${w.expires_at ?? ''}) has passed. Check it with your provider; profiles keep using it until you change it.`
+            : `A proxy expires ${w.days_left === 0 ? 'today' : `in ${w.days_left} days`}. Renew it or choose another one; nothing changes automatically.`,
+        );
+        setRefreshKey((k) => k + 1);
+      }
     });
     return () => {
       offOp();
@@ -203,6 +227,7 @@ export function App({ backend }: { backend: Backend }) {
             folderSlot={folderSlot}
           />
         )}
+        {view === 'proxies' && <ProxiesScreen backend={backend} refreshKey={refreshKey} notify={notify} />}
         {view === 'downloads' && (
           <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
         )}

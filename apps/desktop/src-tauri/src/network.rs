@@ -887,6 +887,17 @@ impl AppState {
         }
     }
 
+    /// Stops every gateway (the manager is exiting; profiles left running lose their connection until it restarts).
+    pub fn stop_all_gateways(&self) {
+        if let Ok(mut nets) = self.networks.lock() {
+            for (_, n) in nets.drain() {
+                if let Some(g) = n.gateway {
+                    g.stop();
+                }
+            }
+        }
+    }
+
     /// After start-up: restores gateways for adopted browsers and forgets sessions of profiles that are closed.
     pub fn restore_networks(&self) {
         let Ok(store) = self.store() else { return };

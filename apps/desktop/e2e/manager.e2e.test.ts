@@ -7,6 +7,8 @@
  * - closing the manager with profiles open asks, and says profiles can keep running
  * - milestone 04: folders, keyboard selection, bulk actions with undo, "all matching" selection with its count,
  *   the trash with a typed confirmation, import preview/commit/cancel, export, secret-looking notes
+ * - milestone 05: proxies (paste line, hidden login, test), assignment, the credential prompt, a failing
+ *   fail-closed proxy, privacy presets with settings this OS cannot apply, bulk "Set proxy"
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -218,6 +220,45 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await clickFolder(p, 'Trash');
       await clickButton(p, '.filters', 'Empty trash…');
       await p.waitForSelector('[role=alertdialog]');
+    },
+  },
+  { name: 'proxies', demo: '', nav: 'Proxies' },
+  {
+    name: 'proxy-add',
+    demo: '',
+    nav: 'Proxies',
+    prepare: async (p) => {
+      await clickButton(p, '.toolbar', 'Add proxy');
+      await p.waitForSelector('[role=dialog] form');
+    },
+  },
+  {
+    name: 'profile-network-privacy',
+    demo: 'win',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await p.waitForSelector('form[aria-label=Network] select option:nth-child(2)');
+      await p.$eval('form[aria-label=Network]', (el) => el.scrollIntoView());
+    },
+  },
+  {
+    name: 'proxy-login-prompt',
+    demo: 'nologin',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForSelector('[role=dialog] input[type=password]');
+    },
+  },
+  {
+    name: 'proxy-failing',
+    demo: 'proxydown',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForFunction(() =>
+        document.querySelector('.drawer')?.textContent?.includes('Traffic is blocked'),
+      );
     },
   },
   {
@@ -571,6 +612,129 @@ describe('profile management (milestone 04)', () => {
     await page.waitForFunction(() =>
       document.querySelector('.drawer [role=alert]')?.textContent?.includes('password manager'),
     );
+    await page.close();
+  });
+});
+
+describe('proxies and privacy (milestone 05)', () => {
+  const secret = ['pw', 'Zq7', 'Lm'].join('-');
+
+  async function rowButton(page: Page, rowName: string, label: string) {
+    const handle = await page.waitForFunction(
+      (n, l) => {
+        const row = [...document.querySelectorAll('.proxy-table tbody tr')].find(
+          (r) => r.querySelector('th')?.textContent?.trim() === n,
+        );
+        return [...(row?.querySelectorAll('button') ?? [])].find(
+          (b) => b.firstChild?.textContent?.trim() === l && !(b as HTMLButtonElement).disabled,
+        );
+      },
+      { timeout: 10_000 },
+      rowName,
+      label,
+    );
+    await (handle.asElement() as unknown as { click(): Promise<void> }).click();
+  }
+
+  it('adds a proxy from a pasted line, never shows the login again, and tests it', async () => {
+    const page = await open('');
+    await goTo(page, 'Proxies');
+    await clickButton(page, '.toolbar', 'Add proxy');
+    await page.waitForSelector('[role=dialog] form');
+    await page.type(
+      '[role=dialog] input[placeholder^="host:port"]',
+      `gate.example.net:3128:agency-17:${secret}`,
+    );
+    await clickButton(page, '[role=dialog]', 'Fill in');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll<HTMLInputElement>('[role=dialog] input')].some(
+        (i) => i.value === 'gate.example.net',
+      ),
+    );
+    await page.type('[role=dialog] input[required][maxlength="80"]', 'Gate');
+    await clickButton(page, '[role=dialog]', 'Add proxy');
+    await toastContains(page, 'Proxy “Gate” added.');
+    const html = await page.content();
+    expect(html).not.toContain(secret);
+    expect(await text(page, '.proxy-table')).toContain('gate.example.net:3128');
+    await rowButton(page, 'Gate', 'Test');
+    await toastContains(page, 'Gate works');
+    await page.close();
+  });
+
+  it('assigns a proxy in profile settings and shows it in the table', async () => {
+    const page = await open('');
+    await clickRow(page, 'Ads QA');
+    await page.waitForSelector('form[aria-label=Network] select option:nth-child(2)');
+    const value = await page.$eval(
+      'form[aria-label=Network] select option:nth-child(2)',
+      (o) => (o as HTMLOptionElement).value,
+    );
+    await page.select('form[aria-label=Network] select', value);
+    await clickButton(page, 'form[aria-label=Network]', 'Save network settings');
+    await toastContains(page, 'Network settings saved.');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('.trow')].some(
+        (r) =>
+          r.querySelector('.trow__name')?.textContent?.trim() === 'Ads QA' &&
+          r.querySelector('.col-proxy')?.textContent?.includes('Residential DE'),
+      ),
+    );
+    await page.close();
+  });
+
+  it('asks for a missing proxy login when opening, then opens the profile', async () => {
+    const page = await open('nologin');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForSelector('[role=dialog] input[type=password]');
+    expect(await text(page, '[role=dialog] h2')).toContain('Enter the login');
+    await page.type('[role=dialog] input[autocomplete=off]', 'agency-de');
+    await page.type('[role=dialog] input[type=password]', secret);
+    await clickButton(page, '[role=dialog]', 'Save login');
+    await toastContains(page, 'Opening Shop admin');
+    await page.close();
+  });
+
+  it('shows that a fail-closed proxy blocks traffic when it stops working', async () => {
+    const page = await open('proxydown');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'stopped working');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer')?.textContent?.includes('Traffic is blocked'),
+    );
+    await page.close();
+  });
+
+  it('applies a preset and says which settings this computer cannot apply', async () => {
+    const page = await open('win');
+    await clickRow(page, 'Ads QA');
+    const form = 'form[aria-label="Privacy and environment"]';
+    await page.waitForSelector(`${form} select option[value="locale-ne-np"]`);
+    await page.select(`${form} select`, 'locale-ne-np');
+    await page.waitForFunction(
+      (f) => document.querySelector(f)?.textContent?.includes('Not available on this computer'),
+      {},
+      form,
+    );
+    await clickButton(page, form, 'Save privacy settings');
+    await toastContains(page, 'Privacy and environment settings saved.');
+    await page.close();
+  });
+
+  it('sets the proxy of selected profiles in bulk', async () => {
+    const page = await open('');
+    await page.focus('[role=grid]');
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    await clickButton(page, '.bulk-bar', 'Set proxy…');
+    await page.waitForSelector('[role=dialog] select');
+    await clickButton(page, '[role=dialog]', 'Set proxy');
+    // Shop admin already uses the first proxy, so one profile changes and one already matched.
+    await toastContains(page, 'Set the proxy of 1 profile.');
+    await toastContains(page, '1 profile already matched.');
     await page.close();
   });
 });

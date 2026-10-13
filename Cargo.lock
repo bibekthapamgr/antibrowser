@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "pb-desktop"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "fs4",

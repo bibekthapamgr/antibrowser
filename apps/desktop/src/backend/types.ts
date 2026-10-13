@@ -18,10 +18,17 @@ import type {
   ImportSettings,
   IpcError,
   Library,
+  NetworkCheck,
+  PrivacyConfig,
+  PrivacyOptions,
+  PrivacyValidation,
   ProfileFilter,
   ProfilePage,
   ProfileStatus,
   ProfileView,
+  ProxyEdit,
+  ProxyInput,
+  ProxyView,
   RuntimeStatus,
   SavedFilter,
   Selection,
@@ -39,16 +46,26 @@ export type {
   BulkResult,
   Client,
   ClientView,
+  FieldReport,
   ImportJob,
   ImportPreview,
   ImportSettings,
   IpcError,
   Library,
+  NetworkCheck,
+  NetworkView,
   Operation,
+  Preset,
+  PrivacyConfig,
+  PrivacyOptions,
+  PrivacyValidation,
   ProfileFilter,
   ProfilePage,
   ProfileStatus,
   ProfileView,
+  ProxyEdit,
+  ProxyInput,
+  ProxyView,
   RunState,
   RuntimeStatus,
   SavedFilter,
@@ -78,6 +95,8 @@ export interface ProfileUpdate {
   camera?: Permission;
   microphone?: Permission;
   location?: Permission;
+  /** Privacy and environment settings, replaced as a whole (milestone 05). */
+  privacy?: PrivacyConfig;
 }
 
 export interface WorkspaceRepository {
@@ -169,12 +188,34 @@ export interface SystemRepository {
   removeLocalData(confirm: string): Promise<void>;
 }
 
+/** Proxies, routing and privacy settings (milestone 05). Proxy logins go in once and never come back out. */
+export interface NetworkRepository {
+  proxies(): Promise<ProxyView[]>;
+  createProxy(proxy: ProxyInput): Promise<ProxyView>;
+  updateProxy(id: string, expectedVersion: number, changes: ProxyEdit): Promise<ProxyView>;
+  deleteProxy(id: string): Promise<void>;
+  /** `proxies.test(id)`: a user-started check (latency, exit address, time). */
+  testProxy(id: string): Promise<NetworkCheck>;
+  checks(id: string): Promise<NetworkCheck[]>;
+  /** `profiles.assign_proxy(id, proxy_id, expected_version)`; `null` removes the proxy. */
+  assign(
+    profileId: string,
+    proxyId: string | null,
+    failClosed: boolean,
+    expectedVersion: number,
+  ): Promise<ProfileView>;
+  /** `privacy.validate(config)`. */
+  validatePrivacy(config: PrivacyConfig, failClosedProxy: boolean): Promise<PrivacyValidation>;
+  privacyOptions(): Promise<PrivacyOptions>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   workspaces: WorkspaceRepository;
   profiles: ProfileRepository;
   library: LibraryRepository;
   transfer: TransferRepository;
+  network: NetworkRepository;
   system: SystemRepository;
   on<E extends EventName>(event: E, handler: (payload: EventPayload<E>) => void): () => void;
 }

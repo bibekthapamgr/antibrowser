@@ -157,7 +157,8 @@
                     "privacy.crash_reports",
                     "downloads.directory",
                     "workspace.active",
-                    "profiles.trash_retention_days"
+                    "profiles.trash_retention_days",
+                    "proxies.allow_private_addresses"
                   ]
                 },
                 "value": {},
@@ -322,7 +323,11 @@
             "trashed_at",
             "purge_after",
             "template_id",
+            "proxy_id",
             "proxy_label",
+            "fail_closed",
+            "network",
+            "privacy",
             "sync_status",
             "version",
             "created_at",
@@ -470,16 +475,161 @@
                 }
               ]
             },
-            "proxy_label": {
+            "proxy_id": {
               "anyOf": [
                 {
                   "type": "string",
-                  "description": "Placeholder until milestone 05 assigns proxies."
+                  "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                 },
                 {
                   "type": "null"
                 }
               ]
+            },
+            "proxy_label": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Name of the assigned proxy."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fail_closed": {
+              "type": "boolean",
+              "description": "With a proxy: block traffic that cannot go through it."
+            },
+            "network": {
+              "type": "object",
+              "required": [
+                "status",
+                "last_error",
+                "direct_connections",
+                "restart_required"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "off",
+                    "ready",
+                    "active",
+                    "failing",
+                    "bypassing",
+                    "lost"
+                  ],
+                  "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+                },
+                "last_error": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "direct_connections": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "restart_required": {
+                  "type": "boolean",
+                  "description": "Settings changed while the profile was open."
+                }
+              }
+            },
+            "privacy": {
+              "type": "object",
+              "properties": {
+                "webrtc": {
+                  "enum": [
+                    "default",
+                    "public_interface_only",
+                    "disable_non_proxied_udp"
+                  ]
+                },
+                "block_third_party_cookies": {
+                  "type": "boolean"
+                },
+                "do_not_track": {
+                  "type": "boolean"
+                },
+                "language": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 16
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "timezone": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "window": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "properties": {
+                        "width": {
+                          "type": "integer",
+                          "minimum": 800,
+                          "maximum": 3840
+                        },
+                        "height": {
+                          "type": "integer",
+                          "minimum": 600,
+                          "maximum": 2160
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "text_size": {
+                  "enum": [
+                    "default",
+                    "large",
+                    "larger"
+                  ]
+                },
+                "reduced_motion": {
+                  "type": "boolean"
+                },
+                "preset": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
             },
             "sync_status": {
               "type": "string",
@@ -691,7 +841,11 @@
           "trashed_at",
           "purge_after",
           "template_id",
+          "proxy_id",
           "proxy_label",
+          "fail_closed",
+          "network",
+          "privacy",
           "sync_status",
           "version",
           "created_at",
@@ -839,16 +993,161 @@
               }
             ]
           },
-          "proxy_label": {
+          "proxy_id": {
             "anyOf": [
               {
                 "type": "string",
-                "description": "Placeholder until milestone 05 assigns proxies."
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "proxy_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Name of the assigned proxy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "description": "With a proxy: block traffic that cannot go through it."
+          },
+          "network": {
+            "type": "object",
+            "required": [
+              "status",
+              "last_error",
+              "direct_connections",
+              "restart_required"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "off",
+                  "ready",
+                  "active",
+                  "failing",
+                  "bypassing",
+                  "lost"
+                ],
+                "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direct_connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "restart_required": {
+                "type": "boolean",
+                "description": "Settings changed while the profile was open."
+              }
+            }
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           },
           "sync_status": {
             "type": "string",
@@ -1095,6 +1394,95 @@
               "block",
               "allow"
             ]
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -1114,7 +1502,11 @@
           "trashed_at",
           "purge_after",
           "template_id",
+          "proxy_id",
           "proxy_label",
+          "fail_closed",
+          "network",
+          "privacy",
           "sync_status",
           "version",
           "created_at",
@@ -1262,16 +1654,161 @@
               }
             ]
           },
-          "proxy_label": {
+          "proxy_id": {
             "anyOf": [
               {
                 "type": "string",
-                "description": "Placeholder until milestone 05 assigns proxies."
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "proxy_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Name of the assigned proxy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "description": "With a proxy: block traffic that cannot go through it."
+          },
+          "network": {
+            "type": "object",
+            "required": [
+              "status",
+              "last_error",
+              "direct_connections",
+              "restart_required"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "off",
+                  "ready",
+                  "active",
+                  "failing",
+                  "bypassing",
+                  "lost"
+                ],
+                "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direct_connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "restart_required": {
+                "type": "boolean",
+                "description": "Settings changed while the profile was open."
+              }
+            }
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           },
           "sync_status": {
             "type": "string",
@@ -1561,7 +2098,11 @@
               "trashed_at",
               "purge_after",
               "template_id",
+              "proxy_id",
               "proxy_label",
+              "fail_closed",
+              "network",
+              "privacy",
               "sync_status",
               "version",
               "created_at",
@@ -1709,16 +2250,161 @@
                   }
                 ]
               },
-              "proxy_label": {
+              "proxy_id": {
                 "anyOf": [
                   {
                     "type": "string",
-                    "description": "Placeholder until milestone 05 assigns proxies."
+                    "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                   },
                   {
                     "type": "null"
                   }
                 ]
+              },
+              "proxy_label": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "Name of the assigned proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fail_closed": {
+                "type": "boolean",
+                "description": "With a proxy: block traffic that cannot go through it."
+              },
+              "network": {
+                "type": "object",
+                "required": [
+                  "status",
+                  "last_error",
+                  "direct_connections",
+                  "restart_required"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "off",
+                      "ready",
+                      "active",
+                      "failing",
+                      "bypassing",
+                      "lost"
+                    ],
+                    "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+                  },
+                  "last_error": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "direct_connections": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "restart_required": {
+                    "type": "boolean",
+                    "description": "Settings changed while the profile was open."
+                  }
+                }
+              },
+              "privacy": {
+                "type": "object",
+                "properties": {
+                  "webrtc": {
+                    "enum": [
+                      "default",
+                      "public_interface_only",
+                      "disable_non_proxied_udp"
+                    ]
+                  },
+                  "block_third_party_cookies": {
+                    "type": "boolean"
+                  },
+                  "do_not_track": {
+                    "type": "boolean"
+                  },
+                  "language": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 16
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timezone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "window": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "width",
+                          "height"
+                        ],
+                        "properties": {
+                          "width": {
+                            "type": "integer",
+                            "minimum": 800,
+                            "maximum": 3840
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": 600,
+                            "maximum": 2160
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "text_size": {
+                    "enum": [
+                      "default",
+                      "large",
+                      "larger"
+                    ]
+                  },
+                  "reduced_motion": {
+                    "type": "boolean"
+                  },
+                  "preset": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
               },
               "sync_status": {
                 "type": "string",
@@ -2624,7 +3310,8 @@
               "privacy.crash_reports",
               "downloads.directory",
               "workspace.active",
-              "profiles.trash_retention_days"
+              "profiles.trash_retention_days",
+              "proxies.allow_private_addresses"
             ]
           },
           "value": {},
@@ -2882,6 +3569,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "proxy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -2951,7 +3649,11 @@
                 "trashed_at",
                 "purge_after",
                 "template_id",
+                "proxy_id",
                 "proxy_label",
+                "fail_closed",
+                "network",
+                "privacy",
                 "sync_status",
                 "version",
                 "created_at",
@@ -3099,16 +3801,161 @@
                     }
                   ]
                 },
-                "proxy_label": {
+                "proxy_id": {
                   "anyOf": [
                     {
                       "type": "string",
-                      "description": "Placeholder until milestone 05 assigns proxies."
+                      "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                     },
                     {
                       "type": "null"
                     }
                   ]
+                },
+                "proxy_label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Name of the assigned proxy."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "fail_closed": {
+                  "type": "boolean",
+                  "description": "With a proxy: block traffic that cannot go through it."
+                },
+                "network": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "last_error",
+                    "direct_connections",
+                    "restart_required"
+                  ],
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "off",
+                        "ready",
+                        "active",
+                        "failing",
+                        "bypassing",
+                        "lost"
+                      ],
+                      "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+                    },
+                    "last_error": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "direct_connections": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "restart_required": {
+                      "type": "boolean",
+                      "description": "Settings changed while the profile was open."
+                    }
+                  }
+                },
+                "privacy": {
+                  "type": "object",
+                  "properties": {
+                    "webrtc": {
+                      "enum": [
+                        "default",
+                        "public_interface_only",
+                        "disable_non_proxied_udp"
+                      ]
+                    },
+                    "block_third_party_cookies": {
+                      "type": "boolean"
+                    },
+                    "do_not_track": {
+                      "type": "boolean"
+                    },
+                    "language": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 16
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "window": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "width",
+                            "height"
+                          ],
+                          "properties": {
+                            "width": {
+                              "type": "integer",
+                              "minimum": 800,
+                              "maximum": 3840
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 600,
+                              "maximum": 2160
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "text_size": {
+                      "enum": [
+                        "default",
+                        "large",
+                        "larger"
+                      ]
+                    },
+                    "reduced_motion": {
+                      "type": "boolean"
+                    },
+                    "preset": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "sync_status": {
                   "type": "string",
@@ -3690,6 +4537,17 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "proxy": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "additionalProperties": false
@@ -4086,6 +4944,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "proxy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -4239,6 +5108,17 @@
                       {
                         "type": "string",
                         "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "proxy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                       },
                       {
                         "type": "null"
@@ -4454,7 +5334,11 @@
           "trashed_at",
           "purge_after",
           "template_id",
+          "proxy_id",
           "proxy_label",
+          "fail_closed",
+          "network",
+          "privacy",
           "sync_status",
           "version",
           "created_at",
@@ -4602,16 +5486,161 @@
               }
             ]
           },
-          "proxy_label": {
+          "proxy_id": {
             "anyOf": [
               {
                 "type": "string",
-                "description": "Placeholder until milestone 05 assigns proxies."
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "proxy_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Name of the assigned proxy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "description": "With a proxy: block traffic that cannot go through it."
+          },
+          "network": {
+            "type": "object",
+            "required": [
+              "status",
+              "last_error",
+              "direct_connections",
+              "restart_required"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "off",
+                  "ready",
+                  "active",
+                  "failing",
+                  "bypassing",
+                  "lost"
+                ],
+                "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direct_connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "restart_required": {
+                "type": "boolean",
+                "description": "Settings changed while the profile was open."
+              }
+            }
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           },
           "sync_status": {
             "type": "string",
@@ -4917,6 +5946,34 @@
                     "const": "restore"
                   }
                 }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "action",
+                  "proxy_id",
+                  "fail_closed"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "const": "set_proxy"
+                  },
+                  "proxy_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fail_closed": {
+                    "type": "boolean"
+                  }
+                }
               }
             ]
           },
@@ -5056,6 +6113,17 @@
                           {
                             "type": "string",
                             "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "proxy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                           },
                           {
                             "type": "null"
@@ -5319,6 +6387,17 @@
                           {
                             "type": "string",
                             "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "proxy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
                           },
                           {
                             "type": "null"
@@ -6066,6 +7145,17 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "proxy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "additionalProperties": false
@@ -6113,6 +7203,1773 @@
           },
           "notes_withheld": {
             "type": "integer"
+          }
+        }
+      }
+    },
+    "list_proxies": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "workspace_id",
+            "name",
+            "type",
+            "host",
+            "port",
+            "has_login",
+            "expires_at",
+            "expiry",
+            "days_left",
+            "notes",
+            "version",
+            "created_at",
+            "updated_at",
+            "profiles",
+            "last_check"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "workspace_id": {
+              "type": "string",
+              "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "type": {
+              "enum": [
+                "http",
+                "https",
+                "socks5"
+              ]
+            },
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "has_login": {
+              "type": "boolean",
+              "description": "A login is saved in the keychain (never returned)."
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expiry": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "expired",
+                    "expires_soon"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "days_left": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "profiles": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_check": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "proxy_id",
+                    "result",
+                    "error_code",
+                    "latency_ms",
+                    "egress_ip",
+                    "checked_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^nck_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "proxy_id": {
+                      "type": "string",
+                      "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "result": {
+                      "enum": [
+                        "ok",
+                        "error"
+                      ]
+                    },
+                    "error_code": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "latency_ms": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "egress_ip": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 45,
+                          "description": "The address the check service saw."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "checked_at": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "maxItems": 1000
+      }
+    },
+    "create_proxy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "proxy"
+        ],
+        "properties": {
+          "proxy": {
+            "type": "object",
+            "required": [
+              "name",
+              "type",
+              "host",
+              "port"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "type": {
+                "enum": [
+                  "http",
+                  "https",
+                  "socks5"
+                ]
+              },
+              "host": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "login": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 255
+                  }
+                },
+                "additionalProperties": false
+              },
+              "expires_at": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "notes": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "type",
+          "host",
+          "port",
+          "has_login",
+          "expires_at",
+          "expiry",
+          "days_left",
+          "notes",
+          "version",
+          "created_at",
+          "updated_at",
+          "profiles",
+          "last_check"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "workspace_id": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "type": {
+            "enum": [
+              "http",
+              "https",
+              "socks5"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "has_login": {
+            "type": "boolean",
+            "description": "A login is saved in the keychain (never returned)."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "enum": [
+                  "expired",
+                  "expires_soon"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "profiles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_check": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "proxy_id",
+                  "result",
+                  "error_code",
+                  "latency_ms",
+                  "egress_ip",
+                  "checked_at"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^nck_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "proxy_id": {
+                    "type": "string",
+                    "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "result": {
+                    "enum": [
+                      "ok",
+                      "error"
+                    ]
+                  },
+                  "error_code": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "latency_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "egress_ip": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 45,
+                        "description": "The address the check service saw."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checked_at": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "update_proxy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "proxyId",
+          "expectedVersion",
+          "changes"
+        ],
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "type": {
+                "enum": [
+                  "http",
+                  "https",
+                  "socks5"
+                ]
+              },
+              "host": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "login": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 255
+                  }
+                },
+                "additionalProperties": false
+              },
+              "remove_login": {
+                "type": "boolean"
+              },
+              "expires_at": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "clear_expiry": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "type",
+          "host",
+          "port",
+          "has_login",
+          "expires_at",
+          "expiry",
+          "days_left",
+          "notes",
+          "version",
+          "created_at",
+          "updated_at",
+          "profiles",
+          "last_check"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "workspace_id": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "type": {
+            "enum": [
+              "http",
+              "https",
+              "socks5"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "has_login": {
+            "type": "boolean",
+            "description": "A login is saved in the keychain (never returned)."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "enum": [
+                  "expired",
+                  "expires_soon"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "profiles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_check": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "proxy_id",
+                  "result",
+                  "error_code",
+                  "latency_ms",
+                  "egress_ip",
+                  "checked_at"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^nck_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "proxy_id": {
+                    "type": "string",
+                    "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "result": {
+                    "enum": [
+                      "ok",
+                      "error"
+                    ]
+                  },
+                  "error_code": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "latency_ms": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "egress_ip": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 45,
+                        "description": "The address the check service saw."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checked_at": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "delete_proxy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "proxyId"
+        ],
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "test_proxy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "proxyId"
+        ],
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "id",
+          "proxy_id",
+          "result",
+          "error_code",
+          "latency_ms",
+          "egress_ip",
+          "checked_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^nck_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "proxy_id": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "result": {
+            "enum": [
+              "ok",
+              "error"
+            ]
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "egress_ip": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 45,
+                "description": "The address the check service saw."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checked_at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "list_proxy_checks": {
+      "args": {
+        "type": "object",
+        "required": [
+          "proxyId"
+        ],
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "proxy_id",
+            "result",
+            "error_code",
+            "latency_ms",
+            "egress_ip",
+            "checked_at"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^nck_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "proxy_id": {
+              "type": "string",
+              "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "result": {
+              "enum": [
+                "ok",
+                "error"
+              ]
+            },
+            "error_code": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "latency_ms": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "egress_ip": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 45,
+                  "description": "The address the check service saw."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checked_at": {
+              "type": "string"
+            }
+          }
+        },
+        "maxItems": 50
+      }
+    },
+    "assign_proxy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "profileId",
+          "proxyId",
+          "failClosed",
+          "expectedVersion"
+        ],
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "proxyId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failClosed": {
+            "type": "boolean"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "client_id",
+          "client_name",
+          "client_colour",
+          "tags",
+          "notes",
+          "favourite",
+          "archived_at",
+          "trashed_at",
+          "purge_after",
+          "template_id",
+          "proxy_id",
+          "proxy_label",
+          "fail_closed",
+          "network",
+          "privacy",
+          "sync_status",
+          "version",
+          "created_at",
+          "updated_at",
+          "status",
+          "state",
+          "pid",
+          "adopted",
+          "ready",
+          "window_open",
+          "force_available",
+          "start_urls",
+          "download_dir",
+          "permissions",
+          "runtime_version",
+          "last_error",
+          "crash_count",
+          "last_started_at",
+          "last_clean_shutdown_at",
+          "last_backup_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_colour": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9a-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^tag_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 40
+                }
+              }
+            },
+            "maxItems": 20
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "favourite": {
+            "type": "boolean"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trashed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Set while the profile is in the trash."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purge_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "When a trashed profile is deleted permanently."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proxy_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proxy_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Name of the assigned proxy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "description": "With a proxy: block traffic that cannot go through it."
+          },
+          "network": {
+            "type": "object",
+            "required": [
+              "status",
+              "last_error",
+              "direct_connections",
+              "restart_required"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "off",
+                  "ready",
+                  "active",
+                  "failing",
+                  "bypassing",
+                  "lost"
+                ],
+                "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direct_connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "restart_required": {
+                "type": "boolean",
+                "description": "Settings changed while the profile was open."
+              }
+            }
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "sync_status": {
+            "type": "string",
+            "const": "local_only",
+            "description": "Cloud sync arrives in milestone 07."
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "closed",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "state": {
+            "enum": [
+              "stopped",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "adopted": {
+            "type": "boolean",
+            "description": "Running since before this manager instance started."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The browser has started its helper processes."
+          },
+          "window_open": {
+            "type": "boolean",
+            "description": "At least one page (renderer) is open."
+          },
+          "force_available": {
+            "type": "boolean",
+            "description": "Graceful close timed out; an explicit force close is offered."
+          },
+          "start_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "maxItems": 10
+          },
+          "download_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "type": "object",
+            "required": [
+              "camera",
+              "microphone",
+              "location"
+            ],
+            "properties": {
+              "camera": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "microphone": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "location": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              }
+            }
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "crash_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_clean_shutdown_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_backup_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "validate_privacy": {
+      "args": {
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "failClosedProxy": {
+            "type": "boolean"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "valid",
+          "error",
+          "platform",
+          "report"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "current_version": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "platform": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ]
+          },
+          "report": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "field",
+                "support",
+                "message"
+              ],
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "support": {
+                  "enum": [
+                    "applied",
+                    "partial",
+                    "unavailable"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "get_privacy_options": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "platform",
+          "languages",
+          "time_zones",
+          "window_min",
+          "window_max",
+          "presets"
+        ],
+        "properties": {
+          "platform": {
+            "enum": [
+              "windows",
+              "macos",
+              "linux"
+            ]
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "tag",
+                "name"
+              ],
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "time_zones": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "window_min": {
+            "type": "array",
+            "additionalItems": false,
+            "items": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2
+          },
+          "window_max": {
+            "type": "array",
+            "additionalItems": false,
+            "items": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "description",
+                "config"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "config": {
+                  "type": "object",
+                  "properties": {
+                    "webrtc": {
+                      "enum": [
+                        "default",
+                        "public_interface_only",
+                        "disable_non_proxied_udp"
+                      ]
+                    },
+                    "block_third_party_cookies": {
+                      "type": "boolean"
+                    },
+                    "do_not_track": {
+                      "type": "boolean"
+                    },
+                    "language": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 16
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "window": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "width",
+                            "height"
+                          ],
+                          "properties": {
+                            "width": {
+                              "type": "integer",
+                              "minimum": 800,
+                              "maximum": 3840
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 600,
+                              "maximum": 2160
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "text_size": {
+                      "enum": [
+                        "default",
+                        "large",
+                        "larger"
+                      ]
+                    },
+                    "reduced_motion": {
+                      "type": "boolean"
+                    },
+                    "preset": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
           }
         }
       }
@@ -6239,20 +9096,141 @@
       }
     },
     "warning": {
-      "type": "object",
-      "required": [
-        "code",
-        "free_bytes"
-      ],
-      "properties": {
-        "code": {
-          "type": "string",
-          "const": "LOW_DISK_SPACE"
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "free_bytes"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "LOW_DISK_SPACE"
+            },
+            "free_bytes": {
+              "type": "integer"
+            }
+          }
         },
-        "free_bytes": {
-          "type": "integer"
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "profile_id",
+            "error",
+            "fail_closed"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "PROXY_FAILING"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "error": {
+              "type": "string"
+            },
+            "fail_closed": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "profile_id",
+            "direct_connections"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "PROXY_BYPASSED"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "direct_connections": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "profile_id",
+            "reason"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "PROXY_CONNECTION_LOST"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "proxy_id",
+            "expires_at"
+          ],
+          "properties": {
+            "code": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "PROXY_EXPIRING"
+                },
+                {
+                  "type": "string",
+                  "const": "PROXY_EXPIRED"
+                }
+              ]
+            },
+            "proxy_id": {
+              "type": "string",
+              "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "days_left": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
         }
-      }
+      ]
     }
   }
 }
