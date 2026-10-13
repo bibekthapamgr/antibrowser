@@ -5,12 +5,14 @@
 //! - [`job`]: persistent, secret-free job records, saved after every step.
 //! - [`engine`]: the resumable state machines.
 //! - [`portability`]: what a restored snapshot keeps on this computer (supported / sign-in required / unsupported).
+//! - [`rest`]: the snapshot API over HTTP (paths, bodies, parsing, error mapping), shared by the desktop and tests.
 //! - `fake` (feature `testing`): an in-memory server with the real rules and fault injection.
 
 pub mod api;
 pub mod engine;
 pub mod job;
 pub mod portability;
+pub mod rest;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;

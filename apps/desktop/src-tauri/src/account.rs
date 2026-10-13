@@ -878,29 +878,10 @@ impl AppState {
             if res.ok() {
                 return Ok(json);
             }
-            let code = api_code(&json);
-            return Err(match (res.status, code) {
-                (401, _) => {
-                    self.expire_session();
-                    E::SignedOut
-                }
-                (_, "VERSION_CONFLICT") => E::Conflict {
-                    head_version: json
-                        .pointer("/safe_details/head_version")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(0),
-                },
-                (_, "LEASE_HELD") => E::LeaseHeld,
-                (_, "LEASE_NOT_HELD" | "FENCING_TOKEN_STALE") => E::LeaseLost,
-                (status, "") => E::Code {
-                    status,
-                    code: format!("HTTP_{status}"),
-                },
-                (status, c) => E::Code {
-                    status,
-                    code: c.to_owned(),
-                },
-            });
+            if res.status == 401 {
+                self.expire_session();
+            }
+            return Err(pb_sync::rest::map_error(res.status, &json));
         }
     }
 }

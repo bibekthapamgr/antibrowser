@@ -23,19 +23,17 @@ use pb_runtime::{ProfileId, ProfileLock, RunState, procs};
 use pb_seal::SealKey;
 use pb_storage::LocalStore;
 use pb_storage::cloud as cs;
-use pb_sync::api::{
-    CommitRequest, InitRequest, InitResult, Operation, PartUrl, RestorePlan, SnapshotInfo,
-    StoredPart,
-};
+use pb_sync::api::SnapshotInfo;
 use pb_sync::portability::{self, Here, Portability};
+use pb_sync::rest::{RestApi, Transport, id_ok};
 use pb_sync::{
-    ApiError, Engine, Job, JobStore, ObjectError, Objects, Opened, Poll, RestoreChecks, RestoreJob,
+    ApiError, Engine, Job, JobStore, Objects, Opened, Poll, RestoreChecks, RestoreJob,
     RestoreState, RestoreTarget, Source, SyncApi, SyncError, UploadJob, UploadState,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -45,8 +43,6 @@ use std::time::Duration;
 pub const DEVICE_KEY_ACCOUNT: &str = "backup-key-v1";
 /// Unfinished jobs are retried this often (and immediately when woken).
 const WORKER_TICK: Duration = Duration::from_secs(60);
-/// Leases taken for an upload last this long and are renewed while it runs.
-const LEASE_SECONDS: u32 = 600;
 
 /// The control plane and object storage, as one object (tests use [`pb_sync::fake::FakeClient`]).
 pub trait Backend: SyncApi + Objects {}
@@ -111,290 +107,18 @@ impl Default for SyncRuntime {
 
 // ================================================================================================ API client
 
-fn id_ok(prefix: &str, s: &str) -> bool {
-    s.len() == prefix.len() + 27
-        && s.starts_with(prefix)
-        && s.as_bytes()[prefix.len()] == b'_'
-        && s.as_bytes()[prefix.len() + 1..]
-            .iter()
-            .all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(b))
-}
+/// The signed-in session as the snapshot API's transport (the access token never leaves the shell).
+struct Shell<'a>(&'a AppState);
 
-fn bad() -> ApiError {
-    ApiError::Code {
-        status: 502,
-        code: "CLOUD_BAD_RESPONSE".into(),
-    }
-}
-
-fn s(v: &Value, ptr: &str) -> Result<String, ApiError> {
-    v.pointer(ptr)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(bad)
-}
-
-fn n(v: &Value, ptr: &str) -> Result<u64, ApiError> {
-    v.pointer(ptr)
-        .and_then(Value::as_f64)
-        .filter(|f| *f >= 0.0)
-        .map(|f| f as u64)
-        .ok_or_else(bad)
-}
-
-fn snapshot_info(v: &Value) -> Result<SnapshotInfo, ApiError> {
-    Ok(SnapshotInfo {
-        id: s(v, "/id")?,
-        version: v.get("version").and_then(Value::as_i64).ok_or_else(bad)?,
-        digest: s(v, "/digest")?,
-        ciphertext_size: n(v, "/ciphertext_size")?,
-        plaintext_size: n(v, "/plaintext_size")?,
-        platform: s(v, "/platform")?,
-        browser_version: s(v, "/browser_version")?,
-        schema_version: u32::try_from(n(v, "/schema_version")?).map_err(|_| bad())?,
-        device_id: v
-            .get("device_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        committed_at: v
-            .get("committed_at")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
-}
-
-fn data_key(v: &Value) -> Result<SealKey, ApiError> {
-    SealKey::from_base64(
-        v.pointer("/key/data_key")
-            .and_then(Value::as_str)
-            .ok_or_else(bad)?,
-    )
-    .map_err(|_| bad())
-}
-
-/// The real API, through the signed-in session (the access token never leaves the shell).
-struct CloudSync<'a> {
-    state: &'a AppState,
-    device: String,
-}
-
-impl CloudSync<'_> {
-    fn path(&self, org: &str, profile: &str, tail: &str) -> Result<String, ApiError> {
-        if !id_ok("org", org) || !id_ok("prf", profile) {
-            return Err(bad());
-        }
-        Ok(format!("/v1/orgs/{org}/profiles/{profile}{tail}"))
-    }
-    fn snap_path(
+impl Transport for Shell<'_> {
+    fn call(
         &self,
-        org: &str,
-        profile: &str,
-        snapshot: &str,
-        tail: &str,
-    ) -> Result<String, ApiError> {
-        if !id_ok("snp", snapshot) {
-            return Err(bad());
-        }
-        self.path(org, profile, &format!("/snapshots/{snapshot}{tail}"))
-    }
-}
-
-impl SyncApi for CloudSync<'_> {
-    fn acquire_lease(&self, org: &str, profile: &str, key: &str) -> Result<String, ApiError> {
-        let v = self.state.shell_api(
-            Method::Post,
-            &self.path(org, profile, "/lease")?,
-            Some(key),
-            Some(&json!({ "device_id": self.device, "ttl_seconds": LEASE_SECONDS })),
-        )?;
-        s(&v, "/fencing_token")
-    }
-    fn renew_lease(&self, org: &str, profile: &str, fencing: &str) -> Result<(), ApiError> {
-        self.state
-            .shell_api(
-                Method::Post,
-                &self.path(org, profile, "/lease/renew")?,
-                None,
-                Some(&json!({ "fencing_token": fencing, "ttl_seconds": LEASE_SECONDS })),
-            )
-            .map(|_| ())
-    }
-    fn release_lease(&self, org: &str, profile: &str, fencing: &str) -> Result<(), ApiError> {
-        self.state
-            .shell_api(
-                Method::Post,
-                &self.path(org, profile, "/lease/release")?,
-                None,
-                Some(&json!({ "fencing_token": fencing })),
-            )
-            .map(|_| ())
-    }
-    fn init(
-        &self,
-        org: &str,
-        profile: &str,
-        key: &str,
-        req: &InitRequest,
-    ) -> Result<InitResult, ApiError> {
-        let body = serde_json::to_value(req).map_err(|_| bad())?;
-        let v = self.state.shell_api(
-            Method::Post,
-            &self.path(org, profile, "/snapshots/init")?,
-            Some(key),
-            Some(&body),
-        )?;
-        Ok(InitResult {
-            operation_id: s(&v, "/operation/id")?,
-            snapshot_id: s(&v, "/key/snapshot_id")?,
-            org_id: s(&v, "/key/org_id")?,
-            profile_id: s(&v, "/key/profile_id")?,
-            key_version: s(&v, "/key/key_version")?,
-            schema_version: u32::try_from(n(&v, "/key/schema_version")?).map_err(|_| bad())?,
-            data_key: data_key(&v)?,
-            part_size: n(&v, "/upload/part_size")?,
-            max_parts: u32::try_from(n(&v, "/upload/max_parts")?).map_err(|_| bad())?,
-            max_bytes: n(&v, "/upload/max_bytes")?,
-        })
-    }
-    fn part_urls(
-        &self,
-        org: &str,
-        profile: &str,
-        snapshot: &str,
-        parts: &[u32],
-    ) -> Result<Vec<PartUrl>, ApiError> {
-        let v = self.state.shell_api(
-            Method::Post,
-            &self.snap_path(org, profile, snapshot, "/parts")?,
-            None,
-            Some(&json!({ "part_numbers": parts })),
-        )?;
-        serde_json::from_value(v.get("parts").cloned().ok_or_else(bad)?).map_err(|_| bad())
-    }
-    fn stored_parts(
-        &self,
-        org: &str,
-        profile: &str,
-        snapshot: &str,
-    ) -> Result<Vec<StoredPart>, ApiError> {
-        let v = self.state.shell_api(
-            Method::Get,
-            &self.snap_path(org, profile, snapshot, "/parts")?,
-            None,
-            None,
-        )?;
-        serde_json::from_value(v.get("parts").cloned().ok_or_else(bad)?).map_err(|_| bad())
-    }
-    fn commit(
-        &self,
-        org: &str,
-        profile: &str,
-        snapshot: &str,
-        req: &CommitRequest,
-    ) -> Result<Operation, ApiError> {
-        let body = serde_json::to_value(req).map_err(|_| bad())?;
-        let v = self.state.shell_api(
-            Method::Post,
-            &self.snap_path(org, profile, snapshot, "/commit")?,
-            None,
-            Some(&body),
-        )?;
-        serde_json::from_value(v).map_err(|_| bad())
-    }
-    fn cancel(&self, org: &str, profile: &str, snapshot: &str) -> Result<(), ApiError> {
-        self.state
-            .shell_api(
-                Method::Post,
-                &self.snap_path(org, profile, snapshot, "/cancel")?,
-                None,
-                None,
-            )
-            .map(|_| ())
-    }
-    fn operation(&self, org: &str, operation: &str) -> Result<Operation, ApiError> {
-        if !id_ok("org", org) || !id_ok("syn", operation) {
-            return Err(bad());
-        }
-        let v = self.state.shell_api(
-            Method::Get,
-            &format!("/v1/orgs/{org}/sync-operations/{operation}"),
-            None,
-            None,
-        )?;
-        serde_json::from_value(v).map_err(|_| bad())
-    }
-    fn restore_plan(
-        &self,
-        org: &str,
-        profile: &str,
-        snapshot: Option<&str>,
-    ) -> Result<RestorePlan, ApiError> {
-        let body = match snapshot {
-            Some(id) if id_ok("snp", id) => json!({ "snapshot_id": id }),
-            Some(_) => return Err(bad()),
-            None => json!({}),
-        };
-        let v = self.state.shell_api(
-            Method::Post,
-            &self.path(org, profile, "/restore-plans")?,
-            None,
-            Some(&body),
-        )?;
-        Ok(RestorePlan {
-            snapshot: snapshot_info(v.get("snapshot").ok_or_else(bad)?)?,
-            head_version: v
-                .get("head_version")
-                .and_then(Value::as_i64)
-                .ok_or_else(bad)?,
-            download_url: s(&v, "/download/url")?,
-            org_id: s(&v, "/key/org_id")?,
-            profile_id: s(&v, "/key/profile_id")?,
-            key_version: s(&v, "/key/key_version")?,
-            data_key: data_key(&v)?,
-        })
-    }
-    fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
-        self.latest_inner(org, profile)
-    }
-}
-
-impl CloudSync<'_> {
-    fn latest_inner(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
-        let v = self.state.shell_api(
-            Method::Get,
-            &self.path(org, profile, "/snapshots?limit=1")?,
-            None,
-            None,
-        )?;
-        match v.pointer("/items/0") {
-            Some(item) => Ok(Some(snapshot_info(item)?)),
-            None => Ok(None),
-        }
-    }
-}
-
-impl Objects for CloudSync<'_> {
-    fn put_part(&self, url: &str, bytes: &[u8]) -> Result<String, ObjectError> {
-        Objects::put_part(&self.state.sync.transfer, url, bytes)
-    }
-    fn download(
-        &self,
-        url: &str,
-        start: u64,
-        out: &mut dyn Write,
-        restart: &mut dyn FnMut() -> io::Result<()>,
-        cancel: &AtomicBool,
-        progress: &mut dyn FnMut(u64),
-    ) -> Result<u64, ObjectError> {
-        Objects::download(
-            &self.state.sync.transfer,
-            url,
-            start,
-            out,
-            restart,
-            cancel,
-            progress,
-        )
+        method: Method,
+        path: &str,
+        idempotency_key: Option<&str>,
+        body: Option<&Value>,
+    ) -> Result<Value, ApiError> {
+        self.0.shell_api(method, path, idempotency_key, body)
     }
 }
 
@@ -635,11 +359,11 @@ impl AppState {
             .flatten()
             .filter(|d| id_ok("dev", d))
             .ok_or(SyncError::Api(ApiError::SignedOut))?;
-        let api = CloudSync {
-            state: self,
+        let api = RestApi {
+            transport: Shell(self),
             device,
         };
-        Ok(f(&api, &api))
+        Ok(f(&api, &self.sync.transfer))
     }
 
     fn installed_browser(&self, store: &LocalStore) -> Option<String> {
