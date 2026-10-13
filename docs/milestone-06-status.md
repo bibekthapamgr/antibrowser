@@ -70,7 +70,14 @@ deep-link and storage unit tests extended; UI end-to-end 101 (26 new: account an
 dark with axe at 900×600, sign-in, invitations, ownership transfer with re-authentication, grants and operator view,
 offline, local copy).
 
-CI: _to be recorded after the Windows/macOS/Linux run._
+CI: full run green on Windows x64, macOS arm64 and Linux at `e61d919`
+([ci 38361642532](https://github.com/bibekthapamgr/antibrowser/actions/runs/38361642532): fmt, clippy, all Rust tests per
+OS including the new desktop account tests, TypeScript + PostgreSQL 18 with a real **Keycloak 26.6.2** sign-in — run
+annotation “5 of 5 sign-in checks passed” —, UI e2e with axe, license inventory, secret scan). Real-browser set passed
+on all three OSes in [runtime pipeline 38360313482](https://github.com/bibekthapamgr/antibrowser/actions/runs/38360313482)
+and installers built in [desktop internal build 38360311122](https://github.com/bibekthapamgr/antibrowser/actions/runs/38360311122)
+(both at `ebb0a45`; the following commit changed only tests and CI). The first 3-OS run found one test that assumed a
+Linux platform name; it was fixed before the green run.
 
 ## Known limitations
 See [identity/README.md](identity/README.md#known-limitations). The most important: organization profiles cannot be
