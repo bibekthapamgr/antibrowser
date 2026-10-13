@@ -322,7 +322,34 @@ fn zip_with(entries: &[(&str, &[u8], Option<u32>)]) -> Vec<u8> {
         }
         w.finish().unwrap_or_else(|e| panic!("{e}"));
     }
-    buf.into_inner()
+    made_on_unix(buf.into_inner())
+}
+
+/// Marks every entry as made on Unix, as an attacker's archive would be. The zip writer records the host system it
+/// runs on (DOS on Windows), and permission bits and links only mean something for Unix-made entries, so without
+/// this the same test would build different archives on Windows.
+fn made_on_unix(mut bytes: Vec<u8>) -> Vec<u8> {
+    let le16 = |b: &[u8], at: usize| usize::from(u16::from_le_bytes([b[at], b[at + 1]]));
+    let le32 = |b: &[u8], at: usize| {
+        usize::try_from(u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]))
+            .unwrap_or(usize::MAX)
+    };
+    let eocd = bytes
+        .windows(4)
+        .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])
+        .unwrap_or_else(|| panic!("no end-of-central-directory record"));
+    let entries = le16(&bytes, eocd + 10);
+    let mut at = le32(&bytes, eocd + 16);
+    for _ in 0..entries {
+        assert_eq!(
+            bytes[at..at + 4],
+            [0x50, 0x4b, 0x01, 0x02],
+            "central directory header"
+        );
+        bytes[at + 5] = 3; // "version made by", high byte: host system 3 = Unix
+        at += 46 + le16(&bytes, at + 28) + le16(&bytes, at + 30) + le16(&bytes, at + 32);
+    }
+    bytes
 }
 
 fn manifest(extra: serde_json::Value) -> Vec<u8> {
@@ -456,4 +483,28 @@ fn only_documented_formats_have_adapters() {
         ]
     );
     assert_eq!(digest(b"abc").len(), 64);
+}
+
+#[test]
+fn csv_row_numbers_are_the_same_with_windows_line_endings() -> Result<(), FileError> {
+    let lf = "# project-browser profiles v1\nname,notes,camera\nA,\"two\nlines\",ask\nB,,sometimes\n\nC,,block\n";
+    let crlf = lf.replace('\n', "\r\n");
+    for text in [lf.to_owned(), crlf] {
+        let p = parse("x.csv", text.as_bytes())?;
+        let rows: Vec<u32> = p.rows.iter().map(|r| r.row).collect();
+        assert_eq!(rows, [3, 5, 7], "{text:?}");
+        assert_eq!(errors(&p), [(5, "camera".to_owned(), "invalid_value")]);
+        assert_eq!(ok_rows(&p)[0].notes, "two\nlines");
+    }
+    // A syntax error names the line it is on, whatever the line endings.
+    for text in [
+        "name,notes\nA,ok\nB,x,extra\n",
+        "name,notes\r\nA,ok\r\nB,x,extra\r\n",
+    ] {
+        match parse("x.csv", text.as_bytes()) {
+            Err(FileError::MalformedCsv { line, .. }) => assert_eq!(line, 3, "{text:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+    Ok(())
 }

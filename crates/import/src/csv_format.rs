@@ -71,7 +71,7 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedFile, FileError> {
         .from_reader(body.as_bytes());
     let headers = reader
         .headers()
-        .map_err(|e| malformed(&e, first_line_offset))?
+        .map_err(|e| malformed(&e, &mut Lines::new(body.as_bytes()), first_line_offset))?
         .clone();
     let mut index: Vec<Option<usize>> = vec![None; COLUMNS.len()];
     let mut unknown = vec![];
@@ -91,16 +91,17 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedFile, FileError> {
         return Err(FileError::UnknownColumns(unknown));
     }
 
+    let mut lines = Lines::new(body.as_bytes());
     let mut rows = vec![];
     for record in reader.records() {
-        let record = record.map_err(|e| malformed(&e, first_line_offset))?;
+        let record = record.map_err(|e| malformed(&e, &mut lines, first_line_offset))?;
         if record.iter().all(|c| c.trim().is_empty()) {
             continue;
         }
         if rows.len() == MAX_ROWS {
             return Err(FileError::TooManyRows { limit: MAX_ROWS });
         }
-        let line = record.position().map_or(0, |p| p.line()) + first_line_offset;
+        let line = record.position().map_or(0, |p| lines.line_of(p.byte())) + first_line_offset;
         let cell = |c: usize| -> Option<String> {
             index[c]
                 .and_then(|i| record.get(i))
@@ -134,8 +135,54 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedFile, FileError> {
     })
 }
 
-fn malformed(e: &csv::Error, offset: u64) -> FileError {
-    let line = e.position().map_or(0, |p| p.line()) + offset;
+/// Line numbers computed from byte offsets. The csv reader's own line count is one too low for files with CRLF line
+/// endings (it places a record's start on the `\n` of the previous line ending), and spreadsheets on Windows write
+/// CRLF. Offsets only grow while a file is read, so counting is incremental.
+struct Lines<'a> {
+    text: &'a [u8],
+    at: usize,
+    line: u64,
+}
+
+impl<'a> Lines<'a> {
+    fn new(text: &'a [u8]) -> Self {
+        Self {
+            text,
+            at: 0,
+            line: 1,
+        }
+    }
+
+    /// 1-based line of the first character at or after `byte` that is not a line ending.
+    fn line_of(&mut self, byte: u64) -> u64 {
+        let mut target = usize::try_from(byte)
+            .unwrap_or(usize::MAX)
+            .min(self.text.len());
+        while self
+            .text
+            .get(target)
+            .is_some_and(|b| matches!(b, b'\r' | b'\n'))
+        {
+            target += 1;
+        }
+        if target < self.at {
+            self.at = 0;
+            self.line = 1;
+        }
+        let span = self.text.get(self.at..target).unwrap_or_default();
+        for (i, b) in span.iter().enumerate() {
+            let lone_cr = *b == b'\r' && span.get(i + 1).copied() != Some(b'\n');
+            if *b == b'\n' || lone_cr {
+                self.line += 1;
+            }
+        }
+        self.at = target;
+        self.line
+    }
+}
+
+fn malformed(e: &csv::Error, lines: &mut Lines<'_>, offset: u64) -> FileError {
+    let line = e.position().map_or(0, |p| lines.line_of(p.byte())) + offset;
     let message = match e.kind() {
         csv::ErrorKind::UnequalLengths {
             expected_len, len, ..

@@ -55,7 +55,7 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
 | Criterion | Evidence |
 |---|---|
 | 10k-row import with bounded memory and cancel | `ipc.rs` `ten_thousand_row_import_can_be_cancelled_and_resumed_without_duplicates`: 10,000 rows, cancel mid-way, continue, exactly 9,999 valid profiles. Measured 2026-10-13 (Linux sandbox): 0.7 s release / 2.2 s debug end to end, peak process memory 38 MB (rows are planned once and written in batches of 250; the file is never held twice) |
-| Mixed-validity input reports each failed row; retry doesn't duplicate | `ipc.rs` `import_preview_binds_the_file_…`; `crates/import/tests/examples.rs` on [mixed-validity.csv](import/examples/mixed-validity.csv) |
+| Mixed-validity input reports each failed row; retry doesn't duplicate | `ipc.rs` `import_preview_binds_the_file_…`; `crates/import/tests/examples.rs` on [mixed-validity.csv](import/examples/mixed-validity.csv) (on Windows CI the checkout gives the examples CRLF line endings, so both styles are exercised; a Windows run found and fixed off-by-one row numbers for CRLF files) |
 | Duplicates, Unicode, long notes, missing fields, malicious archives, CSV formulas | `crates/import/src/tests.rs` (traversal incl. drive letters, links, bombs by ratio and size, executables, session manifests, formulas, Unicode, 2,000-character notes, missing columns/fields, wrong types), storage folded-name tests |
 | Search p95 ≤ 200 ms at 10k | `crates/storage/tests/search_latency.rs` (runs on every CI build): release p50 25 ms, **p95 45 ms**; debug p95 ≈ 94 ms |
 | UI flows | `apps/desktop/e2e/manager.e2e.test.ts`: keyboard selection + bulk + undo, select-all-matching at 10,000, folders and accent-insensitive search, trash and typed deletion, import preview/commit, 10,000-row cancel/continue, client in launch toast, secret notes; axe clean on 19 screens × light/dark |
@@ -69,7 +69,7 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
 | Usability walkthrough | [usability/milestone-04-walkthrough.md](usability/milestone-04-walkthrough.md) |
 
 ## Test totals
-Rust 139 (runtime 33, storage 22 + 1 latency gate, update 16 + 1 Windows-only, import 13, desktop 17 unit + 32 IPC
+Rust 140 (runtime 33, storage 22 + 1 latency gate, update 16 + 1 Windows-only, import 14, desktop 17 unit + 32 IPC
 integration + 5 real-browser). TypeScript desktop unit/contract 25 (was 15), packages 18; API/worker suites unchanged
 (they need PostgreSQL and run in CI). UI end-to-end 59 (was 39).
 

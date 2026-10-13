@@ -38,6 +38,7 @@ manage many client accounts; the tasks below are the script.
 | “All 1 matching profile selected” | Low | Fixed (“The 1 matching profile is selected”) |
 | An unsafe file showed a disabled “Nothing to import” button next to the error | Low | Fixed (button hidden; the error says nothing was imported) |
 | Hidden bidirectional characters ended up literally in source after formatting | Engineering | Fixed (built at run time; noted in the security model) |
+| CSV files with Windows line endings (as Excel writes them) reported every row number one too low in import errors — found by the Windows CI run | High (wrong row in every error message) | Fixed: rows are counted from byte offsets; a regression test runs the same file with LF and CRLF |
 
 ## Open questions for user sessions
 
