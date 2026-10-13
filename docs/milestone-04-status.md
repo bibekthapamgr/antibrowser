@@ -67,6 +67,9 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
   (Windows refused the folder move; elsewhere a backup of the deleted profile could have been left behind). Deletion
   now cancels the backup and claims the profile first; Windows renames/deletes retry briefly while antivirus or the
   indexer releases files. Test: `trash_and_deletion_never_race_a_backup_of_the_profile`.
+- The same automatic backup could also be writing when **Remove all local data** ran right after a close (seen once on
+  Linux CI). Removal now cancels running backups and waits for them; a recovery in progress makes it refuse
+  (`PROFILE_BUSY`) instead of deleting underneath it.
 - Test archives are now marked as made on Unix on every OS (the zip writer marks them DOS-made on Windows, which hid
   the link and permission bits the checks look for).
 

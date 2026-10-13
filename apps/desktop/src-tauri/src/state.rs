@@ -851,6 +851,13 @@ impl AppState {
         if self.supervisor.running_count() > 0 {
             return Err(ipc::PROFILES_RUNNING);
         }
+        // Nothing may write into the folders while they are removed: backups (one starts automatically after a
+        // clean close) are cancelled and waited for; a recovery in progress is not interrupted.
+        for id in self.supervisor.busy_profiles() {
+            if !self.cancel_backup(&id) {
+                return Err(ipc::PROFILE_BUSY);
+            }
+        }
         *self.store.write().map_err(|_| ipc::INTERNAL)? = StoreSlot::Failed(StoreFailure {
             code: "REMOVED",
             from_version: None,
@@ -858,6 +865,10 @@ impl AppState {
             backup_available: false,
             backup: None,
         });
+        // A backup needs the store, so none can start from here on; one that started a moment ago is cancelled.
+        for id in self.supervisor.busy_profiles() {
+            let _ = self.cancel_backup(&id);
+        }
         for dir in [
             &self.paths.profiles,
             &self.paths.runtimes,

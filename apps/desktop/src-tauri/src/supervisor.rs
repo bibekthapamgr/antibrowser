@@ -169,6 +169,14 @@ impl Supervisor {
         self.busy.lock().map(|b| b.contains(id)).unwrap_or(true)
     }
 
+    /// Profiles currently busy with a backup or a recovery.
+    pub fn busy_profiles(&self) -> Vec<ProfileId> {
+        self.busy
+            .lock()
+            .map(|b| b.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     // ------------------------------------------------------------------------- launch
     /// Starts tracking an accepted launch (STARTING, no process yet). The caller holds `lock`.
     pub fn begin_start(
