@@ -351,7 +351,8 @@ fn client_download_folders_stay_inside_the_base_folder_and_clients_get_a_picture
     f.state
         .set_download_directory(&base)
         .unwrap_or_else(|e| panic!("{e:?}"));
-    let base = std::fs::canonicalize(&base).unwrap_or(base);
+    // The stored folder is canonical in its ordinary form (no `\\?\` prefix on Windows).
+    let base = pb_runtime::simplify_path(&std::fs::canonicalize(&base).unwrap_or(base));
     ok(invoke(
         &f,
         "update_setting",
