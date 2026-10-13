@@ -1576,7 +1576,7 @@ describe('agency workspace and technical health (milestone 09)', () => {
     await page.$eval(`${form} input[type=url]`, (i) => {
       (i as HTMLInputElement).value = '';
     });
-    await page.click(`${form} input[type=url]`, { clickCount: 3 });
+    await page.click(`${form} input[type=url]`, { count: 3 });
     await page.keyboard.press('Backspace');
     await page.type(`${form} input[type=url]`, 'https://support.shop.example/');
     await clickButton(page, form, 'Add bookmark');
