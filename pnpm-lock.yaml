@@ -126,6 +126,28 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(yaml@2.9.1))
 
+  packages/sdk:
+    dependencies:
+      '@pb/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@pb/api':
+        specifier: workspace:*
+        version: link:../../services/api
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      playwright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(yaml@2.9.1))
+
   packages/ui:
     devDependencies:
       '@types/react':
@@ -1188,6 +1210,11 @@ packages:
 
   pino@10.4.0:
     resolution: {integrity: sha512-bk1ZMTwG/Vymx+zPoa28MhNzucFvXJWp3csrSuxuHPSMeUettaCoQ5Jvg07mtC4JGNpcfTwz41oVCnNgBK9+vA==}
+    hasBin: true
+
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
     hasBin: true
 
   postcss@8.5.29:
@@ -2339,6 +2366,8 @@ snapshots:
       safe-stable-stringify: 2.5.0
       sonic-boom: 4.2.1
       thread-stream: 4.2.0
+
+  playwright-core@1.63.0: {}
 
   postcss@8.5.29:
     dependencies:

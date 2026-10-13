@@ -9,6 +9,7 @@ members = [
   "crates/cloud",
   "crates/seal",
   "crates/sync",
+  "crates/devtools",
   "apps/desktop/src-tauri",
 ]
 
@@ -36,6 +37,7 @@ pb-netproxy = { path = "crates/netproxy" }
 pb-cloud = { path = "crates/cloud" }
 pb-seal = { path = "crates/seal" }
 pb-sync = { path = "crates/sync" }
+pb-devtools = { path = "crates/devtools" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

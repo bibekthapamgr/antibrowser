@@ -1,0 +1,24 @@
+{
+  "name": "@pb/sdk",
+  "version": "0.10.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript SDK for the Project Browser developer API (milestone 10): profiles, automation jobs, webhook verification and Playwright debugging sessions. No dependencies; runs on Node 24 and in bundlers (WebCrypto and fetch).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pb/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@pb/api": "workspace:*",
+    "@types/node": "24.19.2",
+    "playwright-core": "1.63.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}
