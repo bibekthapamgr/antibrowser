@@ -758,7 +758,7 @@ export function QuitPrompt(props: {
       description={
         stuck > 0
           ? 'They did not close when asked. Force closing ends them immediately; pages may lose unsaved work.'
-          : 'Quitting the manager does not have to close your profiles. Open profiles are picked up again the next time you start the manager.'
+          : 'Quitting the manager does not have to close your profiles. Open profiles are picked up again the next time you start the manager. Profiles that use a proxy have no connection while the manager is closed (nothing is sent without the proxy).'
       }
       onClose={() => choose('cancel')}
       initialFocus="[data-cancel]"

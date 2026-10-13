@@ -45,8 +45,12 @@ const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>pb network</ti
     out.languages = navigator.languages;
     out.tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     out.offset = new Date(Date.UTC(2026, 0, 15)).getTimezoneOffset();
-    out.outer = [window.outerWidth, window.outerHeight];
     out.reduced_motion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    out.permissions = {};
+    for (const name of ['geolocation', 'camera', 'microphone']) {
+      try { out.permissions[name] = (await navigator.permissions.query({ name })).state; }
+      catch (e) { out.permissions[name] = 'unsupported'; }
+    }
     // Through an HTTP proxy, Chromium carries WebSockets in a CONNECT tunnel.
     out.ws = await new Promise((ok) => {
       try {
@@ -65,6 +69,8 @@ const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>pb network</ti
         setTimeout(() => ok(found), 8000);
       } catch (e) { ok(['error ' + e]); }
     });
+    // Measured last: a new window may report 0x0 until it has been laid out.
+    out.outer = [window.outerWidth, window.outerHeight];
   } catch (e) { out.error = String(e); }
   await fetch('/report?who=' + encodeURIComponent(out.who), { method: 'POST', body: JSON.stringify(out) });
 })();
@@ -515,6 +521,28 @@ fn read_netlog(path: &Path, site: &str) -> NetLogSummary {
     out
 }
 
+/// Chromium's IPv6 reachability probe: a UDP socket is *connected* (no datagram is sent; the OS only picks a route)
+/// to Google Public DNS to learn whether IPv6 works.
+const IPV6_PROBE: &str = "[2001:4860:4860::8888]:";
+
+impl NetLogSummary {
+    /// Asserts that no UDP datagram was sent and no UDP socket was aimed anywhere but the IPv6 probe; returns the
+    /// number of probe sockets (reported as evidence).
+    fn assert_no_udp(&self) -> usize {
+        let other: Vec<_> = self
+            .udp_connects
+            .iter()
+            .filter(|a| !a.starts_with(IPV6_PROBE))
+            .collect();
+        assert!(
+            other.is_empty() && self.udp_sends == 0,
+            "UDP traffic: {other:?}, datagrams sent: {}",
+            self.udp_sends
+        );
+        self.udp_connects.len()
+    }
+}
+
 fn platform() -> &'static str {
     if cfg!(windows) {
         "windows"
@@ -604,10 +632,7 @@ fn http_proxy_fail_closed_no_dns_udp_or_webrtc_leaks() {
         "DNS look-ups: {:?}",
         log.network_lookups
     );
-    assert!(
-        log.udp_connects.is_empty() && log.udp_sends == 0,
-        "UDP: {log:?}"
-    );
+    let ipv6_probes = log.assert_no_udp();
     let gateway_addr = format!("127.0.0.1:{gateway}");
     let elsewhere: Vec<_> = log.tcp.iter().filter(|a| **a != gateway_addr).collect();
     assert!(
@@ -641,6 +666,10 @@ fn http_proxy_fail_closed_no_dns_udp_or_webrtc_leaks() {
     assert!(lang_header.starts_with("de-DE"), "{lang_header}");
     assert!(seen.iter().any(|s| s.header("dnt") == Some("1")));
     assert_eq!(report["reduced_motion"], json!(true));
+    // Website permissions: nothing is granted without the user (default "ask").
+    for name in ["geolocation", "camera", "microphone"] {
+        assert_ne!(report["permissions"][name], json!("granted"), "{report}");
+    }
     // Kathmandu is UTC+5:45 all year; ICU may report the zone under its older alias "Asia/Katmandu".
     let kathmandu = report["offset"] == json!(-345)
         && matches!(
@@ -661,12 +690,13 @@ fn http_proxy_fail_closed_no_dns_udp_or_webrtc_leaks() {
         json!({
             "netlog_events": log.events, "dns_queries_for_site": log.network_lookups.len(),
             "cache_or_hosts_file_lookups_for_site": log.local_only_lookups,
-            "udp_connects": log.udp_connects.len(), "udp_datagrams": log.udp_sends,
+            "udp_datagrams": log.udp_sends, "ipv6_reachability_probes_no_data": ipv6_probes,
             "tcp_attempts": log.tcp.len(), "tcp_not_to_gateway": elsewhere.len(),
             "proxy_requests": proxy_log.len(), "websocket_via_connect": ws_tunnel,
             "stun_server": stun.addr.is_some(), "stun_packets": stun.packets(), "webrtc_candidates": candidates.len(),
             "languages": report["languages"], "accept_language": lang_header, "tz": report["tz"], "utc_offset_minutes": report["offset"],
             "window": report["outer"], "reduced_motion": report["reduced_motion"],
+            "permissions": report["permissions"],
         }),
     );
 }
@@ -683,7 +713,24 @@ fn unproxied_control_profile_does_reach_the_stun_server() {
         eprintln!("skipped: no non-loopback address for the STUN control");
         return;
     };
+    // The control also shows the permission defaults on a secure (localhost) page: location blocked here,
+    // camera and microphone left at "ask" (a prompt, never granted silently).
     let id = env.profile("Control", None);
+    let version = env
+        .state
+        .profile_status(&id)
+        .map(|s| s.profile.version)
+        .unwrap_or_default();
+    env.state
+        .update_profile(
+            &id,
+            version,
+            ProfileChanges {
+                location: Some("block"),
+                ..ProfileChanges::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
     env.open(
         &id,
         &format!("http://{}/?who=control&stun={stun_addr}", site.addr),
@@ -691,11 +738,18 @@ fn unproxied_control_profile_does_reach_the_stun_server() {
     let report = site.wait_report("control", Duration::from_secs(60));
     std::thread::sleep(Duration::from_secs(2));
     env.close(&id);
-    assert!(report.is_some(), "the control page loaded");
+    let report = report.unwrap_or_else(|| panic!("the control page did not load"));
     assert!(stun.packets() > 0, "the control profile sent STUN requests");
+    let perms = &report["permissions"];
+    assert_eq!(perms["geolocation"], json!("denied"), "{report}");
+    assert_eq!(
+        (&perms["camera"], &perms["microphone"]),
+        (&json!("prompt"), &json!("prompt")),
+        "{report}"
+    );
     evidence(
         "control-no-proxy",
-        json!({ "stun_packets": stun.packets() }),
+        json!({ "stun_packets": stun.packets(), "permissions": perms }),
     );
 }
 
@@ -731,13 +785,14 @@ fn socks5_proxy_resolves_names_remotely() {
         "{proxy_log:?}"
     );
     assert!(log.network_lookups.is_empty(), "{:?}", log.network_lookups);
-    assert!(log.udp_connects.is_empty() && log.udp_sends == 0, "{log:?}");
+    let ipv6_probes = log.assert_no_udp();
     let gateway_addr = format!("127.0.0.1:{gateway}");
     assert!(log.tcp.iter().all(|a| *a == gateway_addr), "{:?}", log.tcp);
     evidence(
         "socks5-remote-dns",
         json!({ "netlog_events": log.events, "proxy_requests": proxy_log.len(),
                 "dns_queries_for_site": log.network_lookups.len(), "udp_datagrams": log.udp_sends,
+                "ipv6_reachability_probes_no_data": ipv6_probes,
                 "tcp_attempts": log.tcp.len() }),
     );
 }
@@ -773,7 +828,7 @@ fn proxy_outage_blocks_traffic_instead_of_going_direct() {
     let log = read_netlog(&env.netlog, &site.addr.ip().to_string());
     let gateway_addr = format!("127.0.0.1:{gateway}");
     assert!(log.tcp.iter().all(|a| *a == gateway_addr), "{:?}", log.tcp);
-    assert!(log.udp_connects.is_empty() && log.udp_sends == 0, "{log:?}");
+    let ipv6_probes = log.assert_no_udp();
     assert_eq!(
         (&network["status"], &network["last_error"]),
         (&json!("failing"), &json!("PROXY_UNREACHABLE")),
@@ -781,7 +836,8 @@ fn proxy_outage_blocks_traffic_instead_of_going_direct() {
     );
     evidence(
         "outage-fail-closed",
-        json!({ "site_requests": 0, "tcp_attempts": log.tcp.len(), "status": network["status"],
+        json!({ "site_requests": 0, "tcp_attempts": log.tcp.len(), "udp_datagrams": log.udp_sends,
+                "ipv6_reachability_probes_no_data": ipv6_probes, "status": network["status"],
                 "error": network["last_error"] }),
     );
 }

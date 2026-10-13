@@ -17,6 +17,7 @@ Status values: **Proposed** (needs the named owner's sign-off), **Accepted**, **
 | [0009](0009-desktop-shell-decisions.md) | Desktop shell: local workspaces, quit policy, deep links, keychain, installers | Accepted | Technical lead |
 | [0010](0010-runtime-source-and-lifecycle.md) | Chrome for Testing for the internal alpha (customer gate), signed runtime manifest, lifecycle, graceful close, last-good copies | Accepted (alpha) | Technical lead + browser/security owner |
 | [0011](0011-profile-library-and-configuration-import.md) | Profile library (clients, tags, templates, trash), safe deletion, selections/bulk/undo, configuration-only import and export | Accepted (alpha) | Technical lead |
+| [0012](0012-proxy-gateway-and-privacy-controls.md) | Proxies through a per-profile loopback gateway, fail-closed by default, logins only in the keychain, user-started checks, no rotation; privacy and environment controls with per-OS support | Accepted (alpha) | Technical lead + browser/security owner |
 
 ## Template
 

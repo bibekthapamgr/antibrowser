@@ -988,8 +988,8 @@ export function PrivacySection(props: {
           Send “Do Not Track”
         </label>
         <p className="muted small">
-          Camera, microphone and location are under Website permissions above; location stays blocked unless
-          you allow it.
+          Camera, microphone and location are under Website permissions above. Websites cannot use them unless
+          you allow it: “Ask each time” shows a prompt, “Block” refuses without asking.
         </p>
         {(error || (validation && !validation.valid)) && (
           <p role="alert" className="error">

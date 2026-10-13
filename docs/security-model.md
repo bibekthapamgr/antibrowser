@@ -1,4 +1,4 @@
-# Security model (draft, milestones 01–04)
+# Security model (draft, milestones 01–05)
 
 This document states what the product protects, what it does not, and the disclosures customers must see. Milestone 12 turns it into a reviewed threat model.
 
@@ -7,11 +7,12 @@ This document states what the product protects, what it does not, and the disclo
 |---|---|---|
 | Tenant data in the API | Server-derived membership; non-members get 404; row-level security on every tenant table; response schemas strip unexpected fields; least-privilege DB roles | Pen test (12) |
 | Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them | Encrypted snapshots (07) |
-| Manager UI → native code | 44 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
+| Manager UI → native code | 53 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
 | External links and deep links | Only `https://github.com/…` help links open, and only in the system browser; deep links accepted only for the auth-callback shape bound to a one-time state | OIDC sign-in (06) |
 | Local database | WAL + foreign keys; all pending migrations in one transaction; a copy is taken before upgrading; a failed upgrade keeps the previous database and shows recovery actions | Encrypted local secrets (07) |
 | Browser runtime | Only the runtime in the Ed25519-signed manifest (owner key, verified against compiled-in public keys); download prefix compiled in; https only, size-capped; SHA-256 + size checked before extraction, mismatch → quarantine; extraction refuses absolute paths, `..`, escaping links, writes through links and zip bombs; executable and macOS code signature checked; free-space check; journal for interrupted installs. No executable path is accepted from the UI or settings in release builds | Over-the-air manifest updates and key revocation (12); redistributable runtime before customers (ADR-0010) |
-| Secrets on the device | OS keychain only; if unavailable, secret persistence is disabled (no file fallback) | 06–07 |
+| Secrets on the device | OS keychain only; if unavailable, secret persistence is disabled (no file fallback). Proxy logins (05): written once to the keychain, never returned over IPC, never in SQLite, exports, diagnostics, logs, Preferences or command lines; a changed login replaces the keychain entry only after the database accepted the change | 06–07 |
+| Proxy routing (05) | Per-profile loopback gateway (127.0.0.1 only, loopback peers only, proxy requests only); the login is added by the gateway and sent only to that proxy; a `407` never reaches the browser; fail-closed by default (no direct route; WebRTC restricted to the proxy; QUIC off; prefetch off); fail-open only by explicit choice, only for an unreachable proxy, counted and shown; proxy addresses checked on every connection (private only with the local setting, link-local/metadata never); HTTPS proxy certificates verified; no change of route during a session | Gateway fuzzing and pen test (12); our own check endpoint (06/13) |
 | Crash data | Local only, opt-in flag off by default, home paths/user names/tokens scrubbed, at most 20 reports | Upload service (13) |
 | Browser processes | Launched from a structured argument list with a minimal environment (no inherited tokens); start URLs only http(s) and after `--`; extra switches only from an allowlist used by tests (`--no-sandbox` and remote debugging are not in it); identified by pid + start time + executable; only a profile's own verified process tree is ever force-closed | Runtime update SLA (ADR-0001) |
 | Profile library (04) | Every list/filter/sort is one parameterised query (no SQL from the UI; unknown filter fields refused); bulk selections are ids or a filter checked against the count the user saw; at most 10,000 per action; open/busy profiles cannot be trashed; permanent deletion only from the trash with `DELETE` + exact count, under the launch lock, with the profile claimed so no backup or recovery can start, after re-checking the supervisor, the process table and the profile's OS lock, and by moving the folder aside before removing it; an authorization hook on bulk edit, deletion, import and export | Role checks (06), leases (08), sync tombstones (07) |
@@ -42,6 +43,24 @@ This document states what the product protects, what it does not, and the disclo
 - Real Chromium (`apps/desktop/src-tauri/tests/browser.rs`, run per OS by the runtime pipeline): no storage leakage between profiles (cookies, localStorage, IndexedDB, Cache Storage, service workers), no `DevToolsActivePort` and no debug/sandbox switches, crash never attached to another profile, one browser per profile under concurrent launches.
 - Manifest: tampered bytes, unknown key, wrong key, URLs outside the compiled prefix and malformed fields are refused (`crates/update/src/tests.rs`); tampered downloads are quarantined (`tests/ipc.rs`).
 - Process safety: an unrelated process that reuses a pid is never adopted or signalled; a foreign executable using a profile folder is refused, not killed.
+
+## Milestone 05 boundary tests
+- Routing adapter (`crates/netproxy/tests/routing.rs`): wrong/missing/unsupported logins, outage and recovery,
+  fail-open limited to unreachable proxies, SOCKS5 remote DNS, HTTPS proxy certificate verification, IPv6, address
+  policy (loopback refused without the setting, link-local always), malformed and non-proxy requests answered 400.
+- Commands (`apps/desktop/src-tauri/tests/network.rs`): the username and password are searched for in the database
+  file and its WAL, every IPC answer, diagnostics and all three export formats; validation of hosts (schemes, logins
+  in hosts, paths), ports, logins, dates and secret-looking notes; unknown fields refused; launch refused before
+  anything starts when the login is missing or the address is no longer allowed.
+- Real Chromium (`apps/desktop/src-tauri/tests/browser_network.rs`, per OS in the runtime pipeline): no DNS query for
+  the site, no UDP datagram, every TCP connection to the gateway, zero STUN packets from a fail-closed profile, outage blocks
+  instead of going direct, fail-open visible; evidence in [network/leak-test-evidence.md](network/leak-test-evidence.md).
+
+## Known gaps after milestone 05
+- Proxied profiles have no connection while the manager is closed; other programs of the same OS user could use an
+  open profile's gateway port (see [network/README.md](network/README.md) for all limitations).
+- The connectivity check uses an interim third-party service until our own endpoint exists (ADR-0012).
+- Linux keeps proxy logins only until logout (kernel keyring).
 
 ## Milestone 04 boundary tests
 - Storage (`crates/storage/src/tests_m04.rs`): folded-name uniqueness, filter validation, bulk across workspaces counts as not found, undo only where the version is unchanged, trash retention, `import_ref` uniqueness.
