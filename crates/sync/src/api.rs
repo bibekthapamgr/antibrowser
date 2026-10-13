@@ -21,12 +21,17 @@ pub enum ApiError {
     /// `VERSION_CONFLICT`: another device committed a newer snapshot first.
     #[error("a newer snapshot exists (version {head_version})")]
     Conflict { head_version: i64 },
-    /// `LEASE_HELD`: the profile is in use on another device.
+    /// `LEASE_HELD` (or `LEASE_UNCERTAIN`): the profile is open on another device, or its last session there ended
+    /// without closing (milestone 08).
     #[error("the profile is in use on another device")]
-    LeaseHeld,
-    /// `LEASE_NOT_HELD` / `FENCING_TOKEN_STALE`: this device's lease ended; the upload restarts under a new one.
+    LeaseHeld(Holder),
+    /// `LEASE_NOT_HELD`: this device holds no live lease (it expired, or was never taken).
     #[error("the lease was lost")]
     LeaseLost,
+    /// `FENCING_TOKEN_STALE`: a newer lease exists, or this one ended (`state`: taken_over, revoked, superseded,
+    /// released). Nothing this device sends under the old token is written (milestone 08).
+    #[error("the lease ended ({state})")]
+    Fenced { state: String },
     #[error("the server refused the request ({code})")]
     Code { status: u16, code: String },
 }
@@ -37,14 +42,30 @@ impl ApiError {
             Self::Offline => "CLOUD_OFFLINE",
             Self::SignedOut => "CLOUD_SIGNED_OUT",
             Self::Conflict { .. } => "VERSION_CONFLICT",
-            Self::LeaseHeld => "LEASE_HELD",
+            Self::LeaseHeld(h) if h.uncertain => "LEASE_UNCERTAIN",
+            Self::LeaseHeld(_) => "LEASE_HELD",
             Self::LeaseLost => "LEASE_NOT_HELD",
+            Self::Fenced { .. } => "FENCING_TOKEN_STALE",
             Self::Code { code, .. } => code,
         }
     }
     pub fn is_code(&self, c: &str) -> bool {
         matches!(self, Self::Code { code, .. } if code == c)
     }
+}
+
+/// Who has a profile open (from the server's `safe_details`; empty when the server did not say).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Holder {
+    #[serde(default)]
+    pub holder_name: String,
+    #[serde(default)]
+    pub device_name: String,
+    #[serde(default)]
+    pub since: Option<String>,
+    /// The holder's session ended without closing: its browser may still be open (`LEASE_UNCERTAIN`).
+    #[serde(default)]
+    pub uncertain: bool,
 }
 
 /// Failures of the signed-URL transfer.
@@ -71,6 +92,9 @@ pub struct InitRequest {
     pub browser_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_size: Option<u64>,
+    /// Milestone 08: keep this upload as a recovery copy (the fencing token is a session lease this device lost).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub recovery: bool,
 }
 
 /// `POST …/snapshots/init`. The data key is only in memory.
@@ -203,6 +227,145 @@ pub trait SyncApi: Send + Sync {
     ) -> Result<RestorePlan, ApiError>;
     /// The newest committed snapshot's metadata (no key, no link), or `None` when the profile has no backup yet.
     fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError>;
+}
+
+// ================================================================================================ sessions (08)
+
+/// A session or upload lease as the server describes it (`SessionLease`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseInfo {
+    pub id: String,
+    pub profile_id: String,
+    pub purpose: String,
+    /// active, uncertain, released, taken_over, revoked, superseded.
+    pub state: String,
+    pub holder_user_id: String,
+    #[serde(default)]
+    pub holder_name: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub device_name: String,
+    pub fencing_token: String,
+    #[serde(default)]
+    pub run_state: Option<String>,
+    pub acquired_at: String,
+    pub expires_at: String,
+    #[serde(default)]
+    pub heartbeat_at: Option<String>,
+    pub ttl_seconds: u32,
+    pub heartbeat_seconds: u32,
+}
+
+/// Left by the previous holder when they released the profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffNote {
+    pub text: String,
+    pub by_user_id: String,
+    pub by_name: String,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffRequest {
+    pub id: String,
+    pub profile_id: String,
+    pub requested_by: String,
+    #[serde(default)]
+    pub requested_by_name: String,
+    #[serde(default)]
+    pub holder_user_id: Option<String>,
+    #[serde(default)]
+    pub note: String,
+    pub status: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub responded_at: Option<String>,
+    pub expires_at: String,
+    #[serde(default)]
+    pub mine: bool,
+}
+
+/// `POST …/leases`.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenRequest {
+    pub device_id: String,
+    pub purpose: String,
+    pub platform: String,
+    pub browser_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SessionOpened {
+    pub lease: LeaseInfo,
+    #[serde(default)]
+    pub handoff_note: Option<HandoffNote>,
+    pub head_version: i64,
+    pub server_time: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Beat {
+    pub lease: LeaseInfo,
+    pub revived: bool,
+    #[serde(default)]
+    pub handoff_requests: Vec<HandoffRequest>,
+    pub server_time: String,
+}
+
+/// How a session ends (`LeaseEnd.outcome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionOutcome {
+    /// Closed and backed up: "handoff ready".
+    Committed,
+    /// Closed without a new backup (nothing changed, or backups off).
+    Closed,
+    /// The handoff was given up; the newest backup stays as it was, this computer keeps its copy.
+    Aborted,
+    /// The launch failed.
+    Failed,
+}
+
+impl SessionOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Committed => "committed",
+            Self::Closed => "closed",
+            Self::Aborted => "aborted",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// The session lease protocol (milestone 08): one writer per shared profile. The desktop's session manager uses it;
+/// requests from teammates arrive with each heartbeat.
+pub trait SessionApi: Send + Sync {
+    fn open_session(
+        &self,
+        org: &str,
+        profile: &str,
+        idempotency_key: &str,
+        req: &OpenRequest,
+    ) -> Result<SessionOpened, ApiError>;
+    fn heartbeat(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        run_state: Option<&str>,
+    ) -> Result<Beat, ApiError>;
+    fn release_session(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        outcome: SessionOutcome,
+        handoff_note: Option<&str>,
+    ) -> Result<(), ApiError>;
+    /// Who has the profile open now (`None`: nobody).
+    fn current_lease(&self, org: &str, profile: &str) -> Result<Option<LeaseInfo>, ApiError>;
 }
 
 pub trait Objects: Send + Sync {

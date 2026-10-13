@@ -13,6 +13,9 @@
 //!    the server for the operation's state before sending anything again.
 //!  - Losing the lease, an expired upload or a failed verification restarts the upload under a new snapshot id (the
 //!    sealed file is bound to its snapshot id, so it is never reused); restarts are bounded.
+//!  - Milestone 08: an upload under a shared session's lease ([`LeaseMode::Session`]) never takes or releases a lease
+//!    itself; if the lease was taken over or revoked it ends (`LEASE_TAKEN_OVER`, `LEASE_REVOKED`, …) instead of taking
+//!    the profile back. A recovery upload ([`LeaseMode::Recovery`]) is kept by the server and never becomes the head.
 //!  - A conflict never overwrites anything: the newer snapshot stays the head, this device's profile stays as it is,
 //!    and the user chooses.
 //!  - A restore never touches the current profile: it is downloaded, verified and unpacked into a fresh folder, and
@@ -22,7 +25,8 @@ use crate::api::{
     ApiError, CommitPart, CommitRequest, InitRequest, ObjectError, Objects, SnapshotInfo, SyncApi,
 };
 use crate::job::{
-    Job, JobStore, RestoreJob, RestoreState, SealedFile, UploadJob, UploadState, random_id,
+    Job, JobStore, LeaseMode, RestoreJob, RestoreState, SealedFile, UploadJob, UploadState,
+    random_id,
 };
 use pb_seal::{Binding, Kind, Limits, Member, SealError};
 use serde_json::json;
@@ -298,18 +302,46 @@ impl Engine<'_> {
     }
 
     fn release(&self, job: &mut UploadJob) {
-        if let Some(t) = job.fencing_token.take() {
+        // Only an upload's own lease is released here; a session releases its lease after the commit.
+        if job.lease_mode == LeaseMode::Job
+            && let Some(t) = job.fencing_token.take()
+        {
             let _ = self.api.release_lease(&job.org_id, &job.org_profile_id, &t);
         }
         job.lease_key = None;
     }
 
+    /// The lease answered "not yours": an upload's own lease restarts the upload under a new one; a session's upload
+    /// ends when the lease was taken over or revoked (the session decides what happens to the local copy) and waits
+    /// when it merely expired (the session revives it with its next heartbeat).
+    fn lease_error(&self, job: &mut UploadJob, e: ApiError, counts: bool) -> Result<(), SyncError> {
+        match (&job.lease_mode, e) {
+            (LeaseMode::Job, ApiError::LeaseLost | ApiError::Fenced { .. }) => {
+                self.restart(job, "LEASE_NOT_HELD", counts, true)
+            }
+            (LeaseMode::Session { .. }, ApiError::Fenced { state }) => {
+                self.fail(job, &fenced_code(&state))
+            }
+            (LeaseMode::Session { .. }, e) | (LeaseMode::Job, e) => Err(e.into()),
+            (LeaseMode::Recovery { .. }, e) => self.fail(job, e.code()),
+        }
+    }
+
     /// Makes sure this device holds the profile's lease (renewing it, or acquiring a new one).
     fn ensure_lease(&self, job: &mut UploadJob) -> Result<(), SyncError> {
+        if job.lease_mode != LeaseMode::Job {
+            // A session's upload uses the session's token (the session heartbeats); a recovery upload has none to
+            // keep.
+            return if job.fencing_token.is_some() {
+                Ok(())
+            } else {
+                self.fail(job, "LEASE_LOST")
+            };
+        }
         if let Some(t) = job.fencing_token.clone() {
             match self.api.renew_lease(&job.org_id, &job.org_profile_id, &t) {
                 Ok(()) => return Ok(()),
-                Err(ApiError::LeaseLost) => {
+                Err(ApiError::LeaseLost | ApiError::Fenced { .. }) => {
                     // A sealed file or an upload under the old lease cannot be committed any more.
                     let started = job.snapshot_id.is_some();
                     self.restart(job, "LEASE_NOT_HELD", started, true)?;
@@ -424,6 +456,7 @@ impl Engine<'_> {
             platform: source.platform.to_owned(),
             browser_version: source.browser_version.to_owned(),
             estimated_size: None,
+            recovery: job.is_recovery(),
         };
         let init = match self
             .api
@@ -433,7 +466,9 @@ impl Engine<'_> {
             Err(ApiError::Conflict { head_version }) => {
                 return self.conflict(job, Some(head_version));
             }
-            Err(ApiError::LeaseLost) => return self.restart(job, "LEASE_NOT_HELD", false, true),
+            Err(e @ (ApiError::LeaseLost | ApiError::Fenced { .. })) => {
+                return self.lease_error(job, e, false);
+            }
             Err(e) if e.is_code("IDEMPOTENCY_KEY_REUSED") => {
                 // The request changed since the key was used (new lease, new browser): start a new upload.
                 job.init_key = None;
@@ -540,7 +575,7 @@ impl Engine<'_> {
         let op = self.api.operation(&job.org_id, &op_id)?;
         match op.state.as_str() {
             "uploading" => {}
-            "verifying" | "committed" => {
+            "verifying" | "committed" | "kept" => {
                 job.state = UploadState::Verifying;
                 return self.save_upload(job);
             }
@@ -590,8 +625,8 @@ impl Engine<'_> {
             }
             let urls = match self.api.part_urls(&org, &prf, &snapshot, batch) {
                 Ok(u) => u,
-                Err(ApiError::LeaseLost) => {
-                    return self.restart(job, "LEASE_NOT_HELD", true, true);
+                Err(e @ (ApiError::LeaseLost | ApiError::Fenced { .. })) => {
+                    return self.lease_error(job, e, true);
                 }
                 Err(e) if e.is_code("SYNC_STATE_CONFLICT") || permanent(&e) => {
                     return self.restart(job, e.code(), true, false);
@@ -659,7 +694,9 @@ impl Engine<'_> {
                 self.save_upload(job)
             }
             Err(ApiError::Conflict { head_version }) => self.conflict(job, Some(head_version)),
-            Err(ApiError::LeaseLost) => self.restart(job, "LEASE_NOT_HELD", true, true),
+            Err(e @ (ApiError::LeaseLost | ApiError::Fenced { .. })) => {
+                self.lease_error(job, e, true)
+            }
             Err(e)
                 if e.is_code("UPLOAD_INCOMPLETE")
                     || e.is_code("SYNC_STATE_CONFLICT")
@@ -682,7 +719,8 @@ impl Engine<'_> {
         loop {
             let op = self.api.operation(&job.org_id, &op_id)?;
             match op.state.as_str() {
-                "committed" => {
+                // `kept`: a recovery copy (milestone 08), stored but never a version.
+                "committed" | "kept" => {
                     job.version = op.version;
                     job.state = UploadState::Committed;
                     job.error_code = None;
@@ -709,8 +747,13 @@ impl Engine<'_> {
                     std::thread::sleep(self.poll.interval);
                 }
                 _ => {
-                    // Verification failed (size, header, digest), or the upload expired: a fresh snapshot.
                     let reason = op.error_code.unwrap_or_else(|| op.state.to_uppercase());
+                    if reason == "FENCING_TOKEN_STALE" && job.lease_mode != LeaseMode::Job {
+                        // The session's lease ended while the server verified: this upload can never be the head.
+                        self.fail(job, "LEASE_LOST")?;
+                        return Ok(true);
+                    }
+                    // Verification failed (size, header, digest), or the upload expired: a fresh snapshot.
                     self.restart(job, &reason, true, false)?;
                     return Ok(true);
                 }
@@ -945,6 +988,21 @@ impl Engine<'_> {
 }
 
 /// Starts an upload job for a profile whose data changed since `base_version`.
+/// The job error code for a lease that ended (`taken_over` → `LEASE_TAKEN_OVER`).
+pub fn fenced_code(state: &str) -> String {
+    let s: String = state
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(32)
+        .collect::<String>()
+        .to_uppercase();
+    if s.is_empty() {
+        "LEASE_LOST".into()
+    } else {
+        format!("LEASE_{s}")
+    }
+}
+
 pub fn new_upload(
     local_profile_id: &str,
     org_id: &str,

@@ -2,13 +2,17 @@
 //! version compare-and-swap, server-side verification of size, header and SHA-256) and fault injection: any call can
 //! fail before it reaches the server or after the server applied it (the answer is lost), which is how the tests
 //! "kill the network" at every step. Used by this crate's tests and by the desktop's tests (feature `testing`).
+//!
+//! Milestone 08: session leases on a controllable clock (TTL, heartbeat, uncertain sessions, revival), release with
+//! handoff notes, access requests, forced takeover, revocation and recovery copies, with the same rules as the API.
 
 use crate::api::{
-    ApiError, CommitRequest, InitRequest, InitResult, ObjectError, Objects, Operation, PartUrl,
-    RestorePlan, SnapshotInfo, StoredPart, SyncApi,
+    ApiError, Beat, CommitRequest, HandoffNote, HandoffRequest, Holder, InitRequest, InitResult,
+    LeaseInfo, ObjectError, Objects, OpenRequest, Operation, PartUrl, RestorePlan, SessionApi,
+    SessionOpened, SessionOutcome, SnapshotInfo, StoredPart, SyncApi,
 };
 use pb_seal::{Kind, SealKey};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -42,14 +46,68 @@ struct Snap {
     init_key: String,
     init_digest: String,
     parts: BTreeMap<u32, Vec<u8>>,
+    /// A recovery copy (milestone 08): verified, kept, never the head.
+    recovery: bool,
+}
+
+/// The profile's current lease (one per profile, like the API's `profile_leases`).
+#[derive(Clone, Debug)]
+struct Lease {
+    id: String,
+    fencing: u64,
+    device: String,
+    purpose: &'static str,
+    /// active, released, taken_over, revoked, superseded.
+    state: &'static str,
+    /// Clock time (ms) after which an active lease is expired (a session then is uncertain).
+    expires: u64,
+    ttl_ms: u64,
+    run_state: Option<String>,
+    acquired: u64,
+    heartbeat: Option<u64>,
+    note: Option<(String, String)>,
+}
+
+impl Lease {
+    fn live(&self, now: u64) -> bool {
+        self.state == "active" && self.expires > now
+    }
 }
 
 #[derive(Clone, Debug)]
-struct Lease {
+struct Hist {
+    profile: String,
     fencing: u64,
     device: String,
-    live: bool,
+    purpose: &'static str,
+    end: Option<&'static str>,
 }
+
+#[derive(Clone, Debug)]
+struct Req {
+    id: String,
+    profile: String,
+    from: String,
+    note: String,
+    status: &'static str,
+}
+
+/// A lease as tests see it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeaseView {
+    pub id: String,
+    pub device: String,
+    pub purpose: &'static str,
+    /// active, uncertain, released, taken_over, revoked, superseded.
+    pub state: &'static str,
+    pub fencing: u64,
+    pub run_state: Option<String>,
+    pub note: Option<String>,
+}
+
+/// Lease timings (the API's SESSION_LEASE).
+pub const SESSION_TTL_MS: u64 = 60_000;
+pub const UPLOAD_TTL_MS: u64 = 600_000;
 
 #[derive(Default)]
 struct State {
@@ -57,6 +115,13 @@ struct State {
     profiles: HashMap<String, (String, i64, Option<String>)>,
     leases: HashMap<String, Lease>,
     lease_keys: HashMap<String, u64>,
+    session_keys: HashMap<String, SessionOpened>,
+    history: HashMap<String, Hist>,
+    requests: Vec<Req>,
+    /// Devices whose access was removed (membership, grant or the device itself): everything is "not found".
+    revoked: HashSet<String>,
+    /// The server's clock (ms); tests move it with [`FakeServer::advance`].
+    clock: u64,
     next_fencing: u64,
     snaps: HashMap<String, Snap>,
     objects: HashMap<String, Vec<u8>>,
@@ -87,6 +152,7 @@ impl FakeServer {
         Arc::new(Self {
             state: Mutex::new(State {
                 next_fencing: 100,
+                clock: 1_000_000,
                 ..State::default()
             }),
             part_size,
@@ -145,19 +211,101 @@ impl FakeServer {
             .map(|s| (s.state, s.error.clone()))
     }
 
-    /// Ends a lease as if it expired (another device may take it).
+    /// Ends a lease's time as if its heartbeats stopped: an upload lease is free again, a session lease becomes
+    /// uncertain (nobody else may open the profile until its device revives or releases it).
     pub fn expire_lease(&self, profile: &str) {
-        if let Some(l) = self.st().leases.get_mut(profile) {
-            l.live = false;
+        let mut st = self.st();
+        let now = st.clock;
+        if let Some(l) = st.leases.get_mut(profile) {
+            l.expires = now;
         }
     }
 
+    /// Moves the server's clock forward.
+    pub fn advance(&self, ms: u64) {
+        self.st().clock += ms;
+    }
+
     pub fn lease_holder(&self, profile: &str) -> Option<String> {
-        self.st()
-            .leases
+        let st = self.st();
+        st.leases
             .get(profile)
-            .filter(|l| l.live)
+            .filter(|l| l.live(st.clock))
             .map(|l| l.device.clone())
+    }
+
+    pub fn lease(&self, profile: &str) -> Option<LeaseView> {
+        let st = self.st();
+        let l = st.leases.get(profile)?;
+        Some(LeaseView {
+            id: l.id.clone(),
+            device: l.device.clone(),
+            purpose: l.purpose,
+            state: if l.state == "active" && !l.live(st.clock) {
+                "uncertain"
+            } else {
+                l.state
+            },
+            fencing: l.fencing,
+            run_state: l.run_state.clone(),
+            note: l.note.as_ref().map(|n| n.0.clone()),
+        })
+    }
+
+    /// An administrator's forced takeover: the lease ends with a new token (the holder is fenced out).
+    pub fn take_over(&self, profile: &str) -> bool {
+        end_lease(&mut self.st(), profile, "taken_over")
+    }
+
+    /// Access removed for a device (membership, grant or the device signed out): its leases end, and every call it
+    /// makes is "not found" from now on.
+    pub fn revoke_access(&self, device: &str) {
+        let mut st = self.st();
+        st.revoked.insert(device.to_owned());
+        let profiles: Vec<String> = st
+            .leases
+            .iter()
+            .filter(|(_, l)| l.device == device && l.state == "active")
+            .map(|(p, _)| p.clone())
+            .collect();
+        for p in profiles {
+            end_lease(&mut st, &p, "revoked");
+        }
+    }
+
+    /// A teammate on `from` asks the holder for the profile; returns the request id.
+    pub fn request_handoff(&self, profile: &str, from: &str, note: &str) -> String {
+        let mut st = self.st();
+        st.seq += 1;
+        let id = ulid_like("hrq", st.seq);
+        st.requests.push(Req {
+            id: id.clone(),
+            profile: profile.to_owned(),
+            from: from.to_owned(),
+            note: note.to_owned(),
+            status: "open",
+        });
+        id
+    }
+
+    /// (request id, status) of a profile's requests, oldest first.
+    pub fn requests(&self, profile: &str) -> Vec<(String, &'static str)> {
+        self.st()
+            .requests
+            .iter()
+            .filter(|r| r.profile == profile)
+            .map(|r| (r.id.clone(), r.status))
+            .collect()
+    }
+
+    /// Recovery copies kept for a profile.
+    pub fn recovery_copies(&self, profile: &str) -> Vec<String> {
+        self.st()
+            .snaps
+            .iter()
+            .filter(|(_, s)| s.profile == profile && s.state == "kept")
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     /// Makes every signed URL issued so far expire.
@@ -242,10 +390,17 @@ fn verify(st: &mut State, id: &str) {
     if Some(digest) != s.digest {
         return fail(st, "DIGEST_MISMATCH");
     }
+    if s.recovery {
+        if let Some(s) = st.snaps.get_mut(id) {
+            s.state = "kept";
+        }
+        return;
+    }
+    let now = st.clock;
     let lease_ok = st
         .leases
         .get(&s.profile)
-        .is_some_and(|l| l.live && l.fencing == s.fencing);
+        .is_some_and(|l| l.state == "active" && l.fencing == s.fencing && l.expires > now);
     if !lease_ok {
         return fail(st, "FENCING_TOKEN_STALE");
     }
@@ -261,6 +416,51 @@ fn verify(st: &mut State, id: &str) {
     if let Some(s) = st.snaps.get_mut(id) {
         s.state = "committed";
         s.version = Some(version);
+    }
+}
+
+/// Ends the profile's open lease by someone else (takeover, revocation): a new token fences the holder out.
+fn end_lease(st: &mut State, profile: &str, state: &'static str) -> bool {
+    st.next_fencing += 1;
+    let next = st.next_fencing;
+    let Some(l) = st.leases.get_mut(profile).filter(|l| l.state == "active") else {
+        return false;
+    };
+    l.state = state;
+    l.fencing = next;
+    let id = l.id.clone();
+    if let Some(h) = st.history.get_mut(&id) {
+        h.end = Some(state);
+    }
+    for r in st.requests.iter_mut() {
+        if r.profile == profile && r.status == "open" {
+            r.status = "fulfilled";
+        }
+    }
+    true
+}
+
+fn info_of_lease(profile: &str, l: &Lease, now: u64) -> LeaseInfo {
+    LeaseInfo {
+        id: l.id.clone(),
+        profile_id: profile.to_owned(),
+        purpose: l.purpose.to_owned(),
+        state: if l.state == "active" && l.expires <= now {
+            "uncertain".into()
+        } else {
+            l.state.into()
+        },
+        holder_user_id: format!("usr_{}", l.device.trim_start_matches("dev_")),
+        holder_name: format!("Person on {}", l.device),
+        device_id: l.device.clone(),
+        device_name: l.device.clone(),
+        fencing_token: l.fencing.to_string(),
+        run_state: l.run_state.clone(),
+        acquired_at: l.acquired.to_string(),
+        expires_at: l.expires.to_string(),
+        heartbeat_at: l.heartbeat.map(|h| h.to_string()),
+        ttl_seconds: (l.ttl_ms / 1000) as u32,
+        heartbeat_seconds: 15,
     }
 }
 
@@ -304,21 +504,154 @@ impl FakeClient {
         Ok(())
     }
 
-    /// Tenant check: a profile of another organization is "not found" (never "forbidden").
+    /// Tenant check: a profile of another organization (or one this device lost access to) is "not found".
     fn profile(&self, st: &State, org: &str, profile: &str) -> Result<(), ApiError> {
+        if st.revoked.contains(&self.device) {
+            return Err(code(404, "NOT_FOUND"));
+        }
         match st.profiles.get(profile) {
             Some((o, _, _)) if o == org && self.orgs.iter().any(|x| x == org) => Ok(()),
             _ => Err(code(404, "NOT_FOUND")),
         }
     }
 
+    /// A fenced write: this device's live lease with this token. A newer token (takeover, revocation, another
+    /// holder) is `Fenced`; an expired or missing lease is `LeaseLost`.
     fn require_lease(&self, st: &State, profile: &str, fencing: &str) -> Result<(), ApiError> {
-        match st.leases.get(profile) {
-            Some(l) if l.live && l.fencing.to_string() == fencing && l.device == self.device => {
-                Ok(())
+        let Some(l) = st.leases.get(profile) else {
+            return Err(ApiError::LeaseLost);
+        };
+        let token: u64 = fencing.parse().unwrap_or(0);
+        if l.fencing != token {
+            if l.fencing > token {
+                return Err(ApiError::Fenced {
+                    state: if l.state == "active" {
+                        "superseded"
+                    } else {
+                        l.state
+                    }
+                    .into(),
+                });
             }
-            _ => Err(ApiError::LeaseLost),
+            return Err(ApiError::LeaseLost);
         }
+        if l.state != "active" {
+            return Err(ApiError::Fenced {
+                state: l.state.into(),
+            });
+        }
+        if l.device != self.device || l.expires <= st.clock {
+            return Err(ApiError::LeaseLost);
+        }
+        Ok(())
+    }
+
+    /// Takes the profile's lease for this device (the API's rules: LEASE_HELD while another device holds it,
+    /// uncertain sessions block others, the same device replaces its own lease). Returns the lease and the note
+    /// left by the previous holder.
+    fn take(
+        &self,
+        st: &mut State,
+        profile: &str,
+        purpose: &'static str,
+        ttl_ms: u64,
+    ) -> Result<(Lease, Option<(String, String)>), ApiError> {
+        let now = st.clock;
+        let mut note = None;
+        if let Some(cur) = st.leases.get(profile).cloned() {
+            if cur.state == "active" {
+                let holder = Holder {
+                    holder_name: format!("Person on {}", cur.device),
+                    device_name: cur.device.clone(),
+                    since: Some(cur.acquired.to_string()),
+                    uncertain: false,
+                };
+                if cur.device != self.device {
+                    if cur.live(now) {
+                        return Err(ApiError::LeaseHeld(holder));
+                    }
+                    if cur.purpose == "session" {
+                        return Err(ApiError::LeaseHeld(Holder {
+                            uncertain: true,
+                            ..holder
+                        }));
+                    }
+                } else if cur.purpose == "session" && purpose == "upload" {
+                    return Err(ApiError::LeaseHeld(holder));
+                }
+                if let Some(h) = st.history.get_mut(&cur.id) {
+                    h.end.get_or_insert("superseded");
+                }
+            } else if cur.state == "released" {
+                note = cur.note.clone();
+            }
+        }
+        st.next_fencing += 1;
+        st.seq += 1;
+        let lease = Lease {
+            id: ulid_like("lse", st.seq),
+            fencing: st.next_fencing,
+            device: self.device.clone(),
+            purpose,
+            state: "active",
+            expires: now + ttl_ms,
+            ttl_ms,
+            run_state: (purpose == "session").then(|| "starting".to_owned()),
+            acquired: now,
+            heartbeat: None,
+            note: None,
+        };
+        st.history.insert(
+            lease.id.clone(),
+            Hist {
+                profile: profile.to_owned(),
+                fencing: lease.fencing,
+                device: self.device.clone(),
+                purpose,
+                end: None,
+            },
+        );
+        st.leases.insert(profile.to_owned(), lease.clone());
+        Ok((lease, note))
+    }
+
+    /// This device's lease `lease` with `fencing`, or why it is not theirs any more.
+    fn own_lease<'s>(
+        &self,
+        st: &'s mut State,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+    ) -> Result<&'s mut Lease, ApiError> {
+        let current = st.leases.get(profile).map(|l| l.id.clone());
+        if current.as_deref() != Some(lease) {
+            return match st.history.get(lease) {
+                Some(h) if h.device == self.device && h.profile == profile => {
+                    Err(ApiError::Fenced {
+                        state: h.end.unwrap_or("superseded").into(),
+                    })
+                }
+                _ => Err(code(404, "NOT_FOUND")),
+            };
+        }
+        let l = st
+            .leases
+            .get_mut(profile)
+            .ok_or_else(|| code(404, "NOT_FOUND"))?;
+        if l.device != self.device {
+            return Err(ApiError::LeaseLost);
+        }
+        if l.fencing.to_string() != fencing {
+            return Err(ApiError::Fenced {
+                state: if l.state == "active" {
+                    "superseded"
+                } else {
+                    l.state
+                }
+                .into(),
+            });
+        }
+        Ok(l)
     }
 
     fn own_snap<'s>(
@@ -352,22 +685,8 @@ impl SyncApi for FakeClient {
             Self::leave(&mut st, "acquire_lease")?;
             return Ok(f.to_string());
         }
-        if let Some(l) = st.leases.get(profile)
-            && l.live
-            && l.device != self.device
-        {
-            return Err(ApiError::LeaseHeld);
-        }
-        st.next_fencing += 1;
-        let fencing = st.next_fencing;
-        st.leases.insert(
-            profile.to_owned(),
-            Lease {
-                fencing,
-                device: self.device.clone(),
-                live: true,
-            },
-        );
+        let (lease, _) = self.take(&mut st, profile, "upload", UPLOAD_TTL_MS)?;
+        let fencing = lease.fencing;
         st.lease_keys.insert(replay_key, fencing);
         Self::leave(&mut st, "acquire_lease")?;
         Ok(fencing.to_string())
@@ -377,6 +696,10 @@ impl SyncApi for FakeClient {
         let mut st = self.enter("renew_lease")?;
         self.profile(&st, org, profile)?;
         self.require_lease(&st, profile, fencing)?;
+        let now = st.clock;
+        if let Some(l) = st.leases.get_mut(profile) {
+            l.expires = now + l.ttl_ms;
+        }
         Self::leave(&mut st, "renew_lease")
     }
 
@@ -386,8 +709,14 @@ impl SyncApi for FakeClient {
         if let Some(l) = st.leases.get_mut(profile)
             && l.fencing.to_string() == fencing
             && l.device == self.device
+            && l.state == "active"
         {
-            l.live = false;
+            l.state = "released";
+            l.run_state = None;
+            let id = l.id.clone();
+            if let Some(h) = st.history.get_mut(&id) {
+                h.end = Some("released");
+            }
         }
         Self::leave(&mut st, "release_lease")
     }
@@ -402,8 +731,13 @@ impl SyncApi for FakeClient {
         let mut st = self.enter("init")?;
         self.profile(&st, org, profile)?;
         let digest = format!(
-            "{}|{}|{}|{}|{}",
-            profile, req.base_version, req.fencing_token, req.platform, req.browser_version
+            "{}|{}|{}|{}|{}|{}",
+            profile,
+            req.base_version,
+            req.fencing_token,
+            req.platform,
+            req.browser_version,
+            req.recovery
         );
         let replay = st
             .snaps
@@ -416,10 +750,31 @@ impl SyncApi for FakeClient {
             }
             (id, s)
         } else {
-            self.require_lease(&st, profile, &req.fencing_token)?;
-            let head = st.profiles.get(profile).map(|p| p.1).unwrap_or(0);
-            if head != req.base_version {
-                return Err(ApiError::Conflict { head_version: head });
+            if req.recovery {
+                // A session lease this device held and lost (not the current one).
+                let token: u64 = req.fencing_token.parse().unwrap_or(0);
+                let held = st.history.values().any(|h| {
+                    h.profile == profile
+                        && h.fencing == token
+                        && h.device == self.device
+                        && h.purpose == "session"
+                });
+                let current = st
+                    .leases
+                    .get(profile)
+                    .is_some_and(|l| l.fencing == token && l.state == "active");
+                if !held {
+                    return Err(ApiError::LeaseLost);
+                }
+                if current {
+                    return Err(code(400, "VALIDATION_FAILED"));
+                }
+            } else {
+                self.require_lease(&st, profile, &req.fencing_token)?;
+                let head = st.profiles.get(profile).map(|p| p.1).unwrap_or(0);
+                if head != req.base_version {
+                    return Err(ApiError::Conflict { head_version: head });
+                }
             }
             st.seq += 1;
             let id = ulid_like("snp", st.seq);
@@ -449,6 +804,7 @@ impl SyncApi for FakeClient {
                 init_key: key.to_owned(),
                 init_digest: digest,
                 parts: BTreeMap::new(),
+                recovery: req.recovery,
             };
             st.snaps.insert(id.clone(), s.clone());
             (id, s)
@@ -481,7 +837,9 @@ impl SyncApi for FakeClient {
         if s.state != "uploading" {
             return Err(code(409, "SYNC_STATE_CONFLICT"));
         }
-        self.require_lease(&st, profile, &s.fencing.to_string())?;
+        if !s.recovery {
+            self.require_lease(&st, profile, &s.fencing.to_string())?;
+        }
         let urls = parts
             .iter()
             .map(|n| PartUrl {
@@ -536,11 +894,15 @@ impl SyncApi for FakeClient {
             return Ok(op_of(&s));
         }
         if req.fencing_token != s.fencing.to_string() {
-            return Err(ApiError::LeaseLost);
+            return Err(ApiError::Fenced {
+                state: "superseded".into(),
+            });
         }
-        self.require_lease(&st, profile, &req.fencing_token)?;
+        if !s.recovery {
+            self.require_lease(&st, profile, &req.fencing_token)?;
+        }
         let head = st.profiles.get(profile).map(|p| p.1).unwrap_or(0);
-        if head != s.base {
+        if !s.recovery && head != s.base {
             if let Some(m) = st.snaps.get_mut(snapshot) {
                 m.state = "failed";
                 m.error = Some("VERSION_CONFLICT".into());
@@ -656,6 +1018,168 @@ impl SyncApi for FakeClient {
 
     fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
         self.latest_inner(org, profile)
+    }
+}
+
+impl SessionApi for FakeClient {
+    fn open_session(
+        &self,
+        org: &str,
+        profile: &str,
+        key: &str,
+        req: &OpenRequest,
+    ) -> Result<SessionOpened, ApiError> {
+        let mut st = self.enter("open_session")?;
+        self.profile(&st, org, profile)?;
+        let replay_key = format!("{org}/{key}");
+        if let Some(o) = st.session_keys.get(&replay_key).cloned() {
+            Self::leave(&mut st, "open_session")?;
+            return Ok(o);
+        }
+        if req.device_id != self.device {
+            return Err(code(403, "FORBIDDEN"));
+        }
+        let purpose = if req.purpose == "upload" {
+            "upload"
+        } else {
+            "session"
+        };
+        let ttl = if purpose == "session" {
+            SESSION_TTL_MS
+        } else {
+            UPLOAD_TTL_MS
+        };
+        let (lease, note) = self.take(&mut st, profile, purpose, ttl)?;
+        let now = st.clock;
+        let head = st.profiles.get(profile).map(|p| p.1).unwrap_or(0);
+        let opened = SessionOpened {
+            lease: info_of_lease(profile, &lease, now),
+            handoff_note: note.map(|(text, by)| HandoffNote {
+                text,
+                by_user_id: format!("usr_{}", by.trim_start_matches("dev_")),
+                by_name: format!("Person on {by}"),
+                at: now.to_string(),
+            }),
+            head_version: head,
+            server_time: now.to_string(),
+        };
+        st.session_keys.insert(replay_key, opened.clone());
+        Self::leave(&mut st, "open_session")?;
+        Ok(opened)
+    }
+
+    fn heartbeat(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        run_state: Option<&str>,
+    ) -> Result<Beat, ApiError> {
+        let mut st = self.enter("heartbeat")?;
+        self.profile(&st, org, profile)?;
+        let now = st.clock;
+        let l = self.own_lease(&mut st, profile, lease, fencing)?;
+        if l.state != "active" {
+            return Err(ApiError::Fenced {
+                state: l.state.into(),
+            });
+        }
+        let revived = l.expires <= now;
+        l.expires = now + l.ttl_ms;
+        l.heartbeat = Some(now);
+        if let Some(r) = run_state {
+            l.run_state = Some(r.to_owned());
+        }
+        let info = info_of_lease(profile, l, now);
+        let requests = st
+            .requests
+            .iter()
+            .filter(|r| r.profile == profile && r.status == "open")
+            .map(|r| request_view(r, &self.device, now))
+            .collect();
+        Self::leave(&mut st, "heartbeat")?;
+        Ok(Beat {
+            lease: info,
+            revived,
+            handoff_requests: requests,
+            server_time: now.to_string(),
+        })
+    }
+
+    fn release_session(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        outcome: SessionOutcome,
+        handoff_note: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let mut st = self.enter("release_session")?;
+        self.profile(&st, org, profile)?;
+        let device = self.device.clone();
+        let l = match self.own_lease(&mut st, profile, lease, fencing) {
+            Err(ApiError::Fenced { state }) if state == "released" => {
+                Self::leave(&mut st, "release_session")?;
+                return Ok(());
+            }
+            other => other?,
+        };
+        if l.state == "released" {
+            Self::leave(&mut st, "release_session")?;
+            return Ok(());
+        }
+        if l.state != "active" {
+            return Err(ApiError::Fenced {
+                state: l.state.into(),
+            });
+        }
+        l.state = "released";
+        l.run_state = Some("closed".into());
+        l.note = handoff_note
+            .filter(|n| !n.trim().is_empty())
+            .map(|n| (n.to_owned(), device));
+        let _ = outcome;
+        let id = l.id.clone();
+        if let Some(h) = st.history.get_mut(&id) {
+            h.end = Some("released");
+        }
+        for r in st.requests.iter_mut() {
+            if r.profile == profile && r.status == "open" {
+                r.status = "fulfilled";
+            }
+        }
+        Self::leave(&mut st, "release_session")
+    }
+
+    fn current_lease(&self, org: &str, profile: &str) -> Result<Option<LeaseInfo>, ApiError> {
+        let mut st = self.enter("current_lease")?;
+        self.profile(&st, org, profile)?;
+        let now = st.clock;
+        let l = st
+            .leases
+            .get(profile)
+            .filter(|l| l.state == "active" && (l.expires > now || l.purpose == "session"))
+            .map(|l| info_of_lease(profile, l, now));
+        Self::leave(&mut st, "current_lease")?;
+        Ok(l)
+    }
+}
+
+fn request_view(r: &Req, me: &str, now: u64) -> HandoffRequest {
+    HandoffRequest {
+        id: r.id.clone(),
+        profile_id: r.profile.clone(),
+        requested_by: format!("usr_{}", r.from.trim_start_matches("dev_")),
+        requested_by_name: format!("Person on {}", r.from),
+        holder_user_id: None,
+        note: r.note.clone(),
+        status: r.status.to_owned(),
+        created_at: now.to_string(),
+        responded_at: None,
+        expires_at: (now + 3_600_000).to_string(),
+        mine: r.from == me,
     }
 }
 

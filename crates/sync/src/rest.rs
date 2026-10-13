@@ -3,8 +3,9 @@
 //! their grammar before they become part of a path.
 
 use crate::api::{
-    ApiError, CommitRequest, InitRequest, InitResult, Operation, PartUrl, RestorePlan,
-    SnapshotInfo, StoredPart, SyncApi,
+    ApiError, Beat, CommitRequest, Holder, InitRequest, InitResult, LeaseInfo, OpenRequest,
+    Operation, PartUrl, RestorePlan, SessionApi, SessionOpened, SessionOutcome, SnapshotInfo,
+    StoredPart, SyncApi,
 };
 use pb_cloud::{Http, HttpError, Method};
 use pb_seal::SealKey;
@@ -36,8 +37,29 @@ pub fn map_error(status: u16, body: &Value) -> ApiError {
                 .and_then(Value::as_i64)
                 .unwrap_or(0),
         },
-        (_, "LEASE_HELD") => ApiError::LeaseHeld,
-        (_, "LEASE_NOT_HELD" | "FENCING_TOKEN_STALE") => ApiError::LeaseLost,
+        (_, "LEASE_HELD" | "LEASE_UNCERTAIN") => {
+            let d = body.get("safe_details");
+            let text = |k: &str| {
+                d.and_then(|d| d.get(k))
+                    .and_then(Value::as_str)
+                    .map(|s| s.chars().take(120).collect::<String>())
+            };
+            ApiError::LeaseHeld(Holder {
+                holder_name: text("holder_name").unwrap_or_default(),
+                device_name: text("device_name").unwrap_or_default(),
+                since: text("since"),
+                uncertain: code == "LEASE_UNCERTAIN",
+            })
+        }
+        (_, "LEASE_NOT_HELD") => ApiError::LeaseLost,
+        (_, "FENCING_TOKEN_STALE") => ApiError::Fenced {
+            state: body
+                .pointer("/safe_details/state")
+                .and_then(Value::as_str)
+                .filter(|s| s.len() <= 32)
+                .unwrap_or("superseded")
+                .to_owned(),
+        },
         (status, "") => ApiError::Code {
             status,
             code: format!("HTTP_{status}"),
@@ -330,6 +352,96 @@ impl<T: Transport> SyncApi for RestApi<T> {
     }
     fn latest(&self, org: &str, profile: &str) -> Result<Option<SnapshotInfo>, ApiError> {
         self.latest_inner(org, profile)
+    }
+}
+
+impl<T: Transport> RestApi<T> {
+    fn lease_path(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        tail: &str,
+    ) -> Result<String, ApiError> {
+        if !id_ok("lse", lease) {
+            return Err(bad());
+        }
+        self.path(org, profile, &format!("/leases/{lease}{tail}"))
+    }
+}
+
+impl<T: Transport> SessionApi for RestApi<T> {
+    fn open_session(
+        &self,
+        org: &str,
+        profile: &str,
+        key: &str,
+        req: &OpenRequest,
+    ) -> Result<SessionOpened, ApiError> {
+        let body = serde_json::to_value(req).map_err(|_| bad())?;
+        let v = self.transport.call(
+            Method::Post,
+            &self.path(org, profile, "/leases")?,
+            Some(key),
+            Some(&body),
+        )?;
+        serde_json::from_value(v).map_err(|_| bad())
+    }
+    fn heartbeat(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        run_state: Option<&str>,
+    ) -> Result<Beat, ApiError> {
+        let mut body = json!({ "fencing_token": fencing });
+        if let Some(r) = run_state {
+            body["run_state"] = json!(r);
+        }
+        let v = self.transport.call(
+            Method::Post,
+            &self.lease_path(org, profile, lease, "/heartbeat")?,
+            None,
+            Some(&body),
+        )?;
+        serde_json::from_value(v).map_err(|_| bad())
+    }
+    fn release_session(
+        &self,
+        org: &str,
+        profile: &str,
+        lease: &str,
+        fencing: &str,
+        outcome: SessionOutcome,
+        handoff_note: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let mut body = json!({ "fencing_token": fencing, "outcome": outcome.as_str() });
+        if let Some(n) = handoff_note.filter(|n| !n.trim().is_empty()) {
+            body["handoff_note"] = json!(n);
+        }
+        self.transport
+            .call(
+                Method::Post,
+                &self.lease_path(org, profile, lease, "/release")?,
+                None,
+                Some(&body),
+            )
+            .map(|_| ())
+    }
+    fn current_lease(&self, org: &str, profile: &str) -> Result<Option<LeaseInfo>, ApiError> {
+        let v = self.transport.call(
+            Method::Get,
+            &self.path(org, profile, "/leases/current")?,
+            None,
+            None,
+        )?;
+        match v.get("lease") {
+            Some(Value::Null) | None => Ok(None),
+            Some(l) => serde_json::from_value(l.clone())
+                .map(Some)
+                .map_err(|_| bad()),
+        }
     }
 }
 

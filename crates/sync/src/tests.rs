@@ -409,7 +409,10 @@ fn concurrent_devices_get_one_winner_and_one_conflict() {
     let mut jb =
         new_upload("prf_01HYYYYYYYYYYYYYYYYYYYYYYY", ORG, PRF, 0).unwrap_or_else(|e| panic!("{e}"));
     let r = engine(&b, &w.jobs, &work_b, &never).upload(&mut jb, Some(&source(&w.profile)));
-    assert_eq!(r, Err(SyncError::Api(ApiError::LeaseHeld)));
+    assert!(
+        matches!(&r, Err(SyncError::Api(ApiError::LeaseHeld(h))) if !h.uncertain && h.device_name == "dev_A"),
+        "{r:?}"
+    );
     // A finishes; B, based on the same version 0, gets a conflict, never an overwrite.
     let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut ja, Some(&source(&w.profile)));
     assert_eq!(r, Ok(Outcome::Finished));
@@ -644,4 +647,262 @@ fn restores_check_space_and_browser_version_before_downloading() {
     };
     let (job, r, _) = restore(&w, &b, None, &other);
     assert!(matches!(r, Ok(Some(_))), "{job:?}");
+}
+
+// ============================================================================================ milestone 08
+
+mod sessions {
+    //! Uploads under a shared session's lease, recovery copies, and the session protocol on the in-memory server
+    //! (uncertain sessions, revival, handoff notes, takeover, revocation).
+
+    use super::*;
+    use crate::api::{OpenRequest, SessionApi, SessionOutcome};
+    use crate::fake::SESSION_TTL_MS;
+
+    fn open(client: &FakeClient, device: &str) -> Result<crate::SessionOpened, ApiError> {
+        client.open_session(
+            ORG,
+            PRF,
+            &crate::job::random_id("open-").unwrap_or_default(),
+            &OpenRequest {
+                device_id: device.into(),
+                purpose: "session".into(),
+                platform: "linux-x64".into(),
+                browser_version: "155.0.8059.39".into(),
+            },
+        )
+    }
+
+    fn session_upload(base: i64, lease: &crate::LeaseInfo) -> UploadJob {
+        new_upload(LOCAL, ORG, PRF, base)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .under_session(&lease.id, &lease.fencing_token)
+    }
+
+    #[test]
+    fn a_session_upload_uses_the_session_lease_and_never_takes_or_releases_one() {
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let mut job = session_upload(0, &s.lease);
+        let never = AtomicBool::new(false);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!((job.state, job.version), (UploadState::Committed, Some(1)));
+        let calls = w.server.calls();
+        assert!(
+            !calls
+                .iter()
+                .any(|c| matches!(*c, "acquire_lease" | "renew_lease" | "release_lease")),
+            "{calls:?}"
+        );
+        // The session still holds the profile until it releases it.
+        assert_eq!(w.server.lease_holder(PRF).as_deref(), Some("dev_A"));
+        assert_eq!(
+            job.fencing_token.as_deref(),
+            Some(s.lease.fencing_token.as_str())
+        );
+    }
+
+    #[test]
+    fn a_takeover_mid_upload_ends_the_upload_without_taking_the_profile_back() {
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let mut job = session_upload(0, &s.lease);
+        let never = AtomicBool::new(false);
+        w.server.fail("put_part", When::Before);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Err(SyncError::StorageOffline));
+        assert!(w.server.take_over(PRF));
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(
+            (job.state, job.error_code.as_deref()),
+            (UploadState::Failed, Some("LEASE_TAKEN_OVER"))
+        );
+        assert_eq!(w.server.head(PRF).0, 0, "nothing overwritten");
+        assert!(
+            !w.server.calls().contains(&"acquire_lease"),
+            "never takes the profile back"
+        );
+        // Verification after the takeover fences out an upload committed just before it.
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        w.server
+            .auto_verify
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut job = session_upload(0, &s.lease);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Waiting));
+        assert!(w.server.take_over(PRF));
+        w.server.verify_all();
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, None);
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(
+            (job.state, job.error_code.as_deref()),
+            (UploadState::Failed, Some("LEASE_LOST"))
+        );
+        assert_eq!(w.server.head(PRF).0, 0);
+    }
+
+    #[test]
+    fn an_expired_session_lease_makes_the_upload_wait_until_the_heartbeat_revives_it() {
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let mut job = session_upload(0, &s.lease);
+        let never = AtomicBool::new(false);
+        w.server.expire_lease(PRF);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Err(SyncError::Api(ApiError::LeaseLost)));
+        assert!(!job.state.is_terminal());
+        // Nobody else may open it meanwhile (the session is uncertain).
+        let b = w.server.client("dev_B", &[ORG]);
+        assert!(matches!(open(&b, "dev_B"), Err(ApiError::LeaseHeld(h)) if h.uncertain));
+        let beat =
+            w.a.heartbeat(
+                ORG,
+                PRF,
+                &s.lease.id,
+                &s.lease.fencing_token,
+                Some("uploading"),
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(beat.revived);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(job.state, UploadState::Committed);
+    }
+
+    #[test]
+    fn a_device_that_lost_its_lease_keeps_its_copy_as_a_recovery_copy_never_the_head() {
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let never = AtomicBool::new(false);
+        // While the lease is still A's, a recovery upload is refused (it would be a normal upload).
+        let mut early = new_upload(LOCAL, ORG, PRF, 0)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .as_recovery(&s.lease.id, &s.lease.fencing_token);
+        let r =
+            engine(&w.a, &w.jobs, &w.work, &never).upload(&mut early, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(early.state, UploadState::Failed);
+        assert!(w.server.take_over(PRF));
+        // B opens it and commits version 1.
+        let b = w.server.client("dev_B", &[ORG]);
+        let sb = open(&b, "dev_B").unwrap_or_else(|e| panic!("{e}"));
+        let mut jb = new_upload("prf_01HYYYYYYYYYYYYYYYYYYYYYYY", ORG, PRF, 0)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .under_session(&sb.lease.id, &sb.lease.fencing_token);
+        let work_b = w.root.join("sync-b");
+        let r = engine(&b, &w.jobs, &work_b, &never).upload(&mut jb, Some(&source(&w.profile)));
+        assert_eq!((r, jb.version), (Ok(Outcome::Finished), Some(1)));
+        // A uploads what it had as a recovery copy.
+        let mut rec = new_upload(LOCAL, ORG, PRF, 0)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .as_recovery(&s.lease.id, &s.lease.fencing_token);
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut rec, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!((rec.state, rec.version), (UploadState::Committed, None));
+        assert_eq!(w.server.recovery_copies(PRF).len(), 1);
+        assert_eq!(
+            w.server.head(PRF).0,
+            1,
+            "the recovery copy never becomes the head"
+        );
+        // Someone who never held that lease cannot file one.
+        let mut stranger = new_upload("prf_01HYYYYYYYYYYYYYYYYYYYYYYY", ORG, PRF, 0)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .as_recovery(&s.lease.id, &s.lease.fencing_token);
+        let r =
+            engine(&b, &w.jobs, &work_b, &never).upload(&mut stranger, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(
+            (stranger.state, stranger.error_code.as_deref()),
+            (UploadState::Failed, Some("LEASE_NOT_HELD"))
+        );
+    }
+
+    #[test]
+    fn revoked_access_ends_the_upload_and_the_lease() {
+        let w = world();
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let mut job = session_upload(0, &s.lease);
+        let never = AtomicBool::new(false);
+        w.server.revoke_access("dev_A");
+        let r = engine(&w.a, &w.jobs, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
+        assert_eq!(r, Ok(Outcome::Finished));
+        assert_eq!(
+            (job.state, job.error_code.as_deref()),
+            (UploadState::Failed, Some("NOT_FOUND"))
+        );
+        assert_eq!(w.server.lease(PRF).map(|l| l.state), Some("revoked"));
+        let b = w.server.client("dev_B", &[ORG]);
+        assert!(open(&b, "dev_B").is_ok());
+    }
+
+    #[test]
+    fn the_session_protocol_uncertain_sessions_notes_requests_and_takeover() {
+        let w = world();
+        let b = w.server.client("dev_B", &[ORG]);
+        let s = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(s.lease.state, "active");
+        assert!(matches!(open(&b, "dev_B"), Err(ApiError::LeaseHeld(h)) if !h.uncertain));
+        // A request reaches the holder with its next heartbeat; the session goes on.
+        w.server
+            .request_handoff(PRF, "dev_B", "Need it for the refund");
+        let beat =
+            w.a.heartbeat(
+                ORG,
+                PRF,
+                &s.lease.id,
+                &s.lease.fencing_token,
+                Some("running"),
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(beat.handoff_requests.len(), 1);
+        assert_eq!(beat.handoff_requests[0].note, "Need it for the refund");
+        // Heartbeats stop for longer than the TTL: uncertain, still exclusive.
+        w.server.advance(SESSION_TTL_MS + 1);
+        assert_eq!(w.server.lease(PRF).map(|l| l.state), Some("uncertain"));
+        assert!(matches!(open(&b, "dev_B"), Err(ApiError::LeaseHeld(h)) if h.uncertain));
+        // A confirms closure by releasing with a note; the request is fulfilled; B opens it and sees the note.
+        w.a.release_session(
+            ORG,
+            PRF,
+            &s.lease.id,
+            &s.lease.fencing_token,
+            SessionOutcome::Committed,
+            Some("Refund half done"),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(w.server.requests(PRF)[0].1, "fulfilled");
+        let sb = open(&b, "dev_B").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            sb.handoff_note.map(|n| n.text).as_deref(),
+            Some("Refund half done")
+        );
+        // A forced takeover fences B out: heartbeat and release both say so.
+        assert!(w.server.take_over(PRF));
+        let r = b.heartbeat(ORG, PRF, &sb.lease.id, &sb.lease.fencing_token, None);
+        assert_eq!(
+            r.err(),
+            Some(ApiError::Fenced {
+                state: "taken_over".into()
+            })
+        );
+        // The same device opening again replaces its own lease (an app restart), fencing the old one.
+        let first = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        let second = open(&w.a, "dev_A").unwrap_or_else(|e| panic!("{e}"));
+        assert!(
+            second.lease.fencing_token.parse::<u64>().unwrap_or(0)
+                > first.lease.fencing_token.parse::<u64>().unwrap_or(0)
+        );
+        let r =
+            w.a.heartbeat(ORG, PRF, &first.lease.id, &first.lease.fencing_token, None);
+        assert_eq!(
+            r.err(),
+            Some(ApiError::Fenced {
+                state: "superseded".into()
+            })
+        );
+    }
 }

@@ -49,6 +49,22 @@ impl UploadState {
     }
 }
 
+/// Whose lease an upload runs under (milestone 08).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum LeaseMode {
+    /// The upload takes, renews and releases its own short upload lease (backups of a closed profile, milestone 07).
+    /// Losing it restarts the upload under a new one.
+    #[default]
+    Job,
+    /// The closing backup of a shared session: it uses the session's lease and token, never acquires or releases
+    /// one itself (the session heartbeats and releases after the commit). If the lease was taken over or revoked the
+    /// upload ends (`LEASE_TAKEN_OVER`, `LEASE_REVOKED`…) instead of taking the profile back.
+    Session { lease_id: String },
+    /// A recovery copy of a session lease this device lost: kept by the server, never the head.
+    Recovery { lease_id: String },
+}
+
 /// The sealed file waiting to be uploaded (`<work dir>/<snapshot id>.pbseal`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedFile {
@@ -99,6 +115,9 @@ pub struct UploadJob {
     /// Times the upload was restarted from scratch (lease lost, upload expired, verification failed).
     #[serde(default)]
     pub restarts: u32,
+    /// Milestone 08: whose lease this upload runs under.
+    #[serde(default)]
+    pub lease_mode: LeaseMode,
 }
 
 impl UploadJob {
@@ -129,6 +148,35 @@ impl UploadJob {
             head_version: None,
             error_code: None,
             restarts: 0,
+            lease_mode: LeaseMode::Job,
+        }
+    }
+
+    /// The closing backup of a session: under the session's lease and token.
+    pub fn under_session(mut self, lease_id: &str, fencing_token: &str) -> Self {
+        self.lease_mode = LeaseMode::Session {
+            lease_id: lease_id.to_owned(),
+        };
+        self.fencing_token = Some(fencing_token.to_owned());
+        self
+    }
+
+    /// A recovery copy of what this device had under a session lease it lost (`fencing_token`: that lease's).
+    pub fn as_recovery(mut self, lease_id: &str, fencing_token: &str) -> Self {
+        self.lease_mode = LeaseMode::Recovery {
+            lease_id: lease_id.to_owned(),
+        };
+        self.fencing_token = Some(fencing_token.to_owned());
+        self
+    }
+
+    pub fn is_recovery(&self) -> bool {
+        matches!(self.lease_mode, LeaseMode::Recovery { .. })
+    }
+    pub fn session_lease(&self) -> Option<&str> {
+        match &self.lease_mode {
+            LeaseMode::Session { lease_id } => Some(lease_id),
+            _ => None,
         }
     }
 }
