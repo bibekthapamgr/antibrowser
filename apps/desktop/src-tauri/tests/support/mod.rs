@@ -242,12 +242,25 @@ pub fn workspace_with_profile(f: &Fixture) -> String {
 }
 
 pub fn wait_op(f: &Fixture, op: &Value) -> OpStatus {
+    wait_op_for(f, op, Duration::from_secs(20))
+}
+
+/// Like [`wait_op`] with a longer limit, for work that is slow on CI machines (10,000-row imports on Windows).
+pub fn wait_op_for(f: &Fixture, op: &Value, limit: Duration) -> OpStatus {
     let id = op["operation_id"].as_str().unwrap_or_default();
-    f.state
+    let status = f
+        .state
         .ops
-        .wait(id, Duration::from_secs(20))
+        .wait(id, limit)
         .map(|o| o.status)
-        .unwrap_or(OpStatus::Failed)
+        .unwrap_or(OpStatus::Failed);
+    if status != OpStatus::Succeeded {
+        eprintln!(
+            "operation {id} ended as {status:?}: {:?}",
+            f.state.ops.get(id)
+        );
+    }
+    status
 }
 
 pub fn dir_entries(p: &Path) -> usize {

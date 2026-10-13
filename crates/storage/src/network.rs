@@ -125,7 +125,7 @@ const SELECT_PROXY: &str =
        c.id, c.result, c.error_code, c.latency_ms, c.egress_ip, c.checked_at
      from proxy_configs x
      left join network_checks c on c.id = (select id from network_checks where proxy_id = x.id
-                                           order by checked_at desc, id desc limit 1)";
+                                           order by checked_at desc, rowid desc limit 1)";
 
 fn row_to_proxy(r: &rusqlite::Row<'_>) -> rusqlite::Result<Result<ProxyConfig, StoreError>> {
     let (Ok(id), Ok(ws)) = (
@@ -416,7 +416,7 @@ impl LocalStore {
         let conn = self.r()?;
         let mut stmt = conn.prepare_cached(
             "select id, proxy_id, result, error_code, latency_ms, egress_ip, checked_at
-               from network_checks where proxy_id = ?1 order by checked_at desc, id desc limit ?2",
+               from network_checks where proxy_id = ?1 order by checked_at desc, rowid desc limit ?2",
         )?;
         stmt.query_map(params![proxy.as_str(), limit.clamp(1, 500)], row_to_check)?
             .map(|r| r.map_err(StoreError::from).and_then(|x| x))

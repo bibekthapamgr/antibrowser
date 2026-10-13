@@ -11,7 +11,7 @@ import type {
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog } from './components.tsx';
-import { NetworkSection, PrivacySection } from './network.tsx';
+import { NetworkCell, NetworkSection, PrivacySection } from './network.tsx';
 import { nameKey, secretHint } from './notes.ts';
 import { day, LAST_ERROR, type Notify, primaryAction, StatusText, when, withClient } from './status.tsx';
 
@@ -271,7 +271,7 @@ export function ProfileDrawer(props: {
         <dd>{p.tags.length ? p.tags.map((t) => t.name).join(', ') : '—'}</dd>
         <dt>Proxy</dt>
         <dd>
-          {p.proxy_label ?? 'None'}
+          {p.proxy_label ? <NetworkCell p={p} /> : 'None'}
           {p.proxy_label && !p.fail_closed && <span className="muted small"> (fail-closed off)</span>}
         </dd>
         <dt>Sync</dt>

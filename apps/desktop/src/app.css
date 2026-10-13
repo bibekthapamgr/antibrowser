@@ -845,7 +845,6 @@ details summary {
 /* ---------------------------------------------------------------- milestone 05: proxies and privacy */
 .badge {
   display: inline-block;
-  margin-left: var(--pb-space-1);
   padding: 0 6px;
   border: 1px solid var(--pb-border-strong);
   border-radius: 999px;
@@ -854,9 +853,6 @@ details summary {
   white-space: nowrap;
   color: var(--pb-text);
   background: var(--pb-surface-muted);
-}
-.badge:first-child {
-  margin-left: 0;
 }
 .badge--warn {
   border-color: var(--pb-warn);
@@ -881,4 +877,31 @@ table.simple.proxy-table th {
 }
 .proxies > p.small {
   max-width: 70ch;
+}
+.mono.address {
+  display: block;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.check {
+  display: grid;
+  gap: 2px;
+}
+.check .mono {
+  word-break: normal;
+}
+.proxy-actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: var(--pb-space-1);
+  justify-content: end;
+}
+table.simple.proxy-table td:nth-child(2) {
+  min-width: 14ch;
+}
+.network-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-1);
 }

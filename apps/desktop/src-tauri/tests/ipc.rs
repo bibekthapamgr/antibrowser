@@ -1880,7 +1880,7 @@ fn ten_thousand_row_import_can_be_cancelled_and_resumed_without_duplicates() {
     }
     let _ = f.state.cancel_import(&job_id);
     assert_eq!(
-        wait_op(&f, &op),
+        wait_op_for(&f, &op, Duration::from_secs(120)),
         OpStatus::Failed,
         "a cancelled import ends as cancelled"
     );
@@ -1897,7 +1897,13 @@ fn ten_thousand_row_import_can_be_cancelled_and_resumed_without_duplicates() {
         json!({ "previewId": preview["preview_id"] }),
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    // Debug builds on Windows CI runners need well over 20 s for the remaining ~9,000 rows.
+    assert_eq!(
+        wait_op_for(&f, &op, Duration::from_secs(180)),
+        OpStatus::Succeeded,
+        "{:?}",
+        job(&f, &preview["preview_id"])
+    );
     let done = job(&f, &preview["preview_id"]);
     assert_eq!(done["status"], json!("completed"));
     assert_eq!(

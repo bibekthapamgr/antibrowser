@@ -59,16 +59,22 @@ export function CheckResult({ check }: { check: NetworkCheck | null }) {
   if (!check) return <span className="muted">Not tested yet</span>;
   if (check.result === 'ok')
     return (
-      <span>
-        <span className="ok">Working</span> · {check.latency_ms} ms · exit address{' '}
-        <span className="mono">{check.egress_ip ?? 'unknown'}</span>
-        <span className="muted small"> · {timeOf(check.checked_at)}</span>
+      <span className="check">
+        <span>
+          <span className="ok">Working</span> · {check.latency_ms} ms
+        </span>{' '}
+        <span>
+          exit address <span className="mono">{check.egress_ip ?? 'unknown'}</span>
+        </span>{' '}
+        <span className="muted small">{timeOf(check.checked_at)}</span>
       </span>
     );
   return (
-    <span>
-      <span className="error">Failed</span> · {proxyErrorText(check.error_code)}
-      <span className="muted small"> · {timeOf(check.checked_at)}</span>
+    <span className="check">
+      <span>
+        <span className="error">Failed</span> · {proxyErrorText(check.error_code)}
+      </span>{' '}
+      <span className="muted small">{timeOf(check.checked_at)}</span>
     </span>
   );
 }
@@ -180,7 +186,7 @@ export function ProxiesScreen(props: { backend: Backend; refreshKey: number; not
                 <th scope="row">{p.name}</th>
                 <td>
                   <span className="badge">{TYPE_LABEL[p.type]}</span>{' '}
-                  <span className="mono">
+                  <span className="mono address">
                     {p.host.includes(':') ? `[${p.host}]` : p.host}:{p.port}
                   </span>
                 </td>
@@ -193,7 +199,7 @@ export function ProxiesScreen(props: { backend: Backend; refreshKey: number; not
                   <ExpiryBadge proxy={p} />
                 </td>
                 <td>
-                  <div className="row row--nowrap">
+                  <div className="proxy-actions">
                     <button
                       type="button"
                       className="pb-button"
@@ -609,13 +615,32 @@ export function CredentialPrompt(props: {
 export function NetworkCell({ p }: { p: ProfileView }) {
   if (!p.proxy_label) return <span className="muted">—</span>;
   const s = p.network.status;
+  const badges = [
+    s === 'failing' && (
+      <span key="f" className="badge badge--error">
+        Blocked
+      </span>
+    ),
+    s === 'bypassing' && (
+      <span key="b" className="badge badge--warn">
+        Direct
+      </span>
+    ),
+    s === 'lost' && (
+      <span key="l" className="badge badge--error">
+        Reopen
+      </span>
+    ),
+    p.network.restart_required && (
+      <span key="r" className="badge">
+        Restart
+      </span>
+    ),
+  ].filter(Boolean);
   return (
-    <span>
+    <span className="network-cell">
       {p.proxy_label}
-      {s === 'failing' && <span className="badge badge--error">Blocked</span>}
-      {s === 'bypassing' && <span className="badge badge--warn">Direct</span>}
-      {s === 'lost' && <span className="badge badge--error">Reopen</span>}
-      {p.network.restart_required && <span className="badge">Restart</span>}
+      {badges}
     </span>
   );
 }
