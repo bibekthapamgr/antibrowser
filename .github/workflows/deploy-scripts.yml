@@ -125,19 +125,24 @@ jobs:
 
       - name: Root key rotation (root-key.sh)
         run: |
-          sudo bash scripts/deploy/root-key.sh status
+          rk() { scripts/ci/annotate.sh "root-key.sh $*" sudo bash scripts/deploy/root-key.sh "$@"; }
+          rk status
           old=$(sudo /opt/node/bin/node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).active)' /etc/project-browser/kms-root.json)
           if sudo bash scripts/deploy/root-key.sh retire "$old"; then
             echo "::error title=root key::the active key was retired"; exit 1
           fi
-          sudo bash scripts/deploy/root-key.sh rotate
-          # The worker re-wraps organization keys with the new root key (about once a minute).
+          rk rotate
+          # The worker re-wraps organization keys with the new root key (right after its restart, then every minute).
+          rewrapped=0
           for _ in $(seq 1 30); do
-            sudo bash scripts/deploy/root-key.sh status | grep -E "old +$old +wraps nothing" && break
+            out=$(sudo bash scripts/deploy/root-key.sh status); echo "$out"
+            if echo "$out" | grep -qE "old +$old +wraps nothing"; then rewrapped=1; break; fi
             sleep 10
           done
-          sudo bash scripts/deploy/root-key.sh retire "$old"
-          sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
+          [ "$rewrapped" = 1 ] || { echo "::error title=root key::not re-wrapped: $(echo "$out" | tr '\n' ';')"; \
+            sudo journalctl -u pb-worker -n 40 --no-pager -o cat | grep -i key | tail -5 | while read -r l; do echo "::error title=worker::$l"; done; exit 1; }
+          rk retire "$old"
+          scripts/ci/annotate.sh "restore after rotation" sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
             --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --check /tmp/pb-smoke-state.json'
           echo "::notice title=Root key rotation::rotated, re-wrapped by the worker, old key retired; the earlier backup still restores"
 

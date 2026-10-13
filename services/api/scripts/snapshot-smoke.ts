@@ -56,6 +56,17 @@ async function restore(profile: string, digest: string): Promise<number> {
   return plan.snapshot.version;
 }
 
+// The API may have just been restarted (key rotation, update): wait until it answers.
+for (let i = 0; ; i++) {
+  const up = await fetch(`${base}/health`).then(
+    (r) => r.ok,
+    () => false,
+  );
+  if (up) break;
+  if (i >= 60) throw new Error(`the API at ${base} does not answer`);
+  await new Promise((r) => setTimeout(r, 500));
+}
+
 const check = arg('--check');
 if (check) {
   const saved = JSON.parse(readFileSync(check, 'utf8')) as { profile: string; digest: string };
