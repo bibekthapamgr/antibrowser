@@ -64,11 +64,13 @@ Test counts at this milestone: netproxy 12 unit + 11 routing; runtime 41; storag
 9 network + 19 unit; real browser 10 per OS (5 new); TypeScript 30 desktop unit (5 new); UI e2e 75 (16 new: five
 screens in light and dark with axe and the 900×600 check, plus 6 flows).
 
-CI: Linux push run green on `2f4cef8`; installers built ([desktop internal build 38348545803](https://github.com/bibekthapamgr/antibrowser/actions/runs/38348545803));
-runtime pipeline [38348533869](https://github.com/bibekthapamgr/antibrowser/actions/runs/38348533869) passed the real-browser
-set on all three OSes. The first full Windows/macOS run on `6df1fce` found two timing-dependent tests (a 10,000-row
-import exceeding a 20 s wait on Windows, and two checks recorded in the same millisecond ordered by random id on
-macOS); both were fixed (longer wait with diagnostics; insertion order as tie-breaker) and re-run.
+CI: full run green on Windows x64, macOS arm64 and Linux at `8156594`
+([ci 38349617062](https://github.com/bibekthapamgr/antibrowser/actions/runs/38349617062): fmt, clippy, all Rust tests per
+OS, TypeScript + PostgreSQL, UI e2e with axe, license inventory, secret scan). Real-browser set passed on all three OSes
+in [runtime pipeline 38348533869](https://github.com/bibekthapamgr/antibrowser/actions/runs/38348533869). The first full
+Windows/macOS run (on `6df1fce`) found two timing-dependent tests — a 10,000-row import exceeding a 20 s wait on a slow
+Windows runner, and two checks recorded in the same millisecond ordered by random id on macOS; both were fixed (longer
+wait with diagnostics; insertion order as tie-breaker) before the green run.
 
 ## Release
 Local engineering alpha after this milestone: single-user local profiles; no team sync claims. Installers remain
