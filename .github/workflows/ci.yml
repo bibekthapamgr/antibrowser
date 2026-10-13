@@ -56,7 +56,24 @@ jobs:
         run: PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f infra/db/bootstrap-local.sql
       - run: pnpm run lint
       - run: pnpm run typecheck
+      # Reference identity provider (ADR-0013): services/api/test/keycloak.test.ts signs in through it with
+      # Authorization Code + PKCE. The admin password is generated per run and masked.
+      - name: Start Keycloak
+        run: |
+          KC_PW=$(openssl rand -hex 24)
+          echo "::add-mask::$KC_PW"
+          echo "PB_KEYCLOAK_ADMIN_PASSWORD=$KC_PW" >> "$GITHUB_ENV"
+          docker run -d --name keycloak -p 127.0.0.1:8081:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KC_PW" \
+            quay.io/keycloak/keycloak:26.6.2 start-dev
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8081/realms/master >/dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8081/realms/master >/dev/null || { docker logs keycloak | tail -50; exit 1; }
+          echo "PB_KEYCLOAK_URL=http://127.0.0.1:8081" >> "$GITHUB_ENV"
       - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
+      - name: Permission matrix document is up to date
+        run: |
+          pnpm run docs:permissions >/dev/null
+          git diff --exit-code docs/permission-matrix.md
       - name: OpenAPI document is up to date
         run: |
           PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -c "select 1" >/dev/null
