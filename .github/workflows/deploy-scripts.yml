@@ -1,0 +1,106 @@
+name: deploy scripts
+
+# Runs the test-server scripts the way a person runs them on a fresh VPS (Ubuntu 24.04 VM with systemd, as root):
+# vps-setup.sh, then keycloak-setup.sh, then real sign-ins through the deployed API and the self-hosted Keycloak,
+# then the update path (both scripts again) and the account commands. Linux only; runs when these files change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/deploy/**'
+      - 'scripts/ci/keycloak-sign-in-check.ts'
+      - '.github/workflows/deploy-scripts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-scripts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-server:
+    name: test server + self-hosted Keycloak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      # vps-setup.sh clones this repository itself; the runner has no deploy key, and the repository is public.
+      PB_REPO: https://github.com/${{ github.repository }}.git
+      PB_BRANCH: ${{ github.ref_name }}
+      PW_FILE: /root/pb-temp-password
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck --severity=warning scripts/deploy/*.sh scripts/ci/*.sh
+
+      - name: Start from a server without PostgreSQL (the runner image has one)
+        run: |
+          sudo systemctl stop postgresql || true
+          sudo apt-get purge -y -qq 'postgresql*' >/dev/null
+          sudo rm -rf /etc/postgresql /var/lib/postgresql
+
+      - name: vps-setup.sh
+        run: scripts/ci/annotate.sh "vps-setup.sh" sudo --preserve-env=PB_REPO,PB_BRANCH bash scripts/deploy/vps-setup.sh --skip-tests
+
+      - name: keycloak-setup.sh (first run, creates the owner account)
+        run: |
+          scripts/ci/annotate.sh "keycloak-setup.sh" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+            bash scripts/deploy/keycloak-setup.sh --owner-email owner@example.test
+          sudo test -s "$PW_FILE"
+
+      - name: Owner signs in (replaces the temporary password)
+        run: |
+          temp=$(sudo cat "$PW_FILE"); echo "::add-mask::$temp"
+          new=$(openssl rand -base64 18); echo "::add-mask::$new"
+          echo "OWNER_PASSWORD=$new" >> "$GITHUB_ENV"
+          PB_EMAIL=owner@example.test PB_PASSWORD="$temp" PB_NEW_PASSWORD="$new" PB_EXPECT_PASSWORD_CHANGE=1 \
+            PB_HEADER_FILE="$RUNNER_TEMP/owner.header" \
+            scripts/ci/annotate.sh "owner sign-in" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+
+      - name: Update path - vps-setup.sh and keycloak-setup.sh again
+        run: |
+          scripts/ci/annotate.sh "vps-setup.sh (update)" sudo --preserve-env=PB_REPO,PB_BRANCH bash scripts/deploy/vps-setup.sh --skip-tests
+          scripts/ci/annotate.sh "keycloak-setup.sh (update)" sudo bash scripts/deploy/keycloak-setup.sh | tee "$RUNNER_TEMP/rerun.log"
+          grep -q "nothing changed" "$RUNNER_TEMP/rerun.log" || { echo "::error title=update::Keycloak was restarted without a change"; exit 1; }
+          # The session from before the updates still works: same signing key, sign-in settings kept by vps-setup.sh.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/owner.header" http://127.0.0.1:8080/v1/me)
+          [ "$code" = 200 ] || { echo "::error title=update::the earlier API session stopped working (HTTP $code)"; exit 1; }
+
+      - name: Owner signs in again with the new password
+        run: |
+          PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" PB_EXPECT_PASSWORD_CHANGE=0 \
+            scripts/ci/annotate.sh "owner sign-in (again)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+
+      - name: add-user and reset-password
+        run: |
+          signin() {  # e-mail, label
+            local temp new
+            temp=$(sudo cat "$PW_FILE"); echo "::add-mask::$temp"
+            new=$(openssl rand -base64 18); echo "::add-mask::$new"
+            PB_EMAIL="$1" PB_PASSWORD="$temp" PB_NEW_PASSWORD="$new" PB_EXPECT_PASSWORD_CHANGE=1 \
+              scripts/ci/annotate.sh "$2" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          }
+          scripts/ci/annotate.sh "add-user" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+            bash scripts/deploy/keycloak-setup.sh add-user Teammate@Example.test
+          signin teammate@example.test "teammate sign-in"
+          if sudo bash scripts/deploy/keycloak-setup.sh add-user teammate@example.test; then
+            echo "::error title=add-user::an existing account was created twice"; exit 1
+          fi
+          scripts/ci/annotate.sh "reset-password" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+            bash scripts/deploy/keycloak-setup.sh reset-password teammate@example.test
+          signin teammate@example.test "teammate sign-in after reset"
+
+      - name: Evidence
+        run: |
+          kc=$(basename "$(readlink -f /opt/keycloak)")
+          java=$(sed -n 's/^Environment=JAVA_HOME=//p' /etc/systemd/system/keycloak.service)
+          jv=$("$java/bin/java" -version 2>&1 | head -1)
+          echo "::notice title=Self-hosted Keycloak::$kc in production mode on 127.0.0.1:8081 with $jv. Owner and teammate signed in through the deployed API (PKCE S256, state, iss, temporary password replaced); the session survived re-running both scripts; add-user, duplicate refusal and reset-password checked."
+
+      - name: Service logs
+        if: failure()
+        run: |
+          sudo journalctl -u keycloak -n 120 --no-pager || true
+          sudo journalctl -u pb-api -n 60 --no-pager || true

@@ -121,7 +121,15 @@ through the SSH tunnel).
 ## Sign-in for development (milestone 06)
 
 Sign-in needs an OpenID Connect provider; Keycloak is the reference ([identity/keycloak-setup.md](identity/keycloak-setup.md)).
-For a private test setup, run Keycloak next to the API (for example on port 8081, bound to `127.0.0.1`), create the
+On the test server, `scripts/deploy/keycloak-setup.sh` installs and connects it in one run (after `vps-setup.sh`):
+
+```bash
+\cp -f /home/pb/antibrowser/scripts/deploy/keycloak-setup.sh /root/
+bash /root/keycloak-setup.sh --owner-email you@example.com   # prints your temporary password once
+ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 root@<server>   # on your computer
+```
+
+Elsewhere, run Keycloak next to the API (for example on port 8081, bound to `127.0.0.1`), create the
 realm and the public `projectbrowser://auth/callback` client as described there, and add to the API environment:
 
 ```
