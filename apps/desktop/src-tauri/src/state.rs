@@ -112,6 +112,8 @@ pub struct AppState {
     pub(crate) sync: crate::sync::SyncRuntime,
     /// Shared sessions of organization profiles (milestone 08).
     pub(crate) team: crate::team::TeamRuntime,
+    /// Extensions, health, diagnostics previews and reminders (milestone 09).
+    pub(crate) agency: crate::agency::AgencyRuntime,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -300,6 +302,7 @@ impl AppState {
             cloud: crate::account::Cloud::new(signed_in),
             sync: crate::sync::SyncRuntime::new(),
             team: crate::team::TeamRuntime::new(),
+            agency: crate::agency::AgencyRuntime::default(),
         }))
     }
 
@@ -748,7 +751,7 @@ impl AppState {
         Ok(store.set_setting(key, value, true, expected_version)?)
     }
 
-    fn validate_download_dir(&self, chosen: &Path) -> Result<String, IpcError> {
+    pub(crate) fn validate_download_dir(&self, chosen: &Path) -> Result<String, IpcError> {
         if !chosen.is_absolute()
             || std::fs::symlink_metadata(chosen)
                 .map(|m| m.file_type().is_symlink())

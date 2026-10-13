@@ -18,6 +18,8 @@ pub struct Client {
     pub archived_at: Option<String>,
     pub version: i64,
     pub created_at: String,
+    /// Where this client's profiles download to (milestone 09); `None`: the usual folder.
+    pub download_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -98,7 +100,7 @@ impl LocalStore {
     ) -> Result<Vec<Client>, StoreError> {
         let conn = self.r()?;
         let mut stmt = conn.prepare_cached(
-            "select id, workspace_id, name, colour, archived_at, version, created_at from clients_local
+            "select id, workspace_id, name, colour, archived_at, version, created_at, download_dir from clients_local
               where workspace_id = ?1 and (?2 or archived_at is null)
               order by name_key, id limit 5000",
         )?;
@@ -111,10 +113,11 @@ impl LocalStore {
                 r.get::<_, Option<String>>(4)?,
                 r.get::<_, i64>(5)?,
                 r.get::<_, String>(6)?,
+                r.get::<_, Option<String>>(7)?,
             ))
         })?;
         rows.map(|r| {
-            let (id, ws, name, colour, archived_at, version, created_at) = r?;
+            let (id, ws, name, colour, archived_at, version, created_at, download_dir) = r?;
             Ok(Client {
                 id: parse_id(&id, ClientId::parse)?,
                 workspace_id: parse_id(&ws, WorkspaceId::parse)?,
@@ -123,6 +126,7 @@ impl LocalStore {
                 archived_at,
                 version,
                 created_at,
+                download_dir,
             })
         })
         .collect()
@@ -132,7 +136,7 @@ impl LocalStore {
         let conn = self.r()?;
         let row = conn
             .query_row(
-                "select id, workspace_id, name, colour, archived_at, version, created_at
+                "select id, workspace_id, name, colour, archived_at, version, created_at, download_dir
                    from clients_local where id = ?1",
                 [id.as_str()],
                 |r| {
@@ -143,21 +147,25 @@ impl LocalStore {
                         r.get::<_, Option<String>>(4)?,
                         r.get::<_, i64>(5)?,
                         r.get::<_, String>(6)?,
+                        r.get::<_, Option<String>>(7)?,
                     ))
                 },
             )
             .optional()?;
-        row.map(|(ws, name, colour, archived_at, version, created_at)| {
-            Ok(Client {
-                id: id.clone(),
-                workspace_id: parse_id(&ws, WorkspaceId::parse)?,
-                name,
-                colour,
-                archived_at,
-                version,
-                created_at,
-            })
-        })
+        row.map(
+            |(ws, name, colour, archived_at, version, created_at, download_dir)| {
+                Ok(Client {
+                    id: id.clone(),
+                    workspace_id: parse_id(&ws, WorkspaceId::parse)?,
+                    name,
+                    colour,
+                    archived_at,
+                    version,
+                    created_at,
+                    download_dir,
+                })
+            },
+        )
         .transpose()
     }
 

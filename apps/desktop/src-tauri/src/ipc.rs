@@ -81,6 +81,10 @@ pub const CONFIRMATION_REQUIRED: IpcError = IpcError::new(
     "CONFIRMATION_REQUIRED",
     "Type DELETE to confirm removing all local data.",
 );
+pub const PREVIEW_EXPIRED: IpcError = IpcError::new(
+    "PREVIEW_EXPIRED",
+    "The preview is no longer available. Preview the report again, then save it.",
+);
 pub const INTERNAL: IpcError = IpcError::new(
     "INTERNAL",
     "Something went wrong. Details are in the diagnostics.",

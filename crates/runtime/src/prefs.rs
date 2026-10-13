@@ -2,6 +2,8 @@
 //!
 //! Applied only while the profile is stopped and its manager lock is held, immediately before launch:
 //!  - display name (Chromium's profile menu shows it) and optional client colour (`browser.theme.user_color`);
+//!  - for profiles with a client, one of Chromium's built-in profile pictures chosen from the client (milestone 09):
+//!    the toolbar shows it, so profiles of different clients can be told apart without relying on colour;
 //!  - download folder;
 //!  - camera / microphone / location defaults (ask = Chromium default, block = 2, allow = 1);
 //!  - privacy (milestone 05): WebRTC IP handling, third-party cookies, Do Not Track, page languages, default text
@@ -62,6 +64,8 @@ pub struct BrowserPrefs {
     pub display_name: String,
     /// `#rrggbb`
     pub colour: Option<String>,
+    /// One of Chromium's built-in profile pictures (`profile.avatar_index`); `None` leaves the profile's own.
+    pub avatar_index: Option<u32>,
     pub download_dir: Option<PathBuf>,
     pub camera: PermissionDefault,
     pub microphone: PermissionDefault,
@@ -142,6 +146,20 @@ fn set_path(root: &mut Map<String, Value>, path: &[&str], value: Option<Value>) 
     }
 }
 
+/// Chromium's illustrated built-in profile pictures (indices 27 to 55; lower ones are plain silhouettes).
+pub const AVATAR_FIRST: u32 = 27;
+pub const AVATAR_COUNT: u32 = 29;
+
+/// The built-in picture for a client: stable for the client id (FNV-1a), the same on every computer.
+pub fn client_avatar_index(client_id: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in client_id.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    AVATAR_FIRST + h % AVATAR_COUNT
+}
+
 /// Chromium stores colours as a signed 32-bit ARGB integer.
 fn argb(colour: &str) -> Option<i64> {
     let hex = colour.strip_prefix('#')?;
@@ -166,6 +184,14 @@ pub fn apply(user_data: &Path, prefs: &BrowserPrefs) -> Result<(), PrefsError> {
         &["browser", "theme", "user_color"],
         prefs.colour.as_deref().and_then(argb).map(Value::from),
     );
+    if let Some(index) = prefs.avatar_index {
+        set_path(&mut root, &["profile", "avatar_index"], Some(json!(index)));
+        set_path(
+            &mut root,
+            &["profile", "using_default_avatar"],
+            Some(json!(false)),
+        );
+    }
     let downloads = prefs
         .download_dir
         .as_ref()
@@ -269,6 +295,7 @@ mod tests {
 
     fn prefs() -> BrowserPrefs {
         BrowserPrefs {
+            avatar_index: Some(client_avatar_index("cli_01J9ZSEED0AN00000000000000")),
             display_name: "Shop admin · Client North".into(),
             colour: Some("#7c3aed".into()),
             download_dir: Some(PathBuf::from("/downloads/north")),
@@ -331,7 +358,21 @@ mod tests {
             v["browser"]["theme"]["user_color"],
             i64::from(0xFF7C_3AEDu32 as i32)
         );
+        // A client's picture: the same for every profile of the client, inside Chromium's illustrated set.
+        let index = v["profile"]["avatar_index"].as_u64().unwrap_or(0) as u32;
+        assert_eq!(index, client_avatar_index("cli_01J9ZSEED0AN00000000000000"));
+        assert!((AVATAR_FIRST..AVATAR_FIRST + AVATAR_COUNT).contains(&index));
+        assert_eq!(v["profile"]["using_default_avatar"], false);
         Ok(())
+    }
+
+    #[test]
+    fn client_pictures_are_spread_over_the_set() {
+        let ids: Vec<String> = (0..200).map(|n| format!("cli_01J9ZSEED0{n:016}")).collect();
+        let used: std::collections::BTreeSet<u32> =
+            ids.iter().map(|id| client_avatar_index(id)).collect();
+        assert!(used.len() > 25, "{used:?}");
+        assert!(used.iter().all(|i| (27..=55).contains(i)));
     }
 
     #[test]

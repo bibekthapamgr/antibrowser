@@ -68,6 +68,21 @@ struct Tracked {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TreeUsage {
+    pub profile_id: ProfileId,
+    pub processes: usize,
+    pub memory_bytes: u64,
+    pub open_seconds: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ResourceUsage {
+    pub profiles: Vec<TreeUsage>,
+    pub manager_processes: usize,
+    pub manager_memory_bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RunningProfile {
     pub profile_id: String,
     pub run_id: Option<String>,
@@ -744,6 +759,67 @@ impl Supervisor {
             .unwrap_or_default()
     }
 
+    /// Process count and memory of every tracked browser tree (main process and its descendants), and of the
+    /// manager's own processes (itself and its children that are not browser trees). Other browsers on the computer
+    /// are never counted: only trees rooted at a main process this manager started or re-attached.
+    pub fn resource_usage(&self) -> ResourceUsage {
+        let tracked: Vec<(ProfileId, Option<u32>, Duration)> = self
+            .tracked
+            .lock()
+            .map(|t| {
+                t.iter()
+                    .map(|(id, x)| (id.clone(), x.pid, x.accepted_at.elapsed()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let snapshot = self.inspector.snapshot();
+        let mut browser_pids = HashSet::new();
+        let profiles = tracked
+            .into_iter()
+            .map(|(id, pid, open_for)| {
+                let (processes, memory_bytes) = match pid {
+                    Some(pid) if snapshot.iter().any(|p| p.pid == pid) => {
+                        browser_pids.insert(pid);
+                        browser_pids
+                            .extend(procs::descendants(&snapshot, pid).iter().map(|p| p.pid));
+                        procs::tree_memory(&snapshot, pid)
+                    }
+                    _ => (0, 0),
+                };
+                TreeUsage {
+                    profile_id: id,
+                    processes,
+                    memory_bytes,
+                    open_seconds: open_for.as_secs(),
+                }
+            })
+            .collect();
+        let me = std::process::id();
+        let own = snapshot.iter().find(|p| p.pid == me);
+        let helpers: Vec<&ProcRecord> = procs::descendants(&snapshot, me)
+            .into_iter()
+            .filter(|p| !browser_pids.contains(&p.pid))
+            .collect();
+        ResourceUsage {
+            profiles,
+            manager_processes: usize::from(own.is_some()) + helpers.len(),
+            manager_memory_bytes: own.map_or(0, |p| p.memory_bytes)
+                + helpers.iter().map(|p| p.memory_bytes).sum::<u64>(),
+        }
+    }
+
+    /// How long each tracked profile has been open, with its run id.
+    pub fn open_durations(&self) -> Vec<(ProfileId, Option<String>, Duration)> {
+        self.tracked
+            .lock()
+            .map(|t| {
+                t.iter()
+                    .map(|(id, x)| (id.clone(), x.run_id.clone(), x.accepted_at.elapsed()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Resident memory of tracked browser main processes (diagnostics; excludes the manager).
     pub fn browser_memory_bytes(&self) -> u64 {
         let pids: Vec<u32> = self
@@ -849,8 +925,16 @@ pub mod fake {
                         start_time,
                         exe: Some(PathBuf::from(exe)),
                         args,
+                        memory_bytes: 50_000_000,
                     },
                 );
+            }
+        }
+        pub fn set_memory(&self, pid: u32, bytes: u64) {
+            if let Ok(mut t) = self.table.lock()
+                && let Some(p) = t.get_mut(&pid)
+            {
+                p.memory_bytes = bytes;
             }
         }
         /// Removes a process and (like an exiting browser) its children.

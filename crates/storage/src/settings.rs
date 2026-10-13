@@ -34,6 +34,12 @@ pub const ACTIVE_WORKSPACE: &str = "workspace.active";
 pub const TRASH_RETENTION: &str = "profiles.trash_retention_days";
 /// Allows proxies on this computer or the local network (milestone 05; off by default).
 pub const ALLOW_PRIVATE_PROXIES: &str = "proxies.allow_private_addresses";
+/// Downloads of a profile with a client go into a subfolder named after the client (milestone 09; off by default).
+pub const PER_CLIENT_DOWNLOADS: &str = "downloads.per_client_folders";
+/// After a profile has been open this many hours, the app offers to close it (never closes it on its own; "off").
+pub const OPEN_REMINDER: &str = "profiles.open_reminder_hours";
+/// Warn before opening profiles when the computer's free memory looks too low (milestone 09; on by default).
+pub const MEMORY_WARNING: &str = "resources.memory_warning";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -77,6 +83,24 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::Bool,
         ui_settable: true,
         default: || Value::from(false),
+    },
+    SettingSpec {
+        key: PER_CLIENT_DOWNLOADS,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::from(false),
+    },
+    SettingSpec {
+        key: OPEN_REMINDER,
+        kind: SettingKind::Enum(&["off", "4", "8", "12", "24"]),
+        ui_settable: true,
+        default: || Value::from("off"),
+    },
+    SettingSpec {
+        key: MEMORY_WARNING,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::from(true),
     },
 ];
 

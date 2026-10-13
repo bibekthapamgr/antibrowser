@@ -337,7 +337,10 @@ impl AppState {
         let id = id.clone();
         let url = start_url.map(str::to_owned);
         let op_id = op.clone();
+        let org_id = link.org_id.clone();
         std::thread::spawn(move || {
+            // Milestone 09: the organization's extension policy as current as possible before the browser starts.
+            this.refresh_policy_if_stale(&org_id);
             let result = match existing.filter(|s| leased(&s.phase) && s.lease_id.is_some()) {
                 // Still ours (closing, pending, lost): reopen under the same lease.
                 Some(s) => this.reopen_shared(s, url.as_deref(), &op_id),

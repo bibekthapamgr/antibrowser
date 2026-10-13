@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   bookmarkUrlProblem,
@@ -112,5 +114,19 @@ describe('extension policy', () => {
     expect(
       judgeExtension([rule()], item({ permissions: ['storage', 'activeTab', '<all_urls>', 'alarms'] })),
     ).toEqual({ status: 'permissions_need_review', permissions: ['<all_urls>'] });
+  });
+});
+
+describe('shared policy vectors (also run by the desktop)', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: test vectors
+  const cases: any = JSON.parse(
+    readFileSync(join(import.meta.dirname, '../fixtures/extension-policy-cases.json'), 'utf8'),
+  );
+  it('versions, ranges, sensitive permissions and judgements', () => {
+    for (const c of cases.versions) expect(versionInRange(c.version, c.range), JSON.stringify(c)).toBe(c.in);
+    for (const c of cases.ranges) expect(validVersionRange(c.range), c.range).toBe(c.valid);
+    for (const c of cases.sensitive)
+      expect(isSensitivePermission(c.permission), c.permission).toBe(c.sensitive);
+    for (const c of cases.judgements) expect(judgeExtension(c.rules, c.item), c.name).toEqual(c.verdict);
   });
 });

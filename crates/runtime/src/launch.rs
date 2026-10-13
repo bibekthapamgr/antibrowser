@@ -10,7 +10,10 @@
 //!    (headless CI runs); nothing from the UI ever becomes a switch;
 //! 8. proxy routing and environment settings (milestone 05) become switches only from typed, validated values: the
 //!    proxy is always the manager's loopback gateway (never an address or login from the request), languages and
-//!    time zones come from fixed lists, window sizes are bounded.
+//!    time zones come from fixed lists, window sizes are bounded;
+//! 9. the only extension switch ever added is `--disable-extensions` (an organization policy in enforce mode,
+//!    milestone 09); switches that load or allow extensions (`--load-extension`, `--disable-extensions-except`) are
+//!    never accepted.
 //!
 //! Only then is the `Launcher` called. The process is started from a structured argument list (never a shell
 //! string), the Chromium sandbox is never disabled, and no remote-debugging switch is ever added. This crate does
@@ -99,6 +102,9 @@ pub struct LaunchRequest<'a> {
     pub switches: &'a [String],
     pub network: Option<NetworkLaunch>,
     pub environment: Option<&'a PrivacyConfig>,
+    /// The organization's extension policy turned extensions off for this session (milestone 09): Chromium's own
+    /// `--disable-extensions` switch. Nothing else about extensions is ever passed on the command line.
+    pub extensions_disabled: bool,
 }
 
 pub const MAX_START_URLS: usize = 10;
@@ -190,6 +196,9 @@ pub fn prepare_launch(
     }
     if environment.reduced_motion {
         args.push("--force-prefers-reduced-motion".into());
+    }
+    if request.extensions_disabled {
+        args.push("--disable-extensions".into());
     }
     let mut env = vec![];
     if let Some(tz) = &environment.timezone
@@ -328,6 +337,50 @@ mod tests {
     }
 
     #[test]
+    fn extensions_are_only_ever_turned_off() -> Result<(), LaunchError> {
+        let (_tmp, root, browser) = setup();
+        let profile = id();
+        let state = || ProfileState {
+            exists: true,
+            running: false,
+        };
+        for (disabled, switch, expected) in [
+            (true, None, Ok(true)),
+            (false, None, Ok(false)),
+            (
+                false,
+                Some("--disable-extensions"),
+                Err("DISALLOWED_SWITCH"),
+            ),
+            (
+                false,
+                Some("--disable-extensions-except=/x"),
+                Err("DISALLOWED_SWITCH"),
+            ),
+            (false, Some("--load-extension=/x"), Err("DISALLOWED_SWITCH")),
+        ] {
+            let switches: Vec<String> = switch.map(str::to_owned).into_iter().collect();
+            let got = prepare_launch(
+                &root,
+                Some(&browser),
+                state(),
+                LaunchRequest {
+                    profile_id: &profile,
+                    start_urls: &[],
+                    switches: &switches,
+                    network: None,
+                    environment: None,
+                    extensions_disabled: disabled,
+                },
+            )
+            .map(|spec| spec.args.iter().any(|a| a == "--disable-extensions"))
+            .map_err(|e| e.code());
+            assert_eq!(got, expected, "{switch:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn builds_fixed_argument_list() -> Result<(), LaunchError> {
         let (_tmp, root, browser) = setup();
         let spec = prepare_launch(
@@ -346,6 +399,7 @@ mod tests {
                 switches: &["--headless=new".into()],
                 network: None,
                 environment: None,
+                extensions_disabled: false,
             },
         )?;
         let args: Vec<String> = spec
@@ -422,6 +476,7 @@ mod tests {
                     switches: &[],
                     network: None,
                     environment: None,
+                    extensions_disabled: false,
                 },
             )
             .err()
@@ -472,6 +527,7 @@ mod tests {
                     switches: &[bad.to_string()],
                     network: None,
                     environment: None,
+                    extensions_disabled: false,
                 },
             );
             assert!(matches!(err, Err(LaunchError::DisallowedSwitch)), "{bad}");
@@ -490,6 +546,7 @@ mod tests {
                 switches: &[],
                 network: None,
                 environment: None,
+                extensions_disabled: false,
             },
         );
         assert!(matches!(err, Err(LaunchError::BadStartUrl)));
@@ -523,6 +580,7 @@ mod tests {
                     gateway_port: 40123,
                 }),
                 environment: Some(&env),
+                extensions_disabled: false,
             },
         )?;
         let args: Vec<String> = spec
@@ -582,6 +640,7 @@ mod tests {
                 switches: &[],
                 network: None,
                 environment: Some(&bad),
+                extensions_disabled: false,
             },
         );
         assert!(matches!(err, Err(LaunchError::BadEnvironment)));
@@ -627,6 +686,7 @@ mod tests {
                     switches: &[],
                     network: None,
                     environment: None,
+                    extensions_disabled: false,
                 },
             );
             assert!(matches!(err, Err(LaunchError::BrowserNotConfigured)));

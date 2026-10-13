@@ -79,6 +79,17 @@
     "allow-team-abort",
     "allow-team-retry",
     "allow-team-dismiss",
-    "allow-team-restore-recovery-copy"
+    "allow-team-restore-recovery-copy",
+    "allow-preview-diagnostics",
+    "allow-get-health",
+    "allow-run-health-check",
+    "allow-get-resources",
+    "allow-check-launch",
+    "allow-selection-summary",
+    "allow-get-client-overview",
+    "allow-select-client-download-directory",
+    "allow-get-extensions",
+    "allow-rescan-extensions",
+    "allow-review-extension"
   ]
 }

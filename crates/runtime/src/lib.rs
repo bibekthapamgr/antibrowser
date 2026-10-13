@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub mod environment;
+pub mod extensions;
 pub mod id;
 pub mod inspect;
 pub mod launch;

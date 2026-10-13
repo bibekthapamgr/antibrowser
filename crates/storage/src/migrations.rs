@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -26,6 +26,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (6, "cloud_account", v6),
     (7, "encrypted_sync", v7),
     (8, "team_sessions", v8),
+    (9, "agency_workspace", v9),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -655,6 +656,77 @@ fn v8(tx: &Transaction<'_>) -> rusqlite::Result<()> {
            select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
          drop table audit_log;
          alter table audit_log_v8 rename to audit_log;
+         create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
+}
+
+/// Milestone 09: a downloads folder per client, health observations of this computer's checks, the extensions
+/// installed in each profile (with what changed in the last update), each organization's extension policy as last
+/// downloaded, and the `extension` and `diagnostics` audit actions.
+fn v9(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "alter table clients_local add column download_dir text
+           check (download_dir is null or length(download_dir) between 1 and 4096);
+
+         create table health_observations (
+           check_type  text not null check (check_type in ('server', 'proxy', 'runtime_update')),
+           subject     text not null default '' check (length(subject) <= 64),
+           profile_id  text references profiles(id) on delete cascade,
+           result      text not null check (result in ('ok', 'warning', 'problem', 'unknown')),
+           code        text check (code is null or length(code) <= 64),
+           detail      text check (detail is null or length(detail) <= 300),
+           checked_at  text not null default {NOW},
+           expires_at  text not null,
+           primary key (check_type, subject)
+         ) strict;
+
+         create table extension_inventory (
+           profile_id        text not null references profiles(id) on delete cascade,
+           extension_id      text not null check (length(extension_id) = 32 and extension_id not glob '*[^a-p]*'),
+           name              text not null check (length(name) <= 120),
+           version           text not null check (length(version) <= 32),
+           source            text not null check (source in ('web_store', 'policy', 'external', 'unpacked', 'other')),
+           enabled           integer not null check (enabled in (0, 1)),
+           permissions       text not null check (json_valid(permissions) and length(permissions) <= 24000),
+           previous_version  text check (previous_version is null or length(previous_version) <= 32),
+           added_sensitive   text check (added_sensitive is null or (json_valid(added_sensitive)
+                                                                      and length(added_sensitive) <= 24000)),
+           first_seen_at     text not null default {NOW},
+           changed_at        text not null default {NOW},
+           primary key (profile_id, extension_id)
+         ) strict;
+
+         create table extension_scans (
+           profile_id   text primary key references profiles(id) on delete cascade,
+           status       text not null check (status in ('ok', 'unreadable')),
+           scanned_at   text not null default {NOW},
+           reported_at  text
+         ) strict;
+
+         create table extension_policy_cache (
+           org_id      text primary key check (org_id glob 'org_*' and length(org_id) = 30),
+           mode        text not null check (mode in ('off', 'warn', 'enforce')),
+           version     integer not null check (version >= 1),
+           rules       text not null check (json_valid(rules) and length(rules) <= 500000),
+           fetched_at  text not null default {NOW}
+         ) strict;
+
+         create table audit_log_v9 (
+           seq         integer primary key autoincrement,
+           at          text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           profile_id  text,
+           action      text not null check (action in ('start', 'stop', 'force_stop', 'exit', 'crash', 'adopt',
+                         'interrupted', 'recover', 'backup', 'runtime_install', 'runtime_remove',
+                         'create', 'trash', 'restore', 'delete', 'purge', 'bulk', 'import', 'export',
+                         'proxy', 'network', 'sync', 'cloud_restore', 'team', 'extension', 'diagnostics')),
+           outcome     text not null check (length(outcome) <= 40),
+           run_id      text,
+           detail      text check (detail is null or length(detail) <= 200)
+         ) strict;
+         insert into audit_log_v9 (seq, at, profile_id, action, outcome, run_id, detail)
+           select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
+         drop table audit_log;
+         alter table audit_log_v9 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);"
     ))
 }

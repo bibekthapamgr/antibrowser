@@ -75,6 +75,17 @@ const COMMANDS: &[&str] = &[
     "team_retry",
     "team_dismiss",
     "team_restore_recovery_copy",
+    "preview_diagnostics",
+    "get_health",
+    "run_health_check",
+    "get_resources",
+    "check_launch",
+    "selection_summary",
+    "get_client_overview",
+    "select_client_download_directory",
+    "get_extensions",
+    "rescan_extensions",
+    "review_extension",
 ];
 
 fn main() {

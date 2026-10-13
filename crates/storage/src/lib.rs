@@ -8,6 +8,7 @@
 //! Concurrency: one writer connection behind a mutex plus a separate reader connection; WAL lets reads proceed
 //! during writes. Every list query is bounded.
 
+pub mod agency;
 pub mod bulk;
 pub mod catalog;
 pub mod cloud;
@@ -130,6 +131,9 @@ pub struct LocalProfile {
     pub linked: bool,
     /// The phase of this computer's shared session of it, if any (milestone 08).
     pub team_phase: Option<String>,
+    /// The client's downloads folder (milestone 09).
+    #[serde(skip)]
+    pub client_download_dir: Option<String>,
 }
 
 /// A profile to create. Browser storage always starts empty: only configuration is ever copied.
@@ -800,7 +804,7 @@ pub(crate) const SELECT_PROFILE: &str =
        (select json_group_array(json_array(t.id, t.name)) from profile_tags pt join tags t on t.id = pt.tag_id
           where pt.profile_id = p.id) as tags,
        ns.proxy_id, coalesce(ns.fail_closed, 1), p.privacy_json, coalesce(ns.config_version, 0),
-       ol.local_profile_id is not null, ts.phase
+       ol.local_profile_id is not null, ts.phase, c.download_dir
      from profiles p
      left join clients_local c on c.id = p.client_id
      left join trash_entries te on te.profile_id = p.id
@@ -918,6 +922,7 @@ pub(crate) fn row_to_profile(
         backup_runtime_version: row.get(26)?,
         linked: row.get::<_, i64>(38)? == 1,
         team_phase: row.get(39)?,
+        client_download_dir: row.get(40)?,
     }))
 }
 

@@ -73,6 +73,19 @@ pub fn tree_facts(snapshot: &[ProcRecord], main_pid: u32) -> TreeFacts {
     }
 }
 
+/// Process count and resident memory of a browser tree (main process and all its descendants).
+pub fn tree_memory(snapshot: &[ProcRecord], main_pid: u32) -> (usize, u64) {
+    let main = snapshot
+        .iter()
+        .find(|p| p.pid == main_pid)
+        .map_or(0, |p| p.memory_bytes);
+    let d = descendants(snapshot, main_pid);
+    (
+        d.len() + 1,
+        main + d.iter().map(|p| p.memory_bytes).sum::<u64>(),
+    )
+}
+
 /// Chromium's own profile lock: `SingletonLock` (macOS/Linux, a symlink) or `lockfile` (Windows).
 pub fn singleton_present(user_data: &Path) -> bool {
     ["SingletonLock", "lockfile"]
@@ -103,6 +116,7 @@ mod tests {
             start_time: 100,
             exe: Some(PathBuf::from("/rt/chrome")),
             args: args.iter().map(|s| s.to_string()).collect(),
+            memory_bytes: 1_000_000,
         }
     }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-selection-summary"
+description = "Enables the selection_summary command without any pre-configured scope."
+commands.allow = ["selection_summary"]
+
+[[permission]]
+identifier = "deny-selection-summary"
+description = "Denies the selection_summary command without any pre-configured scope."
+commands.deny = ["selection_summary"]

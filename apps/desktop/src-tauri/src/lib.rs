@@ -6,9 +6,11 @@
 //! its caller and validates its inputs in Rust.
 
 pub mod account;
+pub mod agency;
 pub mod authz;
 pub mod commands;
 pub mod deeplink;
+pub mod diagnostics;
 pub mod events;
 pub mod external;
 pub mod ipc;
@@ -122,6 +124,17 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::team_retry,
         commands::team_dismiss,
         commands::team_restore_recovery_copy,
+        commands::preview_diagnostics,
+        commands::get_health,
+        commands::run_health_check,
+        commands::get_resources,
+        commands::check_launch,
+        commands::selection_summary,
+        commands::get_client_overview,
+        commands::select_client_download_directory,
+        commands::get_extensions,
+        commands::rescan_extensions,
+        commands::review_extension,
     ]
 }
 
@@ -295,6 +308,8 @@ pub fn run() {
             // Shared sessions this computer held resume: heartbeats, handoffs, lost connections (milestone 08).
             state.resume_team_sessions();
             state.start_team_worker();
+            // The health page's server card starts from a fresh check (milestone 09).
+            state.check_server_later();
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.
             let monitor = state.clone();

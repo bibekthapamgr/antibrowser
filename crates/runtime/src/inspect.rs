@@ -16,6 +16,8 @@ pub struct ProcRecord {
     pub start_time: u64,
     pub exe: Option<PathBuf>,
     pub args: Vec<String>,
+    /// Resident memory (RSS; the working set on Windows). Shared pages count in every process that maps them.
+    pub memory_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +180,7 @@ impl ProcessInspector for SystemInspector {
             ProcessesToUpdate::All,
             true,
             ProcessRefreshKind::nothing()
+                .with_memory()
                 .with_exe(UpdateKind::OnlyIfNotSet)
                 .with_cmd(UpdateKind::OnlyIfNotSet),
         );
@@ -195,6 +198,7 @@ impl ProcessInspector for SystemInspector {
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect(),
+                memory_bytes: p.memory(),
             })
             .collect()
     }

@@ -1,0 +1,215 @@
+{
+  "comment": "Shared test vectors for the extension policy (ADR-0016): packages/contracts/src/agency.test.ts and crates/runtime/src/extensions.rs both run them, so the server, the UI and the desktop judge alike.",
+  "versions": [
+    { "version": "1.2.3", "range": null, "in": true },
+    { "version": "1.2.3", "range": "1.2.3", "in": true },
+    { "version": "1.2.3.0", "range": "1.2.3", "in": true },
+    { "version": "1.2.4", "range": "1.2.3", "in": false },
+    { "version": "1.2.9", "range": "1.2.*", "in": true },
+    { "version": "1.3.0", "range": "1.2.*", "in": false },
+    { "version": "1.2", "range": "1.2.*", "in": true },
+    { "version": "1.9", "range": ">=1.2 <2", "in": true },
+    { "version": "2.0", "range": ">=1.2 <2", "in": false },
+    { "version": "1.1.99", "range": ">=1.2 <2", "in": false },
+    { "version": "10.0", "range": ">9", "in": true },
+    { "version": "9.0.0.1", "range": ">9", "in": true },
+    { "version": "9", "range": "<=9.0.0.0", "in": true },
+    { "version": "3", "range": "=3", "in": true },
+    { "version": "1.2.3-beta", "range": ">=1", "in": false },
+    { "version": "1.2", "range": "latest", "in": false },
+    { "version": "1.2.3.4.5", "range": null, "in": true },
+    { "version": "1.2.3.4.5", "range": ">=1", "in": false },
+    { "version": "", "range": ">=0", "in": false },
+    { "version": "4.0", "range": "  >=4   <5 ", "in": true },
+    { "version": "4.0", "range": ">=1 >=2 >=3 >=4 <5", "in": false }
+  ],
+  "ranges": [
+    { "range": "1", "valid": true },
+    { "range": "1.2.3.4", "valid": true },
+    { "range": "1.2.*", "valid": true },
+    { "range": ">=1.2 <2", "valid": true },
+    { "range": "=3", "valid": true },
+    { "range": "<=4.1", "valid": true },
+    { "range": "", "valid": false },
+    { "range": "*", "valid": false },
+    { "range": "1.2.3.4.5", "valid": false },
+    { "range": ">= 1", "valid": false },
+    { "range": "~1.2", "valid": false },
+    { "range": "^1", "valid": false },
+    { "range": "latest", "valid": false },
+    { "range": "1 2 3 4 5", "valid": false },
+    { "range": "1.2.3.*", "valid": true },
+    { "range": "1.2.3.4.*", "valid": false }
+  ],
+  "sensitive": [
+    { "permission": "<all_urls>", "sensitive": true },
+    { "permission": "*://*/*", "sensitive": true },
+    { "permission": "https://*/*", "sensitive": true },
+    { "permission": "http://*/*", "sensitive": true },
+    { "permission": "https://*/", "sensitive": true },
+    { "permission": "file://*/*", "sensitive": true },
+    { "permission": "cookies", "sensitive": true },
+    { "permission": "webRequest", "sensitive": true },
+    { "permission": "debugger", "sensitive": true },
+    { "permission": "nativeMessaging", "sensitive": true },
+    { "permission": "storage", "sensitive": false },
+    { "permission": "alarms", "sensitive": false },
+    { "permission": "https://mail.example.com/*", "sensitive": false },
+    { "permission": "https://*.example.com/*", "sensitive": false },
+    { "permission": "notifications", "sensitive": false },
+    { "permission": "Cookies", "sensitive": false }
+  ],
+  "judgements": [
+    {
+      "name": "approved",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Grammar helper",
+          "decision": "allowed",
+          "source": "web_store",
+          "approved_version_range": ">=4 <5",
+          "permissions": ["activeTab"]
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "4.2.0",
+        "source": "web_store",
+        "permissions": ["storage", "activeTab"]
+      },
+      "verdict": { "status": "approved" }
+    },
+    {
+      "name": "not listed",
+      "rules": [],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "4.2.0",
+        "source": "web_store",
+        "permissions": []
+      },
+      "verdict": { "status": "not_listed" }
+    },
+    {
+      "name": "blocked whatever its version",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "",
+          "decision": "blocked",
+          "source": "any",
+          "approved_version_range": null,
+          "permissions": []
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "1",
+        "source": "unpacked",
+        "permissions": []
+      },
+      "verdict": { "status": "blocked" }
+    },
+    {
+      "name": "web store only",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "",
+          "decision": "allowed",
+          "source": "web_store",
+          "approved_version_range": null,
+          "permissions": []
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "1",
+        "source": "unpacked",
+        "permissions": []
+      },
+      "verdict": { "status": "source_not_allowed" }
+    },
+    {
+      "name": "any source",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "",
+          "decision": "allowed",
+          "source": "any",
+          "approved_version_range": null,
+          "permissions": []
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "1",
+        "source": "policy",
+        "permissions": ["storage"]
+      },
+      "verdict": { "status": "approved" }
+    },
+    {
+      "name": "update outside the approved versions",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "",
+          "decision": "allowed",
+          "source": "web_store",
+          "approved_version_range": ">=4 <5",
+          "permissions": []
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "5.0.0",
+        "source": "web_store",
+        "permissions": []
+      },
+      "verdict": { "status": "version_not_approved", "version": "5.0.0" }
+    },
+    {
+      "name": "update asking for more sensitive permissions",
+      "rules": [
+        {
+          "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "",
+          "decision": "allowed",
+          "source": "web_store",
+          "approved_version_range": ">=4 <5",
+          "permissions": ["activeTab"]
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "4.3",
+        "source": "web_store",
+        "permissions": ["storage", "activeTab", "<all_urls>", "alarms", "cookies"]
+      },
+      "verdict": { "status": "permissions_need_review", "permissions": ["<all_urls>", "cookies"] }
+    },
+    {
+      "name": "another extension's rule does not apply",
+      "rules": [
+        {
+          "extension_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "",
+          "decision": "allowed",
+          "source": "any",
+          "approved_version_range": null,
+          "permissions": []
+        }
+      ],
+      "item": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "version": "1",
+        "source": "web_store",
+        "permissions": []
+      },
+      "verdict": { "status": "not_listed" }
+    }
+  ]
+}

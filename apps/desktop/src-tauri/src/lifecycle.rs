@@ -155,6 +155,8 @@ impl AppState {
             Some(u) => vec![u.to_owned()],
             None => profile.start_urls.clone(),
         };
+        // Milestone 09: the installed extensions, judged by the organization's policy (cached copy).
+        let gate = self.extension_gate(&store, profile_id);
         // The proxy route and its gateway (dropped, and so stopped, on any early return below).
         let route = self.route_for(&store, &profile)?;
         let gateway = route
@@ -179,6 +181,7 @@ impl AppState {
                     gateway_port: g.port(),
                 }),
                 environment: Some(&profile.privacy),
+                extensions_disabled: gate.disable,
             },
         )?;
         // 5.
@@ -265,6 +268,10 @@ impl AppState {
                 StartConflict::AlreadyActive { .. } => ipc::PROFILE_BUSY,
             })?;
         let _ = store.set_run_state(profile_id, RunState::Starting, Some(None));
+        self.announce_gate(&store, profile_id, &gate);
+        if profile.linked {
+            self.report_extensions_later(profile_id);
+        }
         self.sync_profile_started(&store, profile_id);
         self.track_network(&store, &profile, gateway, route.as_ref());
         self.notify_running_changed();
@@ -322,10 +329,7 @@ impl AppState {
                 }
             }
         }
-        let settings_download = store
-            .get_setting(pb_storage::settings::DOWNLOAD_DIR)
-            .ok()
-            .and_then(|v| v.value.as_str().map(str::to_owned));
+        let download_dir = self.download_dir_for(store, &profile);
         let display_name = match &profile.client_name {
             Some(c) => format!("{} · {c}", profile.name),
             None => profile.name.clone(),
@@ -335,11 +339,12 @@ impl AppState {
         let browser_prefs = BrowserPrefs {
             display_name,
             colour: profile.client_colour.clone(),
-            download_dir: profile
-                .download_dir
-                .clone()
-                .or(settings_download)
-                .map(Into::into),
+            // A client's picture in the toolbar: tells clients apart without relying on colour (milestone 09).
+            avatar_index: profile
+                .client_id
+                .as_ref()
+                .map(|c| prefs::client_avatar_index(c.as_str())),
+            download_dir: download_dir.map(Into::into),
             camera: profile.camera,
             microphone: profile.microphone,
             location: profile.location,
@@ -432,6 +437,8 @@ impl AppState {
                     }
                     // Milestone 08: a shared session hands off (or waits for a decision after an unclean exit).
                     self.team_after_exit(&f.profile, f.outcome);
+                    // Milestone 09: the browser may have installed or updated extensions while it ran.
+                    self.extensions_after_exit(&f.profile);
                 }
             }
         }
@@ -446,6 +453,10 @@ impl AppState {
             self.proxy_housekeeping(&store);
         }
         self.poll_networks(&store);
+        // Open-profile reminders (milestone 09), about once a minute.
+        if n % 40 == 5 {
+            self.open_reminders(&store);
+        }
         if n.is_multiple_of(20) && self.supervisor.running_count() > 0 {
             let free = free_space(&self.paths.data).unwrap_or(u64::MAX);
             if free < WARN_FREE_BYTES {

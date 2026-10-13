@@ -177,6 +177,9 @@ export const SettingValue = Type.Object({
     'workspace.active',
     'profiles.trash_retention_days',
     'proxies.allow_private_addresses',
+    'downloads.per_client_folders',
+    'profiles.open_reminder_hours',
+    'resources.memory_warning',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -382,6 +385,8 @@ export const Client = Type.Object({
   archived_at: Nullable(Type.String()),
   version: Type.Integer({ minimum: 1 }),
   created_at: Type.String(),
+  /** Where this client's profiles download to (milestone 09); null: the usual folder. */
+  download_dir: Type.Optional(Nullable(Type.String())),
 });
 export type Client = Static<typeof Client>;
 export const ClientView = Type.Intersect([Client, Type.Object({ profiles: Type.Integer({ minimum: 0 }) })]);
@@ -837,6 +842,244 @@ export const TeamStatus = Type.Object({
 export type TeamStatus = Static<typeof TeamStatus>;
 
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
+// ---------------------------------------------------------------- milestone 09: agency workspace
+const HEALTH_STATUSES = ['ok', 'warning', 'problem', 'unknown', 'off'] as const;
+export const HealthCard = Type.Object({
+  id: Type.Enum([
+    'connectivity',
+    'proxies',
+    'browser',
+    'backups',
+    'conflicts',
+    'disk',
+    'locks',
+    'extensions',
+    'memory',
+  ]),
+  title: Type.String(),
+  status: Type.Enum(HEALTH_STATUSES),
+  summary: Type.String(),
+  /** When it was checked (null: never). Cards about this computer's own state are checked when built. */
+  checked_at: Nullable(Type.String()),
+  /** After this the result no longer describes the present (shown as unknown). */
+  valid_until: Nullable(Type.String()),
+  action: Nullable(
+    Type.Enum([
+      'retry_server',
+      'check_proxies',
+      'rescan_extensions',
+      'open_extensions',
+      'open_backups',
+      'open_runtime',
+      'open_sessions',
+      'open_resources',
+    ]),
+  ),
+  items: Type.Array(
+    Type.Object({
+      label: Type.String(),
+      status: Type.Enum(HEALTH_STATUSES),
+      detail: Type.String(),
+      checked_at: Nullable(Type.String()),
+    }),
+  ),
+});
+export type HealthCard = Static<typeof HealthCard>;
+export const HealthView = Type.Object({ generated_at: Type.String(), cards: Type.Array(HealthCard) });
+export type HealthView = Static<typeof HealthView>;
+
+const MemoryEstimate = Type.Object({
+  per_profile_bytes: Type.Integer({ minimum: 0 }),
+  /** measured: the median of this computer's own measurements; default: nothing measured yet. */
+  source: Type.Enum(['measured', 'default']),
+  samples: Type.Integer({ minimum: 0 }),
+});
+export const ResourcesView = Type.Object({
+  measured_at: Type.String(),
+  /** The manager (and its own helper processes), never counted with the browsers. */
+  manager: Type.Object({ processes: Type.Integer(), memory_bytes: Type.Integer() }),
+  /** Browser trees this app started or re-attached; other browsers on the computer are not counted. */
+  profiles: Type.Array(
+    Type.Object({
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      name: Type.String(),
+      client_name: Nullable(Type.String()),
+      processes: Type.Integer({ minimum: 0 }),
+      memory_bytes: Type.Integer({ minimum: 0 }),
+      open_seconds: Type.Integer({ minimum: 0 }),
+    }),
+  ),
+  browsers_memory_bytes: Type.Integer({ minimum: 0 }),
+  total_memory_bytes: Type.Integer({ minimum: 0 }),
+  available_memory_bytes: Type.Integer({ minimum: 0 }),
+  estimate: MemoryEstimate,
+});
+export type ResourcesView = Static<typeof ResourcesView>;
+
+export const ExtensionVerdict = Type.Union([
+  Type.Object({ status: Type.Literal('approved') }),
+  Type.Object({ status: Type.Literal('blocked') }),
+  Type.Object({ status: Type.Literal('not_listed') }),
+  Type.Object({ status: Type.Literal('source_not_allowed') }),
+  Type.Object({ status: Type.Literal('version_not_approved'), version: Type.String() }),
+  Type.Object({ status: Type.Literal('permissions_need_review'), permissions: Type.Array(Type.String()) }),
+]);
+export type ExtensionVerdict = Static<typeof ExtensionVerdict>;
+const NotApproved = Type.Object({ id: Type.String(), name: Type.String(), verdict: ExtensionVerdict });
+
+export const LaunchCheck = Type.Object({
+  to_open: Type.Integer({ minimum: 0 }),
+  already_open: Type.Integer({ minimum: 0 }),
+  memory: Type.Object({
+    warn: Type.Boolean(),
+    available_bytes: Type.Integer({ minimum: 0 }),
+    needed_bytes: Type.Integer({ minimum: 0 }),
+    reserve_bytes: Type.Integer({ minimum: 0 }),
+    fits_about: Type.Integer({ minimum: 0 }),
+    estimate: MemoryEstimate,
+  }),
+  /** Profiles whose extensions are not all approved: `disable` (enforce) opens them with extensions off. */
+  extensions: Type.Array(
+    Type.Object({
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      name: Type.String(),
+      mode: Type.Enum(['warn', 'enforce']),
+      disable: Type.Boolean(),
+      items: Type.Array(NotApproved),
+    }),
+  ),
+});
+export type LaunchCheck = Static<typeof LaunchCheck>;
+
+export const SelectionSummary = Type.Object({
+  total: Type.Integer({ minimum: 0 }),
+  running: Type.Integer({ minimum: 0 }),
+  shared: Type.Integer({ minimum: 0 }),
+  /** Ids that no longer exist. */
+  missing: Type.Integer({ minimum: 0 }),
+  clients: Type.Array(
+    Type.Object({
+      client_id: Nullable(Type.String({ pattern: ClientIdPattern })),
+      client_name: Nullable(Type.String()),
+      count: Type.Integer({ minimum: 1 }),
+      /** Up to five profile names. */
+      names: Type.Array(Type.String(), { maxItems: 5 }),
+    }),
+  ),
+});
+export type SelectionSummary = Static<typeof SelectionSummary>;
+
+export const ClientOverview = Type.Object({
+  client: Client,
+  profiles: Type.Object({
+    total: Type.Integer({ minimum: 0 }),
+    running: Type.Integer({ minimum: 0 }),
+    never_opened: Type.Integer({ minimum: 0 }),
+    crashed: Type.Integer({ minimum: 0 }),
+    shared: Type.Integer({ minimum: 0 }),
+    archived: Type.Integer({ minimum: 0 }),
+    items: Type.Array(
+      Type.Object({
+        id: Type.String({ pattern: ProfileIdPattern }),
+        name: Type.String(),
+        state: Type.String(),
+        last_started_at: Nullable(Type.String()),
+        last_backup_at: Nullable(Type.String()),
+        shared: Type.Boolean(),
+        running: Type.Boolean(),
+        archived: Type.Boolean(),
+      }),
+      { maxItems: 50 },
+    ),
+    more: Type.Boolean(),
+  }),
+  /** What the app did with this client's profiles (never website activity). */
+  activity: Type.Array(
+    Type.Object({
+      at: Type.String(),
+      profile_id: Nullable(Type.String()),
+      profile_name: Type.String(),
+      action: Type.String(),
+      outcome: Type.String(),
+    }),
+  ),
+  downloads: Type.Object({
+    client_folder: Nullable(Type.String()),
+    per_client_folders: Type.Boolean(),
+    /** Where downloads go when no profile has its own folder (null: the browser's default). */
+    effective: Nullable(Type.String()),
+    folder_name: Type.String(),
+  }),
+});
+export type ClientOverview = Static<typeof ClientOverview>;
+
+export const ExtensionsView = Type.Object({
+  profiles: Type.Array(
+    Type.Object({
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      name: Type.String(),
+      client_name: Nullable(Type.String()),
+      org_id: Nullable(Type.String({ pattern: OrgIdPattern })),
+      /** local: not an organization profile; unknown: the organization's policy was not downloaded yet. */
+      mode: Type.Enum(['local', 'unknown', 'off', 'warn', 'enforce']),
+      scan_status: Nullable(Type.Enum(['ok', 'unreadable'])),
+      scanned_at: Nullable(Type.String()),
+      reported_at: Nullable(Type.String()),
+      will_disable: Type.Boolean(),
+      needs_attention: Type.Integer({ minimum: 0 }),
+      extensions: Type.Array(
+        Type.Object({
+          id: Type.String({ pattern: '^[a-p]{32}$' }),
+          name: Type.String(),
+          version: Type.String(),
+          previous_version: Nullable(Type.String()),
+          source: Type.Enum(['web_store', 'policy', 'external', 'unpacked', 'other']),
+          enabled: Type.Boolean(),
+          permissions: Type.Array(Type.String()),
+          sensitive: Type.Array(Type.String()),
+          /** Sensitive permissions the last update added (waiting for review). */
+          added_sensitive: Type.Array(Type.String()),
+          changed_at: Type.String(),
+          verdict: Nullable(ExtensionVerdict),
+        }),
+      ),
+    }),
+  ),
+  policies: Type.Array(
+    Type.Object({
+      org_id: Type.String({ pattern: OrgIdPattern }),
+      mode: Type.Enum(['off', 'warn', 'enforce']),
+      version: Type.Integer({ minimum: 1 }),
+      rules: Type.Integer({ minimum: 0 }),
+      fetched_at: Type.String(),
+    }),
+  ),
+});
+export type ExtensionsView = Static<typeof ExtensionsView>;
+
+export const DiagnosticsPreview = Type.Object({
+  preview_id: Type.String({ maxLength: 40 }),
+  /** Exactly what is saved. */
+  text: Type.String(),
+  bytes: Type.Integer({ minimum: 0 }),
+  limit_bytes: Type.Integer({ minimum: 0 }),
+  /** The longest lists were shortened to stay under the limit. */
+  truncated: Type.Boolean(),
+  redactions: Type.Object({
+    addresses: Type.Integer({ minimum: 0 }),
+    emails: Type.Integer({ minimum: 0 }),
+    ip_addresses: Type.Integer({ minimum: 0 }),
+    paths: Type.Integer({ minimum: 0 }),
+    user_names: Type.Integer({ minimum: 0 }),
+    secrets: Type.Integer({ minimum: 0 }),
+    tokens: Type.Integer({ minimum: 0 }),
+  }),
+  expires_in_seconds: Type.Integer({ minimum: 0 }),
+});
+export type DiagnosticsPreview = Static<typeof DiagnosticsPreview>;
+
+const ProfileIdsArg = Type.Object({ profileIds: ProfileIds });
+
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
   create_workspace: {
@@ -928,7 +1171,11 @@ export const COMMANDS = {
     result: SettingValue,
   },
   get_diagnostics: { args: Type.Object({}), result: Type.Record(Type.String(), Type.Unknown()) },
-  export_diagnostics: { args: Type.Object({}), result: ChosenPath },
+  /** Saves a previewed report (exactly the previewed text) where the person chooses. */
+  export_diagnostics: {
+    args: Type.Object({ previewId: Type.String({ maxLength: 40 }) }),
+    result: ChosenPath,
+  },
   report_ui_ready: { args: Type.Object({}), result: Type.Union([Type.Number(), Type.Null()]) },
   recovery_action: {
     args: Type.Object({
@@ -1187,6 +1434,45 @@ export const COMMANDS = {
     }),
     result: ProfileView,
   },
+  // Milestone 09: agency workspace, extensions, health, resources and diagnostics.
+  preview_diagnostics: { args: Type.Object({}), result: DiagnosticsPreview },
+  get_health: { args: Type.Object({}), result: HealthView },
+  run_health_check: {
+    args: Type.Object({ check: Type.Enum(['server', 'proxies', 'extensions']) }),
+    result: HealthView,
+  },
+  get_resources: { args: Type.Object({}), result: ResourcesView },
+  check_launch: { args: ProfileIdsArg, result: LaunchCheck },
+  selection_summary: { args: ProfileIdsArg, result: SelectionSummary },
+  get_client_overview: {
+    args: Type.Object({ clientId: Type.String({ pattern: ClientIdPattern }) }),
+    result: ClientOverview,
+  },
+  /** Native folder picker for a client's downloads (`clear`: back to the usual folder). Applies at the next open. */
+  select_client_download_directory: {
+    args: Type.Object({
+      clientId: Type.String({ pattern: ClientIdPattern }),
+      clear: Type.Optional(Type.Boolean()),
+    }),
+    result: ChosenPath,
+  },
+  get_extensions: {
+    args: Type.Object({ profileId: Type.Optional(Type.String({ pattern: ProfileIdPattern })) }),
+    result: ExtensionsView,
+  },
+  /** Reads stopped profiles' extensions again and downloads the organizations' policies. */
+  rescan_extensions: {
+    args: Type.Object({ profileId: Type.Optional(Type.String({ pattern: ProfileIdPattern })) }),
+    result: ExtensionsView,
+  },
+  /** Local profiles: the person reviewed the sensitive permissions an update added. */
+  review_extension: {
+    args: Type.Object({
+      profileId: Type.String({ pattern: ProfileIdPattern }),
+      extensionId: Type.String({ pattern: '^[a-p]{32}$' }),
+    }),
+    result: ExtensionsView,
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -1249,6 +1535,23 @@ export const EVENTS = {
       profile_id: Type.Optional(Type.String({ pattern: ProfileIdPattern })),
       expires_at: Nullable(Type.String()),
       days_left: Type.Optional(Nullable(Type.Integer())),
+    }),
+    // Milestone 09.
+    Type.Object({
+      code: Type.Union([Type.Literal('EXTENSIONS_DISABLED'), Type.Literal('EXTENSIONS_NOT_APPROVED')]),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      extensions: Type.Array(NotApproved),
+    }),
+    Type.Object({
+      code: Type.Literal('EXTENSION_PERMISSIONS_ADDED'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      extension_id: Type.String(),
+      permissions: Type.Array(Type.String()),
+    }),
+    Type.Object({
+      code: Type.Literal('OPEN_REMINDER'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      hours: Type.Integer(),
     }),
   ]),
 } satisfies Record<string, TSchema>;

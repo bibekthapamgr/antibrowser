@@ -583,15 +583,22 @@ pub fn get_diagnostics<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<Val
     Ok(state.diagnostics())
 }
 
-/// Saves a scrubbed diagnostics report to a location the user picks in the native save dialog.
+/// Saves a previewed diagnostics report (exactly the text the person saw) where they choose in the save dialog.
 #[tauri::command]
 pub async fn export_diagnostics<Rt: Runtime>(
     app: AppHandle<Rt>,
     webview: Webview<Rt>,
+    preview_id: String,
 ) -> R<ChosenPath> {
     caller(&webview)?;
+    if preview_id.len() > 40 {
+        return Err(ipc::INVALID_ARGUMENT);
+    }
     let state = app.state::<Arc<AppState>>().inner().clone();
-    let report = serde_json::to_vec_pretty(&state.diagnostics()).map_err(|_| ipc::INTERNAL)?;
+    // Fail before the dialog if the preview is gone.
+    if state.agency.previews.get(&preview_id).is_none() {
+        return Err(ipc::PREVIEW_EXPIRED);
+    }
     let picker = app.clone();
     let target = tauri::async_runtime::spawn_blocking(move || {
         picker
@@ -605,10 +612,170 @@ pub async fn export_diagnostics<Rt: Runtime>(
     let Some(path) = target.and_then(|p| p.into_path().ok()) else {
         return Ok(ChosenPath { path: None });
     };
-    std::fs::write(&path, report).map_err(|_| ipc::INVALID_DIRECTORY)?;
+    state.save_diagnostics(&preview_id, &path)?;
     Ok(ChosenPath {
         path: Some(crate::recovery::scrub(&path.to_string_lossy())),
     })
+}
+
+/// Builds the diagnostics report, removes personal and secret data and keeps it for 10 minutes for saving.
+#[tauri::command]
+pub fn preview_diagnostics<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+) -> R<crate::diagnostics::Preview> {
+    caller(&webview)?;
+    state.preview_diagnostics()
+}
+
+// ---------------------------------------------------------------------------------------------- milestone 09
+#[tauri::command]
+pub fn get_health<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<crate::agency::HealthView> {
+    caller(&webview)?;
+    state.health()
+}
+
+/// Runs a check again: `server` (the organization server and sign-in), `proxies` (every proxy of the workspace,
+/// at most 20) or `extensions` (rescan stopped profiles, download the policies).
+#[tauri::command]
+pub async fn run_health_check<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    check: String,
+) -> R<crate::agency::HealthView> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    match check.as_str() {
+        "server" => {
+            let s = state.clone();
+            tauri::async_runtime::spawn_blocking(move || s.check_server())
+                .await
+                .map_err(|_| ipc::INTERNAL)?;
+        }
+        "proxies" => {
+            let store = state.store()?;
+            let proxies = match state.active_workspace(&store)? {
+                Some(ws) => store.list_proxies(&ws)?,
+                None => vec![],
+            };
+            for px in proxies.into_iter().take(20) {
+                let _ = state.clone().test_proxy(px.id).await;
+            }
+        }
+        "extensions" => {
+            let s = state.clone();
+            tauri::async_runtime::spawn_blocking(move || s.rescan_extensions(None))
+                .await
+                .map_err(|_| ipc::INTERNAL)??;
+        }
+        _ => return Err(ipc::INVALID_ARGUMENT),
+    }
+    state.health()
+}
+
+#[tauri::command]
+pub fn get_resources<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+) -> R<crate::agency::ResourcesView> {
+    caller(&webview)?;
+    state.resources()
+}
+
+/// Before opening profiles: free memory against this computer's measured use, and extensions the organization's
+/// policy will turn off or has not approved.
+#[tauri::command]
+pub fn check_launch<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_ids: Vec<ProfileId>,
+) -> R<crate::agency::LaunchCheck> {
+    caller(&webview)?;
+    state.launch_check(&profile_ids)
+}
+
+/// Client names, counts and running/shared state of a selection, for a bulk action's confirmation.
+#[tauri::command]
+pub fn selection_summary<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_ids: Vec<ProfileId>,
+) -> R<crate::agency::SelectionSummary> {
+    caller(&webview)?;
+    state.selection_summary(&profile_ids)
+}
+
+#[tauri::command]
+pub fn get_client_overview<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    client_id: ClientId,
+) -> R<Value> {
+    caller(&webview)?;
+    state.client_overview(&client_id)
+}
+
+/// Native folder picker for a client's downloads (or `clear`: back to the usual folder). Applies the next time each
+/// profile opens; files already downloaded and downloads in progress stay where they are.
+#[tauri::command]
+pub async fn select_client_download_directory<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    client_id: ClientId,
+    clear: Option<bool>,
+) -> R<ChosenPath> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    if clear == Some(true) {
+        state.set_client_download_directory(&client_id, None)?;
+        return Ok(ChosenPath { path: None });
+    }
+    let picker = app.clone();
+    let chosen =
+        tauri::async_runtime::spawn_blocking(move || picker.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|_| ipc::INTERNAL)?;
+    let Some(chosen) = chosen.and_then(|p| p.into_path().ok()) else {
+        return Ok(ChosenPath { path: None });
+    };
+    Ok(ChosenPath {
+        path: state.set_client_download_directory(&client_id, Some(&chosen))?,
+    })
+}
+
+#[tauri::command]
+pub fn get_extensions<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: Option<ProfileId>,
+) -> R<crate::agency::ExtensionsView> {
+    caller(&webview)?;
+    state.extensions_view(profile_id.as_ref())
+}
+
+#[tauri::command]
+pub async fn rescan_extensions<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    profile_id: Option<ProfileId>,
+) -> R<crate::agency::ExtensionsView> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.rescan_extensions(profile_id.as_ref()))
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+/// The person reviewed what an extension update added (local profiles).
+#[tauri::command]
+pub fn review_extension<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    extension_id: String,
+) -> R<crate::agency::ExtensionsView> {
+    caller(&webview)?;
+    state.review_extension(&profile_id, &extension_id)
 }
 
 #[tauri::command]
