@@ -1,6 +1,7 @@
 //! The API requests the manager UI may ask the shell to make for it (with the session's access token, which the UI
-//! never sees). Everything else is refused before any network access: sign-in, token, lease, snapshot and import
-//! endpoints are only called by the shell's own code.
+//! never sees). Everything else is refused before any network access: sign-in, token, lease, snapshot upload,
+//! restore-plan and import endpoints are only called by the shell's own code (a data key or signed URL never reaches
+//! the window). Milestone 07 adds read-only backup history and the backup policy, trash and key administration.
 
 use crate::http::Method;
 
@@ -57,6 +58,14 @@ const RULES: &[Rule] = &[
     rule(Method::Patch, "/v1/orgs/{org}/profiles/{prf}"),
     rule(Method::Delete, "/v1/orgs/{org}/profiles/{prf}"),
     rule(Method::Get, "/v1/orgs/{org}/audit-events"),
+    // Milestone 07: version history (metadata only), policy, trash and key versions.
+    rule(Method::Get, "/v1/orgs/{org}/profiles/{prf}/snapshots"),
+    rule(Method::Get, "/v1/orgs/{org}/backup-policy"),
+    rule(Method::Patch, "/v1/orgs/{org}/backup-policy"),
+    rule(Method::Get, "/v1/orgs/{org}/trash"),
+    rule(Method::Post, "/v1/orgs/{org}/profiles/{prf}/undelete"),
+    rule(Method::Get, "/v1/orgs/{org}/keys"),
+    rule(Method::Post, "/v1/orgs/{org}/keys/rotate"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -212,6 +221,14 @@ mod tests {
             format!("/v1/orgs/{ORG}/profiles?q=shop+%26+ads&limit=50")
         );
         assert_eq!(ok.cache_key.as_deref(), Some(ok.path_and_query.as_str()));
+        let history = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/profiles/{PRF}/snapshots"),
+            &q(&[("limit", "20")]),
+            None,
+        );
+        assert!(history.is_ok());
+        assert!(check("POST", &format!("/v1/orgs/{ORG}/keys/rotate"), &[], None).is_ok());
 
         let patch = check(
             "PATCH",
@@ -227,6 +244,18 @@ mod tests {
         for (method, path) in [
             ("POST", format!("/v1/orgs/{ORG}/profiles/{PRF}/lease")),
             ("POST", format!("/v1/orgs/{ORG}/profiles/{PRF}/snapshots")),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/snapshots/init"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/restore-plans"),
+            ),
+            (
+                "GET",
+                format!("/v1/orgs/{ORG}/sync-operations/syn_01M4T7R0Q4FN6G53AWPJQ3CBMK"),
+            ),
             ("POST", format!("/v1/orgs/{ORG}/local-import")),
             ("POST", "/v1/auth/token".into()),
             ("POST", "/v1/devices".into()),

@@ -17,6 +17,7 @@ pub mod network;
 pub mod query;
 pub mod runs;
 pub mod settings;
+pub mod sync;
 
 use migrations::{MigrationFailure, SCHEMA_VERSION};
 use pb_runtime::{

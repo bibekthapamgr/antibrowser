@@ -95,6 +95,10 @@ impl AppState {
             Some(Err(_)) => return Err(ipc::PROFILE_STOPPING),
             None => {}
         }
+        // A restore from an organization backup replaces the folder: the profile opens when it is finished.
+        if self.sync_restoring(&store, profile_id) {
+            return Err(ipc::PROFILE_RESTORING);
+        }
         // 2. A routine backup never blocks the user: cancel it and wait briefly for it to let go.
         if self.supervisor.is_busy(profile_id) && !self.cancel_backup(profile_id) {
             return Err(ipc::PROFILE_BUSY);
@@ -173,6 +177,7 @@ impl AppState {
                 None,
             )?;
             drop(gateway);
+            self.sync_profile_started(&store, profile_id);
             self.restore_network(&store, profile_id);
             let op = self
                 .ops
@@ -226,6 +231,7 @@ impl AppState {
                 StartConflict::AlreadyActive { .. } => ipc::PROFILE_BUSY,
             })?;
         let _ = store.set_run_state(profile_id, RunState::Starting, Some(None));
+        self.sync_profile_started(&store, profile_id);
         self.track_network(&store, &profile, gateway, route.as_ref());
         self.notify_running_changed();
 
@@ -388,6 +394,7 @@ impl AppState {
                     }
                     if f.outcome == RunOutcome::Clean {
                         self.maybe_backup(&f.profile, f.runtime_version.clone(), false);
+                        self.sync_after_clean_exit(&f.profile);
                     }
                 }
             }
@@ -736,6 +743,8 @@ impl AppState {
             }
             Err(_) => self.supervisor.clear_busy(profile_id),
         }
+        // An organization backup waiting for this profile can seal it now.
+        self.sync_wake();
     }
 
     /// True while a backup (routine or requested) of `profile_id` is running.

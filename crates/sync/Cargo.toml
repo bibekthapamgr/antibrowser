@@ -1,0 +1,27 @@
+[package]
+name = "pb-sync"
+version = "0.1.0"
+description = "Encrypted snapshot upload and restore engine (milestone 07): resumable, lease-fenced, conflict-safe"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The in-memory server used by this crate's tests and by the desktop's tests.
+testing = []
+
+[dependencies]
+pb-seal.workspace = true
+pb-cloud.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+//! Encrypted snapshot synchronization (milestone 07, ADR-0014): the desktop side of
+//! `init → upload parts → commit → server verification`, and of `restore plan → download → verify → open`.
+//!
+//! - [`api`]: what the engine needs from the API and from object storage (traits; data keys stay in memory).
+//! - [`job`]: persistent, secret-free job records, saved after every step.
+//! - [`engine`]: the resumable state machines.
+//! - [`portability`]: what a restored snapshot keeps on this computer (supported / sign-in required / unsupported).
+//! - `fake` (feature `testing`): an in-memory server with the real rules and fault injection.
+
+pub mod api;
+pub mod engine;
+pub mod job;
+pub mod portability;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod fake;
+
+pub use api::{ApiError, ObjectError, Objects, SnapshotInfo, SyncApi};
+pub use engine::{Engine, Opened, Outcome, Poll, RestoreChecks, Source, SyncError, new_upload};
+pub use job::{
+    Job, JobStore, MemoryJobs, RestoreJob, RestoreState, RestoreTarget, UploadJob, UploadState,
+};
+
+#[cfg(test)]
+mod tests;

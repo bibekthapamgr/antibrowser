@@ -3075,7 +3075,9 @@ dependencies = [
  "pb-import",
  "pb-netproxy",
  "pb-runtime",
+ "pb-seal",
  "pb-storage",
+ "pb-sync",
  "pb-update",
  "rusqlite",
  "serde",
@@ -3127,6 +3129,8 @@ name = "pb-runtime"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "hex",
+ "pb-seal",
  "serde",
  "serde_json",
  "sysinfo",
@@ -3165,6 +3169,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "unicode-normalization",
+]
+
+[[package]]
+name = "pb-sync"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hex",
+ "pb-cloud",
+ "pb-seal",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

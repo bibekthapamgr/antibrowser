@@ -52,6 +52,14 @@ struct Mock {
 }
 
 const DEVICE: &str = "dev_01J9ZSEED0D1D1000000000000";
+
+/// Keychain entries of the session (the device's local-backup key, milestone 07, is not part of it).
+fn session_entries(mem: &MemoryStore) -> Vec<String> {
+    mem.accounts()
+        .into_iter()
+        .filter(|a| a != pb_desktop_lib::sync::DEVICE_KEY_ACCOUNT)
+        .collect()
+}
 const USER: &str = "usr_01J9ZSEED0U100000000000000";
 
 /// A JWT-shaped placeholder (the mock API does not verify it), built at run time so no token-like literal is committed.
@@ -440,7 +448,7 @@ fn signs_in_with_pkce_and_keeps_only_the_refresh_token_in_the_keychain() {
 
     // Keychain: exactly the refresh token. Database and WAL: no token of any kind.
     let refresh = mock.world().refresh.clone().unwrap_or_default();
-    assert_eq!(mem.accounts(), vec!["cloud-session".to_owned()]);
+    assert_eq!(session_entries(&mem), vec!["cloud-session".to_owned()]);
     assert_eq!(
         mem.get("cloud-session").ok().flatten(),
         Some(refresh.clone())
@@ -624,7 +632,7 @@ fn an_ended_session_signs_out_without_touching_local_data() {
     let account = ok(invoke(&f, "get_account", json!({})));
     assert_eq!(account["status"], "expired");
     assert!(
-        mem.accounts().is_empty(),
+        session_entries(&mem).is_empty(),
         "the dead refresh token is gone from the keychain"
     );
     // Nothing local was removed.
@@ -651,7 +659,7 @@ fn sign_out_ends_the_session_and_forgets_cached_organization_data() {
     assert_eq!(out["status"], "signed_out");
     assert!(out["user"].is_null());
     assert_eq!(mock.requests("POST", "/v1/auth/sign-out").len(), 1);
-    assert!(mem.accounts().is_empty());
+    assert!(session_entries(&mem).is_empty());
     assert_eq!(
         code(&request(&f, "GET", "/v1/me/workspaces")).as_deref(),
         Some("CLOUD_SIGNED_OUT")
@@ -712,7 +720,7 @@ fn without_a_keychain_the_session_lives_in_memory_only() {
     let account = ok(invoke(&f, "get_account", json!({})));
     assert_eq!(account["status"], "signed_in");
     assert_eq!(account["session_saved"], false);
-    assert!(mem.accounts().is_empty());
+    assert!(session_entries(&mem).is_empty());
     let refresh = mock.world().refresh.clone().unwrap_or_default();
     assert!(!local_files(&f).contains(&refresh));
     assert_eq!(ok(request(&f, "GET", "/v1/me/workspaces"))["status"], 200);

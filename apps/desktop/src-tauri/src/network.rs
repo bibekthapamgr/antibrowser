@@ -314,6 +314,7 @@ impl AppState {
                 reason: None,
             };
         }
+        self.load_backup_key();
     }
 
     /// Replaces the trusted roots and the connectivity-check service (tests).

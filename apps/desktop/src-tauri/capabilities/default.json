@@ -66,6 +66,13 @@
     "allow-sign-out",
     "allow-cloud-request",
     "allow-org-import",
-    "allow-list-org-links"
+    "allow-list-org-links",
+    "allow-get-sync-status",
+    "allow-sync-backup-now",
+    "allow-sync-cancel",
+    "allow-sync-set-auto-backup",
+    "allow-sync-resolve-conflict",
+    "allow-sync-restore",
+    "allow-sync-restore-here"
   ]
 }

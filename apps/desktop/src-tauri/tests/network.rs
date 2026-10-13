@@ -19,6 +19,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use support::*;
 
+/// Keychain entries of proxy logins (the device's local-backup key, milestone 07, is not one of them).
+fn proxy_entries(mem: &MemoryStore) -> Vec<String> {
+    mem.accounts()
+        .into_iter()
+        .filter(|a| a != pb_desktop_lib::sync::DEVICE_KEY_ACCOUNT)
+        .collect()
+}
+
 fn ok(r: Result<Value, Value>) -> Value {
     r.unwrap_or_else(|e| panic!("{e}"))
 }
@@ -192,7 +200,7 @@ fn proxy_logins_live_only_in_the_keychain_and_never_leave_it() {
     let proxy_id = created["id"].as_str().unwrap_or_default().to_owned();
     assert_eq!(created["has_login"], json!(true));
     assert!(created.get("credential_ref").is_none());
-    let accounts = mem.accounts();
+    let accounts = proxy_entries(&mem);
     assert_eq!(accounts.len(), 1);
     assert!(accounts[0].starts_with(&format!("proxy:{proxy_id}#")));
     assign(&f, &profile_id, Some(&proxy_id), true);
@@ -235,7 +243,7 @@ fn proxy_logins_live_only_in_the_keychain_and_never_leave_it() {
                 "changes": { "login": { "username": "second", "password": "pw2" } } }),
     ));
     assert_eq!(updated["version"], json!(2));
-    let after = mem.accounts();
+    let after = proxy_entries(&mem);
     assert_eq!(after.len(), 1);
     assert_ne!(after, accounts);
     // A stale edit is refused before anything is written.
@@ -246,14 +254,14 @@ fn proxy_logins_live_only_in_the_keychain_and_never_leave_it() {
                 "changes": { "login": { "username": "third", "password": "pw3" } } }),
     );
     assert_eq!(code(&stale).as_deref(), Some("VERSION_CONFLICT"));
-    assert_eq!(mem.accounts(), after);
+    assert_eq!(proxy_entries(&mem), after);
     let removed = ok(invoke(
         &f,
         "update_proxy",
         json!({ "proxyId": proxy_id, "expectedVersion": 2, "changes": { "remove_login": true } }),
     ));
     assert_eq!(removed["has_login"], json!(false));
-    assert!(mem.accounts().is_empty());
+    assert!(proxy_entries(&mem).is_empty());
 
     // Without a working keychain a login is refused, never kept anywhere else.
     if let Ok(mut k) = f.state.keychain.write() {
@@ -273,7 +281,7 @@ fn proxy_logins_live_only_in_the_keychain_and_never_leave_it() {
         &f,
         json!({ "name": "B", "type": "socks5", "host": "socks.example.net", "port": 1080 }),
     );
-    assert!(mem.accounts().is_empty());
+    assert!(proxy_entries(&mem).is_empty());
 }
 
 #[test]
@@ -501,7 +509,7 @@ fn launch_is_refused_before_anything_starts_when_the_login_is_missing() {
     let proxy_id = local_proxy(&f, "Socks", &proxy, Some(("bob", "pw")));
     assign(&f, &profile_id, Some(&proxy_id), true);
     // The user removed the entry in the OS keychain app (or a Linux session keyring was cleared at logout).
-    for a in mem.accounts() {
+    for a in proxy_entries(&mem) {
         mem.forget(&a);
     }
     let r = invoke(&f, "launch_profile", json!({ "profileId": profile_id }));
@@ -719,9 +727,9 @@ fn assignment_is_versioned_scoped_bulk_capable_and_protects_used_proxies() {
     assert!(token.is_some());
     let dup_id = dup["id"].as_str().unwrap_or_default().to_owned();
     assign(&f, &dup_id, None, true);
-    assert_eq!(mem.accounts().len(), 1);
+    assert_eq!(proxy_entries(&mem).len(), 1);
     ok(invoke(&f, "delete_proxy", json!({ "proxyId": px })));
-    assert!(mem.accounts().is_empty());
+    assert!(proxy_entries(&mem).is_empty());
     assert_eq!(ok(invoke(&f, "list_proxies", json!({}))), json!([]));
 }
 

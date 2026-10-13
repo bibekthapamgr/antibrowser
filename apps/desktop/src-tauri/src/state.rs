@@ -108,6 +108,8 @@ pub struct AppState {
     pub(crate) expiry_warned: Mutex<Vec<(pb_runtime::ProxyId, &'static str)>>,
     /// The signed-in account and organization requests (milestone 06).
     pub(crate) cloud: crate::account::Cloud,
+    /// Encrypted backups and restores of organization profiles (milestone 07).
+    pub(crate) sync: crate::sync::SyncRuntime,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -228,10 +230,7 @@ impl AppState {
         std::fs::create_dir_all(&paths.profiles)
             .map_err(|e| format!("cannot create profiles dir: {e}"))?;
         let root = ProfilesRoot::open(&paths.profiles).map_err(|e| e.to_string())?;
-        let backups = Backups {
-            root: data_dir.join("backups"),
-            evidence: data_dir.join("evidence"),
-        };
+        let backups = Backups::new(data_dir.join("backups"), data_dir.join("evidence"));
         let insp = inspector.clone();
         let session = recovery::begin_session(&paths.data, APP_VERSION, move |pid| {
             insp.inspect(pid).is_some()
@@ -293,6 +292,7 @@ impl AppState {
             networks: Mutex::new(HashMap::new()),
             expiry_warned: Mutex::new(Vec::new()),
             cloud: crate::account::Cloud::new(signed_in),
+            sync: crate::sync::SyncRuntime::new(),
         }))
     }
 
@@ -968,6 +968,7 @@ fn tidy_profiles(root: &ProfilesRoot, backups: &Backups) {
         };
         let _ = backups.tidy(id.as_str());
         let dirs = root.dirs(&id);
+        crate::sync::tidy_restore(&dirs.root, &dirs.user_data);
         let restoring = dirs.root.join("user-data.restoring");
         if restoring.is_dir() {
             if dirs.user_data.exists() {

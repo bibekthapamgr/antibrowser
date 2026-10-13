@@ -12,6 +12,7 @@ use crate::manage::{BulkAction, BulkResult, Library, ProfilePage, Selection, Und
 use crate::network::{PrivacyOptions, PrivacyValidation, ProxyEdit, ProxyInput, ProxyView};
 use crate::operations::Started;
 use crate::state::{AppState, AppView, ProfileChanges, ProfileView, RuntimeStatus};
+use crate::sync::{ConflictChoice, SyncStatus};
 use crate::transfer::{ChosenImport, ExportFormat, ExportResult, ImportPreview, ImportSettings};
 use pb_runtime::{
     ClientId, FilterId, ImportJobId, PrivacyConfig, ProfileId, ProxyId, TagId, TemplateId,
@@ -886,4 +887,94 @@ pub fn list_org_links<Rt: Runtime>(
 ) -> R<Vec<OrgLink>> {
     caller(&webview)?;
     state.org_links(org_id.as_deref())
+}
+
+// ----------------------------------------------------------------------------- encrypted backups and sync (07)
+/// Backup state of one profile: organization link, last synchronized version, the current or last job, the local
+/// last-good copy.
+#[tauri::command]
+pub fn get_sync_status<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    state.sync_status(&profile_id)
+}
+
+/// Backs up a closed, organization-linked profile now (in the background; progress arrives as `sync` events).
+#[tauri::command]
+pub fn sync_backup_now<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    state.sync_backup_now(&profile_id)
+}
+
+#[tauri::command]
+pub async fn sync_cancel<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    profile_id: ProfileId,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || state.sync_cancel(&profile_id))
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+#[tauri::command]
+pub fn sync_set_auto_backup<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    enabled: bool,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    state.sync_set_auto(&profile_id, enabled)
+}
+
+/// `upload_mine`, `use_newer` or `open_newer_as_copy`.
+#[tauri::command]
+pub fn sync_resolve_conflict<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    choice: String,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    let choice = ConflictChoice::parse(&choice).ok_or(ipc::INVALID_ARGUMENT)?;
+    state.sync_resolve(&profile_id, choice)
+}
+
+/// Restores the newest backup (or `snapshotId`) into this profile, or `asCopy` into a new local profile.
+#[tauri::command]
+pub fn sync_restore<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    snapshot_id: Option<String>,
+    as_copy: bool,
+) -> R<SyncStatus> {
+    caller(&webview)?;
+    if snapshot_id.as_ref().is_some_and(|s| s.len() > 40) {
+        return Err(ipc::INVALID_ARGUMENT);
+    }
+    state.sync_restore(&profile_id, snapshot_id.as_deref(), as_copy)
+}
+
+/// Puts an organization profile on this computer for the first time (a new local profile, restored and linked).
+#[tauri::command]
+pub fn sync_restore_here<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    org_id: String,
+    org_profile_id: String,
+    name: String,
+) -> R<ProfileView> {
+    caller(&webview)?;
+    state.sync_restore_here(&org_id, &org_profile_id, &name)
 }

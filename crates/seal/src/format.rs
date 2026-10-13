@@ -134,6 +134,15 @@ impl SealKey {
         use base64::Engine as _;
         Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(&self.0[..]))
     }
+    /// A short public identifier of this key (16 hex characters of a domain-separated SHA-256), so a file sealed
+    /// with another key can be reported as "key not available" rather than "damaged". Reveals nothing usable about
+    /// the key itself.
+    pub fn fingerprint(&self) -> String {
+        let mut h = Sha256::new();
+        h.update(b"pb-seal-key-fingerprint-v1\0");
+        h.update(&self.0[..]);
+        hex::encode(&h.finalize()[..8])
+    }
     fn cipher(&self) -> Aes256Gcm {
         let key: &aes_gcm::Key<Aes256Gcm> = (&*self.0).into();
         Aes256Gcm::new(key)

@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -24,6 +24,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (4, "profile_management", v4),
     (5, "proxies_and_privacy", v5),
     (6, "cloud_account", v6),
+    (7, "encrypted_sync", v7),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,5 +562,50 @@ fn v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
            linked_at         text not null default {NOW}
          ) strict;
          create index org_profile_links_org_idx on org_profile_links (org_id);"
+    ))
+}
+
+/// Milestone 07: what each linked profile last synchronized (the base of its next upload), whether it changed since,
+/// its automatic-backup choice and an unresolved conflict; resumable upload/restore jobs (secret-free JSON: no data
+/// key, URL or token); `sync` and `cloud_restore` audit actions.
+fn v7(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "alter table org_profile_links add column synced_version integer not null default 0
+           check (synced_version >= 0);
+         alter table org_profile_links add column synced_snapshot_id text
+           check (synced_snapshot_id is null or (synced_snapshot_id glob 'snp_*' and length(synced_snapshot_id) = 30));
+         alter table org_profile_links add column synced_at text;
+         alter table org_profile_links add column dirty integer not null default 1 check (dirty in (0, 1));
+         alter table org_profile_links add column auto_backup integer not null default 1 check (auto_backup in (0, 1));
+         alter table org_profile_links add column conflict_head integer check (conflict_head is null or conflict_head >= 0);
+
+         create table sync_jobs (
+           id                text primary key check (id glob 'sj_*' and length(id) between 4 and 40),
+           kind              text not null check (kind in ('upload', 'restore')),
+           local_profile_id  text not null references profiles(id) on delete cascade,
+           state             text not null check (length(state) between 1 and 20),
+           payload           text not null check (json_valid(payload) and length(payload) <= 100000),
+           created_at        text not null default {NOW},
+           updated_at        text not null default {NOW}
+         ) strict;
+         create index sync_jobs_profile_idx on sync_jobs (local_profile_id, updated_at);
+
+         create table audit_log_v7 (
+           seq         integer primary key autoincrement,
+           at          text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           profile_id  text,
+           action      text not null check (action in ('start', 'stop', 'force_stop', 'exit', 'crash', 'adopt',
+                         'interrupted', 'recover', 'backup', 'runtime_install', 'runtime_remove',
+                         'create', 'trash', 'restore', 'delete', 'purge', 'bulk', 'import', 'export',
+                         'proxy', 'network', 'sync', 'cloud_restore')),
+           outcome     text not null check (length(outcome) <= 40),
+           run_id      text,
+           detail      text check (detail is null or length(detail) <= 200)
+         ) strict;
+         insert into audit_log_v7 (seq, at, profile_id, action, outcome, run_id, detail)
+           select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
+         drop table audit_log;
+         alter table audit_log_v7 rename to audit_log;
+         create index audit_log_profile_idx on audit_log (profile_id, seq);"
     ))
 }

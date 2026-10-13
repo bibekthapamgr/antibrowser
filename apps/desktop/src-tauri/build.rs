@@ -62,6 +62,13 @@ const COMMANDS: &[&str] = &[
     "cloud_request",
     "org_import",
     "list_org_links",
+    "get_sync_status",
+    "sync_backup_now",
+    "sync_cancel",
+    "sync_set_auto_backup",
+    "sync_resolve_conflict",
+    "sync_restore",
+    "sync_restore_here",
 ];
 
 fn main() {

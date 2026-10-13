@@ -827,4 +827,80 @@ impl AppState {
     pub fn org_links(&self, org_id: Option<&str>) -> Result<Vec<cs::OrgLink>, IpcError> {
         Ok(self.store()?.org_links(org_id)?)
     }
+
+    /// An API request made by the shell's own code (snapshot uploads and restores, milestone 07): never reachable
+    /// from the window, never cached. Errors are mapped to what the sync engine distinguishes.
+    pub(crate) fn shell_api(
+        &self,
+        method: Method,
+        path: &str,
+        idempotency_key: Option<&str>,
+        body: Option<&Value>,
+    ) -> Result<Value, pb_sync::ApiError> {
+        use pb_sync::ApiError as E;
+        let local = |code: &str| E::Code {
+            status: 0,
+            code: code.to_owned(),
+        };
+        let store = self.store().map_err(|_| local("LOCAL_STORE_ERROR"))?;
+        let server = store
+            .cloud_state(cs::SERVER_URL)
+            .map_err(|_| local("LOCAL_STORE_ERROR"))?
+            .ok_or(E::SignedOut)?;
+        if self.cloud_status() != SessionStatus::SignedIn {
+            return Err(E::SignedOut);
+        }
+        let url = api_url(&server, path).map_err(|_| local("CLOUD_BAD_SERVER"))?;
+        let headers: Vec<(&str, &str)> = idempotency_key
+            .map(|k| vec![("idempotency-key", k)])
+            .unwrap_or_default();
+        let mut retried = false;
+        loop {
+            let token = self.access_token(&server, retried).map_err(|e| match e {
+                NoAccess::Offline => E::Offline,
+                NoAccess::SignedOut => E::SignedOut,
+                NoAccess::Unavailable => local("CLOUD_UNAVAILABLE"),
+            })?;
+            let res = match self
+                .cloud
+                .http
+                .request(method, &url, Some(&token), &headers, body)
+            {
+                Ok(r) => r,
+                Err(HttpError::Offline) => return Err(E::Offline),
+                Err(e) => return Err(local(http_err(e).code)),
+            };
+            if res.status == 401 && !retried {
+                retried = true;
+                continue;
+            }
+            let json = res.json().ok_or_else(|| local("CLOUD_BAD_RESPONSE"))?;
+            if res.ok() {
+                return Ok(json);
+            }
+            let code = api_code(&json);
+            return Err(match (res.status, code) {
+                (401, _) => {
+                    self.expire_session();
+                    E::SignedOut
+                }
+                (_, "VERSION_CONFLICT") => E::Conflict {
+                    head_version: json
+                        .pointer("/safe_details/head_version")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                },
+                (_, "LEASE_HELD") => E::LeaseHeld,
+                (_, "LEASE_NOT_HELD" | "FENCING_TOKEN_STALE") => E::LeaseLost,
+                (status, "") => E::Code {
+                    status,
+                    code: format!("HTTP_{status}"),
+                },
+                (status, c) => E::Code {
+                    status,
+                    code: c.to_owned(),
+                },
+            });
+        }
+    }
 }

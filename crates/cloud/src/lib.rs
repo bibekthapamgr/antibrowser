@@ -6,6 +6,8 @@
 //! - [`http`]: HTTPS-only transport (plain http only to loopback addresses, for a developer's local server), no
 //!   redirects (a bearer token is never forwarded to another origin), bounded bodies, offline detection.
 //! - [`allow`]: the fixed set of API requests the manager UI may ask the shell to make on its behalf.
+//! - [`transfer`]: encrypted snapshot parts and objects to and from storage through short-lived signed URLs
+//!   (milestone 07).
 //!
 //! Tokens never cross into the webview, and nothing here logs a token, code or verifier.
 
@@ -13,5 +15,7 @@ pub mod allow;
 pub mod http;
 pub mod oidc;
 pub mod pkce;
+pub mod transfer;
 
 pub use http::{Http, HttpError, Method, Response};
+pub use transfer::{Transfer, TransferError};

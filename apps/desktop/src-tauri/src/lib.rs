@@ -21,6 +21,7 @@ pub mod runtime;
 pub mod secrets;
 pub mod state;
 pub mod supervisor;
+pub mod sync;
 pub mod transfer;
 
 use crate::events::{DEEP_LINK, QUIT_REQUESTED};
@@ -107,6 +108,13 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::cloud_request,
         commands::org_import,
         commands::list_org_links,
+        commands::get_sync_status,
+        commands::sync_backup_now,
+        commands::sync_cancel,
+        commands::sync_set_auto_backup,
+        commands::sync_resolve_conflict,
+        commands::sync_restore,
+        commands::sync_restore_here,
     ]
 }
 
@@ -271,8 +279,12 @@ pub fn run() {
                 if let Ok(mut k) = probe_state.keychain.write() {
                     *k = status;
                 }
+                // The device key for sealed local backups lives in the keychain (milestone 07).
+                probe_state.load_backup_key();
                 probe_state.restore_networks();
             });
+            // Unfinished organization backups and restores resume in the background (milestone 07).
+            state.start_sync_worker();
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.
             let monitor = state.clone();

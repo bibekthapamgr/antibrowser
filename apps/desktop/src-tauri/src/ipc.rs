@@ -344,6 +344,36 @@ pub const ORG_IMPORT_EMPTY: IpcError = IpcError::new(
     "This workspace has no active profiles to copy.",
 );
 
+// ----------------------------------------------------------------------------- encrypted backups and sync (07)
+pub const SYNC_NOT_LINKED: IpcError = IpcError::new(
+    "SYNC_NOT_LINKED",
+    "This profile is not part of an organization. Copy it to an organization first to back it up there.",
+);
+pub const SYNC_BUSY: IpcError = IpcError::new(
+    "SYNC_BUSY",
+    "A backup or restore of this profile is still in progress.",
+);
+pub const SYNC_CONFLICT_OPEN: IpcError = IpcError::new(
+    "SYNC_CONFLICT_OPEN",
+    "A newer backup was made on another computer. Choose how to resolve that first.",
+);
+pub const SYNC_NO_CONFLICT: IpcError = IpcError::new(
+    "SYNC_NO_CONFLICT",
+    "There is nothing to resolve for this profile.",
+);
+pub const SYNC_PROFILE_NOT_CLOSED: IpcError = IpcError::new(
+    "SYNC_PROFILE_NOT_CLOSED",
+    "Close the profile first. Only a profile that closed normally is backed up or replaced.",
+);
+pub const SYNC_ALREADY_HERE: IpcError = IpcError::new(
+    "SYNC_ALREADY_HERE",
+    "This organization profile is already on this computer.",
+);
+pub const PROFILE_RESTORING: IpcError = IpcError::new(
+    "PROFILE_RESTORING",
+    "This profile is being restored from a backup. It opens when the restore is finished.",
+);
+
 impl From<pb_netproxy::ConfigError> for IpcError {
     fn from(e: pb_netproxy::ConfigError) -> Self {
         use pb_netproxy::ConfigError as C;

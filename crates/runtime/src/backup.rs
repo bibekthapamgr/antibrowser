@@ -1,4 +1,5 @@
-//! Last known-good local copy of a profile, evidence preservation and restore (milestone 03, steps 5–6).
+//! Last known-good local copy of a profile, evidence preservation and restore (milestone 03, steps 5–6), sealed
+//! with this device's key since milestone 07.
 //!
 //! Rules:
 //!  - Copies are taken only of a STOPPED profile whose browser processes have all exited (the caller checks this
@@ -8,10 +9,14 @@
 //!    full disk during a backup never destroys the last good copy.
 //!  - Restoring never writes into the backup: the current directory is moved aside as evidence first, then the
 //!    backup is copied into a fresh directory.
+//!  - Milestone 07: with a device key (kept in the OS keychain) the copy is a sealed archive (pb-seal: compressed,
+//!    AES-256-GCM, bound to this profile and backup id), opened only into a fresh directory and fully authenticated.
+//!    Without a usable keychain the copy stays a plain directory (as before) and says so (`sealed: false`).
 //!
 //! ```text
 //! <data>/backups/<profile id>/last-good/backup.json
-//!                                      /user-data/...
+//!                                      /user-data.pbseal        (sealed, milestone 07)
+//!                                      /user-data/...            (plain: no keychain)
 //! <data>/evidence/<profile id>/<unix time>-<reason>/user-data/...   (kept: newest 3)
 //! ```
 
@@ -19,34 +24,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Directory names excluded from copies (regenerable caches, crash dumps, model downloads).
-pub const EXCLUDED_DIRS: &[&str] = &[
-    "Cache",
-    "Code Cache",
-    "GPUCache",
-    "GrShaderCache",
-    "GraphiteDawnCache",
-    "ShaderCache",
-    "DawnCache",
-    "DawnGraphiteCache",
-    "DawnWebGPUCache",
-    "Crashpad",
-    "Crash Reports",
-    "BrowserMetrics",
-    "component_crx_cache",
-    "optimization_guide_model_store",
-    "Safe Browsing",
-];
-/// File names excluded from copies (Chromium's process singleton and lock files).
-pub const EXCLUDED_FILES: &[&str] = &[
-    "SingletonLock",
-    "SingletonSocket",
-    "SingletonCookie",
-    "lockfile",
-    "BrowserMetrics-spare.pma",
-];
+/// The explicit exclusion lists (caches, crash dumps, lock files) are shared with sealed archives.
+pub use pb_seal::archive::{EXCLUDED_DIRS, EXCLUDED_FILES};
+use pb_seal::{Binding, Kind, Limits, SealError, SealKey};
+
 const KEEP_EVIDENCE: usize = 3;
 pub const BACKUP_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -58,8 +42,29 @@ pub enum BackupError {
     LowDisk { required: u64, available: u64 },
     #[error("the backup was cancelled")]
     Cancelled,
+    #[error(
+        "this computer's backup key is not available (the keychain was reset or cannot be read)"
+    )]
+    KeyUnavailable,
+    #[error("the backup could not be verified (damaged or modified)")]
+    Damaged,
     #[error("filesystem error: {0}")]
     Io(#[from] io::Error),
+}
+
+impl From<SealError> for BackupError {
+    fn from(e: SealError) -> Self {
+        match e {
+            SealError::Io(io) => Self::Io(io),
+            SealError::Cancelled => Self::Cancelled,
+            SealError::Authentication
+            | SealError::HeaderMismatch(_)
+            | SealError::UnsupportedFormat
+            | SealError::UnsafeArchive(_)
+            | SealError::LimitExceeded => Self::Damaged,
+            other => Self::Io(io::Error::other(other.to_string())),
+        }
+    }
 }
 
 impl BackupError {
@@ -68,6 +73,8 @@ impl BackupError {
             Self::NoBackup => "NO_BACKUP",
             Self::LowDisk { .. } => "LOW_DISK_SPACE",
             Self::Cancelled => "BACKUP_CANCELLED",
+            Self::KeyUnavailable => "BACKUP_KEY_UNAVAILABLE",
+            Self::Damaged => "BACKUP_DAMAGED",
             Self::Io(_) => "BACKUP_IO_ERROR",
         }
     }
@@ -79,6 +86,16 @@ pub struct BackupInfo {
     pub runtime_version: Option<String>,
     pub bytes: u64,
     pub files: u64,
+    /// Sealed with the device key (milestone 07); plain copies from earlier versions or without a keychain: false.
+    #[serde(default)]
+    pub sealed: bool,
+    /// The id bound into the sealed file's header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id: Option<String>,
+    /// Fingerprint of the device key that sealed it ([`SealKey::fingerprint`]), so a reset keychain is reported as
+    /// "key not available" rather than "damaged".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -96,27 +113,24 @@ fn now_unix() -> u64 {
 }
 
 fn excluded(name: &str, is_dir: bool) -> bool {
-    if is_dir {
-        EXCLUDED_DIRS.contains(&name)
-    } else {
-        EXCLUDED_FILES.contains(&name) || name.ends_with(".pb-tmp")
-    }
+    pb_seal::archive::is_excluded(name, is_dir)
 }
 
 /// Size of what [`copy_tree`] would copy.
 pub fn measure(src: &Path) -> io::Result<u64> {
-    let mut total = 0;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ft = entry.file_type()?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if ft.is_dir() && !excluded(&name, true) {
-            total += measure(&entry.path())?;
-        } else if ft.is_file() && !excluded(&name, false) {
-            total += entry.metadata()?.len();
-        }
+    pb_seal::archive::measure(src)
+}
+
+const SEALED_FILE: &str = "user-data.pbseal";
+
+fn local_binding(profile: &str, object_id: &str, key_id: &str) -> Binding {
+    Binding {
+        kind: Kind::LocalBackup,
+        org_id: None,
+        profile_id: profile.to_owned(),
+        object_id: object_id.to_owned(),
+        key_version: format!("device-{key_id}"),
     }
-    Ok(total)
 }
 
 /// Copies a user-data directory, excluding caches/lock files and never following links.
@@ -169,9 +183,44 @@ pub struct Backups {
     pub root: PathBuf,
     /// `<data>/evidence`
     pub evidence: PathBuf,
+    /// This device's backup key, read from the OS keychain once it has been checked. `None`: plain copies (no
+    /// usable keychain); the key is never written anywhere else.
+    seal_key: RwLock<Option<SealKey>>,
 }
 
 impl Backups {
+    pub fn new(root: PathBuf, evidence: PathBuf) -> Self {
+        Self {
+            root,
+            evidence,
+            seal_key: RwLock::new(None),
+        }
+    }
+
+    /// Sets (or clears) the device key used for new backups and to open sealed ones.
+    pub fn set_seal_key(&self, key: Option<SealKey>) {
+        if let Ok(mut k) = self.seal_key.write() {
+            *k = key;
+        }
+    }
+
+    fn seal_key(&self) -> Option<SealKey> {
+        self.seal_key.read().ok().and_then(|k| k.clone())
+    }
+
+    /// Whether new backups are sealed (a device key is loaded).
+    pub fn sealing(&self) -> bool {
+        self.seal_key.read().is_ok_and(|k| k.is_some())
+    }
+
+    /// Whether this backup can be opened here: plain, or sealed with the loaded device key.
+    pub fn openable(&self, info: &BackupInfo) -> bool {
+        !info.sealed
+            || self
+                .seal_key()
+                .is_some_and(|k| info.key_id.as_deref() == Some(k.fingerprint().as_str()))
+    }
+
     fn profile_dir(&self, profile: &str) -> PathBuf {
         self.root.join(profile)
     }
@@ -180,7 +229,12 @@ impl Backups {
         let dir = self.profile_dir(profile).join("last-good");
         let info: BackupInfo =
             serde_json::from_slice(&fs::read(dir.join("backup.json")).ok()?).ok()?;
-        dir.join("user-data").is_dir().then_some(info)
+        let present = if info.sealed {
+            dir.join(SEALED_FILE).is_file()
+        } else {
+            dir.join("user-data").is_dir()
+        };
+        present.then_some(info)
     }
 
     /// Finishes or rolls back a backup interrupted by a crash (run at start-up).
@@ -235,16 +289,42 @@ impl Backups {
             });
         }
         let tmp = dir.join(format!("tmp-{}", now_unix()));
-        let stats = match copy_tree_cancellable(user_data, &tmp.join("user-data"), cancel) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = fs::remove_dir_all(&tmp);
-                return Err(if e.kind() == io::ErrorKind::Interrupted {
-                    BackupError::Cancelled
-                } else {
-                    e.into()
-                });
+        let never = AtomicBool::new(false);
+        let cancel_flag = cancel.unwrap_or(&never);
+        let (bytes, files, sealed_as) = match self.seal_key() {
+            Some(key) => {
+                fs::create_dir_all(&tmp)?;
+                let mut rnd = [0u8; 6];
+                getrandom::fill(&mut rnd).map_err(|_| io::Error::other("randomness"))?;
+                let object_id = format!("lb-{}-{}", now_unix(), hex::encode(rnd));
+                let key_id = key.fingerprint();
+                match pb_seal::seal_profile(
+                    user_data,
+                    &[],
+                    &key,
+                    &local_binding(profile, &object_id, &key_id),
+                    &tmp.join(SEALED_FILE),
+                    cancel_flag,
+                    &mut |_| {},
+                ) {
+                    Ok(o) => (o.stats.bytes, o.stats.files, Some((object_id, key_id))),
+                    Err(e) => {
+                        let _ = fs::remove_dir_all(&tmp);
+                        return Err(e.into());
+                    }
+                }
             }
+            None => match copy_tree_cancellable(user_data, &tmp.join("user-data"), cancel) {
+                Ok(s) => (s.bytes, s.files, None),
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&tmp);
+                    return Err(if e.kind() == io::ErrorKind::Interrupted {
+                        BackupError::Cancelled
+                    } else {
+                        e.into()
+                    });
+                }
+            },
         };
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             let _ = fs::remove_dir_all(&tmp);
@@ -253,8 +333,11 @@ impl Backups {
         let info = BackupInfo {
             created_at_unix: now_unix(),
             runtime_version: runtime_version.map(str::to_owned),
-            bytes: stats.bytes,
-            files: stats.files,
+            bytes,
+            files,
+            sealed: sealed_as.is_some(),
+            key_id: sealed_as.as_ref().map(|(_, k)| k.clone()),
+            object_id: sealed_as.map(|(o, _)| o),
         };
         fs::write(
             tmp.join("backup.json"),
@@ -328,10 +411,12 @@ impl Backups {
         free_space: &dyn Fn(&Path) -> io::Result<u64>,
     ) -> Result<PathBuf, BackupError> {
         let source = self.profile_dir(profile).join("last-good");
-        if self.last_good(profile).is_none() {
-            return Err(BackupError::NoBackup);
-        }
-        let needed = measure(&source.join("user-data"))?;
+        let info = self.last_good(profile).ok_or(BackupError::NoBackup)?;
+        let needed = if info.sealed {
+            info.bytes
+        } else {
+            measure(&source.join("user-data"))?
+        };
         let required = needed.saturating_add(BACKUP_HEADROOM_BYTES);
         let available = free_space(&self.root)?;
         if available < required {
@@ -347,7 +432,39 @@ impl Backups {
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
-        copy_tree(&source.join("user-data"), &staging)?;
+        if info.sealed {
+            let key = self.seal_key().ok_or(BackupError::KeyUnavailable)?;
+            let object_id = info.object_id.as_deref().ok_or(BackupError::Damaged)?;
+            let key_id = info.key_id.as_deref().ok_or(BackupError::Damaged)?;
+            if key.fingerprint() != key_id {
+                return Err(BackupError::KeyUnavailable);
+            }
+            let opened = parent.join("user-data.opening");
+            if opened.exists() {
+                fs::remove_dir_all(&opened)?;
+            }
+            fs::create_dir_all(&opened)?;
+            let limits = Limits {
+                max_bytes: info.bytes.saturating_add(1 << 20),
+                ..Limits::default()
+            };
+            if let Err(e) = pb_seal::open_profile(
+                &source.join(SEALED_FILE),
+                &key,
+                &local_binding(profile, object_id, key_id),
+                &opened,
+                &limits,
+                &AtomicBool::new(false),
+                &mut |_| {},
+            ) {
+                let _ = fs::remove_dir_all(&opened);
+                return Err(e.into());
+            }
+            fs::rename(opened.join("user-data"), &staging)?;
+            let _ = fs::remove_dir_all(&opened);
+        } else {
+            copy_tree(&source.join("user-data"), &staging)?;
+        }
         let evidence = self.preserve_evidence(profile, user_data, "restore")?;
         fs::rename(&staging, user_data)?;
         Ok(evidence)
@@ -388,11 +505,102 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let user_data = tmp.path().join("profiles/prf_X/user-data");
         sample(&user_data)?;
-        let backups = Backups {
-            root: tmp.path().join("backups"),
-            evidence: tmp.path().join("evidence"),
-        };
+        let backups = Backups::new(tmp.path().join("backups"), tmp.path().join("evidence"));
         Ok((tmp, backups, user_data))
+    }
+
+    fn sealed() -> io::Result<(tempfile::TempDir, Backups, PathBuf)> {
+        let (t, b, ud) = setup()?;
+        b.set_seal_key(Some(SealKey::generate().map_err(io::Error::other)?));
+        Ok((t, b, ud))
+    }
+
+    #[test]
+    fn sealed_backups_round_trip_and_hold_no_readable_profile_data() -> Result<(), BackupError> {
+        let (_t, b, ud) = sealed()?;
+        let info = b.create("prf_X", &ud, Some("155.0.0.1"), PLENTY, None)?;
+        assert!(info.sealed && info.object_id.is_some());
+        assert_eq!(info.files, 3);
+        let dir = b.root.join("prf_X/last-good");
+        assert!(!dir.join("user-data").exists(), "no plain copy");
+        let raw = fs::read(dir.join("user-data.pbseal"))?;
+        assert!(
+            !raw.windows(9).any(|w| w == b"cookie-db"),
+            "contents are encrypted"
+        );
+        assert_eq!(b.last_good("prf_X"), Some(info));
+        fs::remove_file(ud.join("Default/Cookies"))?;
+        b.restore("prf_X", &ud, PLENTY)?;
+        assert_eq!(fs::read(ud.join("Default/Cookies"))?, b"cookie-db");
+        assert!(!ud.join("Default/Cache").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_sealed_backup_needs_this_devices_key_and_fails_closed_when_modified()
+    -> Result<(), BackupError> {
+        let (_t, b, ud) = sealed()?;
+        let info = b.create("prf_X", &ud, None, PLENTY, None)?;
+        assert!(b.openable(&info));
+        let file = b.root.join("prf_X/last-good/user-data.pbseal");
+        // Another device's key (or a reset keychain): reported as a missing key, not as damage.
+        let mine = b.seal_key();
+        b.set_seal_key(Some(SealKey::generate().map_err(io::Error::other)?));
+        assert!(!b.openable(&info));
+        assert!(matches!(
+            b.restore("prf_X", &ud, PLENTY),
+            Err(BackupError::KeyUnavailable)
+        ));
+        b.set_seal_key(None);
+        assert!(matches!(
+            b.restore("prf_X", &ud, PLENTY),
+            Err(BackupError::KeyUnavailable)
+        ));
+        // A key id edited to match another key still cannot open it: the header binds the key id and GCM the key.
+        let json = b.root.join("prf_X/last-good/backup.json");
+        let original = fs::read_to_string(&json)?;
+        let other = SealKey::generate().map_err(io::Error::other)?;
+        let edited = original.replace(
+            info.key_id.as_deref().unwrap_or_default(),
+            &other.fingerprint(),
+        );
+        fs::write(&json, edited)?;
+        b.set_seal_key(Some(other));
+        assert!(matches!(
+            b.restore("prf_X", &ud, PLENTY),
+            Err(BackupError::Damaged)
+        ));
+        fs::write(&json, original)?;
+        b.set_seal_key(mine);
+        let mut bytes = fs::read(&file)?;
+        let n = bytes.len();
+        bytes[n - 3] ^= 0x10;
+        fs::write(&file, bytes)?;
+        assert!(matches!(
+            b.restore("prf_X", &ud, PLENTY),
+            Err(BackupError::Damaged)
+        ));
+        assert!(
+            ud.join("Default/Cookies").is_file(),
+            "the current profile is untouched"
+        );
+        assert!(
+            !ud.parent()
+                .is_some_and(|p| p.join("user-data.opening").exists())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn plain_backups_from_earlier_versions_still_restore() -> Result<(), BackupError> {
+        let (_t, b, ud) = setup()?;
+        let info = b.create("prf_X", &ud, None, PLENTY, None)?;
+        assert!(!info.sealed && b.openable(&info));
+        b.set_seal_key(Some(SealKey::generate().map_err(io::Error::other)?));
+        fs::remove_file(ud.join("Default/Cookies"))?;
+        b.restore("prf_X", &ud, PLENTY)?;
+        assert!(ud.join("Default/Cookies").is_file());
+        Ok(())
     }
 
     #[test]

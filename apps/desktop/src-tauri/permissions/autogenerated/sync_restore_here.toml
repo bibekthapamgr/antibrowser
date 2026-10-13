@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-restore-here"
+description = "Enables the sync_restore_here command without any pre-configured scope."
+commands.allow = ["sync_restore_here"]
+
+[[permission]]
+identifier = "deny-sync-restore-here"
+description = "Denies the sync_restore_here command without any pre-configured scope."
+commands.deny = ["sync_restore_here"]
