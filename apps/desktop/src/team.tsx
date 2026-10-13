@@ -579,7 +579,9 @@ export function TakeoverDialog(props: {
           confirm: true,
         },
       );
-      props.notify(`Taken over. ${props.profileName} can be opened now; their app closes it at its next check.`);
+      props.notify(
+        `Taken over. ${props.profileName} can be opened now; their app closes it at its next check.`,
+      );
       props.onDone();
     } catch (err) {
       props.notify(
