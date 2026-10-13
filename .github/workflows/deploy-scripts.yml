@@ -42,11 +42,16 @@ jobs:
           sudo rm -rf /etc/postgresql /var/lib/postgresql
 
       - name: vps-setup.sh
-        run: scripts/ci/annotate.sh "vps-setup.sh" sudo --preserve-env=PB_REPO,PB_BRANCH bash scripts/deploy/vps-setup.sh --skip-tests
+        run: |
+          scripts/ci/annotate.sh "vps-setup.sh" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
+          # It ends successfully (asking for a deploy key) when it cannot read the repository; that is not a deployment.
+          if ! sudo test -f /etc/project-browser/api.env || ! systemctl is-active --quiet pb-api; then
+            echo "::error title=vps-setup.sh::stopped before deploying (repository $PB_REPO not readable?)"; exit 1
+          fi
 
       - name: keycloak-setup.sh (first run, creates the owner account)
         run: |
-          scripts/ci/annotate.sh "keycloak-setup.sh" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+          scripts/ci/annotate.sh "keycloak-setup.sh" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
             bash scripts/deploy/keycloak-setup.sh --owner-email owner@example.test
           sudo test -s "$PW_FILE"
 
@@ -61,7 +66,7 @@ jobs:
 
       - name: Update path - vps-setup.sh and keycloak-setup.sh again
         run: |
-          scripts/ci/annotate.sh "vps-setup.sh (update)" sudo --preserve-env=PB_REPO,PB_BRANCH bash scripts/deploy/vps-setup.sh --skip-tests
+          scripts/ci/annotate.sh "vps-setup.sh (update)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
           scripts/ci/annotate.sh "keycloak-setup.sh (update)" sudo bash scripts/deploy/keycloak-setup.sh | tee "$RUNNER_TEMP/rerun.log"
           grep -q "nothing changed" "$RUNNER_TEMP/rerun.log" || { echo "::error title=update::Keycloak was restarted without a change"; exit 1; }
           # The session from before the updates still works: same signing key, sign-in settings kept by vps-setup.sh.
@@ -82,13 +87,13 @@ jobs:
             PB_EMAIL="$1" PB_PASSWORD="$temp" PB_NEW_PASSWORD="$new" PB_EXPECT_PASSWORD_CHANGE=1 \
               scripts/ci/annotate.sh "$2" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
           }
-          scripts/ci/annotate.sh "add-user" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+          scripts/ci/annotate.sh "add-user" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
             bash scripts/deploy/keycloak-setup.sh add-user Teammate@Example.test
           signin teammate@example.test "teammate sign-in"
           if sudo bash scripts/deploy/keycloak-setup.sh add-user teammate@example.test; then
             echo "::error title=add-user::an existing account was created twice"; exit 1
           fi
-          scripts/ci/annotate.sh "reset-password" sudo PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+          scripts/ci/annotate.sh "reset-password" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
             bash scripts/deploy/keycloak-setup.sh reset-password teammate@example.test
           signin teammate@example.test "teammate sign-in after reset"
 
@@ -102,5 +107,10 @@ jobs:
       - name: Service logs
         if: failure()
         run: |
-          sudo journalctl -u keycloak -n 120 --no-pager || true
-          sudo journalctl -u pb-api -n 60 --no-pager || true
+          for u in keycloak pb-api; do
+            sudo journalctl -u "$u" -n 120 --no-pager || true
+            # Raw logs are not always reachable; the most useful lines also go into annotations.
+            msg=$(sudo journalctl -u "$u" -n 200 --no-pager -o cat 2>/dev/null | grep -iE "error|exception|fail|refus|denied" \
+              | tail -10 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' || true)
+            [ -z "$msg" ] || echo "::error title=$u log::$msg"
+          done
