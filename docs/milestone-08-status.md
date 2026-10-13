@@ -80,7 +80,7 @@ session ended (revoked), reopen and late upload refused, head still 1", "audit: 
 with axe, license inventory, secret scan). Installers in
 [desktop internal build 38411598485](https://github.com/bibekthapamgr/antibrowser/actions/runs/38411598485); the test
 server update path in [deploy scripts 38411586243](https://github.com/bibekthapamgr/antibrowser/actions/runs/38411586243).
-The following commit only changes the takeover dialog's wording and documents.
+Later commits only change the takeover dialog's wording, its formatting and documents (CI green on each push).
 
 ## Test server
 Updating with `vps-setup.sh` applies migration `0005_team_sessions.sql` and runs the session tests; nothing new to
