@@ -33,7 +33,9 @@ What it sets up:
 
 Re-running it is safe (it only restarts what changed). CI runs both server scripts on a fresh Ubuntu 24.04 VM, signs
 in through the deployed API like the desktop does, then re-runs both scripts and checks that the session survives
-(`.github/workflows/deploy-scripts.yml`).
+(`.github/workflows/deploy-scripts.yml`; first green run
+[38369137231](https://github.com/bibekthapamgr/antibrowser/actions/runs/38369137231): Keycloak 26.6.2 with OpenJDK 21 on
+Ubuntu 24.04).
 
 This setup is private: plain HTTP is accepted only on loopback addresses, and the API runs with `APP_ENV=dev`.
 Making sign-in reachable for a team without tunnels needs a domain, HTTPS (a reverse proxy holding the certificate),

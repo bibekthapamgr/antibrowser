@@ -8,7 +8,7 @@
 | [OpenAPI](../openapi.json) | Every endpoint, with request and response schemas |
 | [authentication-threat-review.md](authentication-threat-review.md) | Threats, controls and the tests that prove them; residual risks |
 | [tenant-isolation-report.md](tenant-isolation-report.md) | Exit-gate evidence: id swaps on every endpoint, pooled connections, revocation, last owner, invitations |
-| [keycloak-setup.md](keycloak-setup.md) | Setting up the identity provider and the API's session key |
+| [keycloak-setup.md](keycloak-setup.md) | Setting up the identity provider and the API's session key; one-command self-hosted Keycloak for the test server (`scripts/deploy/keycloak-setup.sh`) |
 
 ## Journeys and where they live
 

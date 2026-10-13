@@ -4,7 +4,8 @@ Identity, organizations and authorization. Version 0.6.0. Decisions:
 [ADR-0013](adr/0013-identity-and-authorization.md). Deliverables: [schema](identity/schema.md),
 [permission matrix](permission-matrix.md), [OpenAPI](openapi.json),
 [authentication threat review](identity/authentication-threat-review.md),
-[tenant isolation test report](identity/tenant-isolation-report.md). Setup: [Keycloak](identity/keycloak-setup.md).
+[tenant isolation test report](identity/tenant-isolation-report.md). Setup: [Keycloak](identity/keycloak-setup.md);
+on the test server `scripts/deploy/keycloak-setup.sh` installs and connects a self-hosted Keycloak in one run.
 
 Outcome: authenticated users operate only their authorized organizations and clients — enforced by the API on every
 request and again by PostgreSQL row-level security, proven by id swaps on every endpoint.
