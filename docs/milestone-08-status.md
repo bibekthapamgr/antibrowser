@@ -93,6 +93,9 @@ install. Shared profiles need the SSH tunnel while open ([setup](setup.md#test-s
 - Opening a linked profile used to leave an earlier queued backup waiting; the session's closing backup now replaces
   it, and "Upload backup now" during a session points to the handoff instead of taking a second lease.
 - Two copies kept aside in the same second collided on the folder name; evidence folders now get distinct names.
+- On the test server (PostgreSQL in a daylight-saving time zone) a 30-day trash period came out as 30 days and 1 hour
+  across the end of daylight saving; database sessions now run in UTC whatever the server's default, and CI runs
+  PostgreSQL in `America/New_York` to keep it that way.
 
 ## Known limitations
 See [team/README.md](team/README.md#known-limitations): opening shared profiles needs the server; an unreachable holder

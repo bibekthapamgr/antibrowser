@@ -19,7 +19,7 @@ const config = loadConfig();
 const pool = new pg.Pool({
   connectionString: config.workerDatabaseUrl,
   max: 4,
-  options: '-c search_path=app -c statement_timeout=10000',
+  options: '-c search_path=app -c TimeZone=UTC -c statement_timeout=10000',
   application_name: 'pb-worker',
 });
 

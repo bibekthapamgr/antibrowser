@@ -91,7 +91,7 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     pool = createPool(config.databaseUrl, 5);
     owner = new pg.Pool({
       connectionString: process.env.MIGRATION_DATABASE_URL,
-      options: '-c search_path=app',
+      options: '-c search_path=app -c TimeZone=UTC',
       max: 1,
     });
     await owner.query("delete from rate_limit_counters where bucket = 'signin.ip'");

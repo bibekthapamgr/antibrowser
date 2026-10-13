@@ -16,7 +16,7 @@ export const LEGACY = {
 } as const;
 
 export async function seedLegacy(connectionString: string): Promise<void> {
-  const c = new pg.Client({ connectionString, options: '-c search_path=app' });
+  const c = new pg.Client({ connectionString, options: '-c search_path=app -c TimeZone=UTC' });
   await c.connect();
   try {
     await c.query('begin');

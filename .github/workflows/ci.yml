@@ -53,7 +53,11 @@ jobs:
         with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Bootstrap database roles
-        run: PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f infra/db/bootstrap-local.sql
+        # The server's default time zone is a daylight-saving one, like many real servers: the app must not depend on it.
+        run: |
+          PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f infra/db/bootstrap-local.sql
+          PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -c "alter system set timezone = 'America/New_York'" \
+            -c "select pg_reload_conf()"
       - run: pnpm run lint
       - run: pnpm run typecheck
       # Reference identity provider (ADR-0013): services/api/test/keycloak.test.ts signs in through it with
@@ -117,6 +121,8 @@ jobs:
       - name: Database and storage
         run: |
           PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f infra/db/bootstrap-local.sql
+          PGPASSWORD=ci-superuser-only psql -h 127.0.0.1 -U postgres -c "alter system set timezone = 'America/New_York'" \
+            -c "select pg_reload_conf()"
           scripts/ci/annotate.sh "seaweedfs" scripts/ci/seaweedfs.sh
           cd services/api
           node --env-file=../../infra/env/test.env.example scripts/migrate.ts --reset

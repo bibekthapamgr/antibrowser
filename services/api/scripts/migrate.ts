@@ -18,7 +18,7 @@ export interface MigrateOptions {
 
 export async function migrate(connectionString: string, opts: MigrateOptions = {}) {
   const appEnv = process.env.APP_ENV ?? 'dev';
-  const client = new pg.Client({ connectionString });
+  const client = new pg.Client({ connectionString, options: '-c TimeZone=UTC' });
   await client.connect();
   try {
     if (opts.reset) {

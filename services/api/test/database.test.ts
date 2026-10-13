@@ -1,7 +1,7 @@
 /**
  * Milestone 06 database guarantees: the upgrade of milestone 01 data, least-privilege roles, row-level security on
  * every tenant table (including the new ones), an append-only audit log and definer functions reachable only by the
- * API role.
+ * API role. Sessions run in UTC whatever the server's default time zone (CI sets a daylight-saving zone).
  */
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -120,6 +120,19 @@ describe('seeding a development database first seeded in milestone 01', () => {
       await c.query('rollback');
       c.release();
     }
+  });
+});
+
+describe('time zone', () => {
+  it('runs every API session in UTC, so "30 days" is exactly 30 days even across a daylight-saving change', async () => {
+    // 2026-11-01 ends daylight saving in the United States: in a zone like America/New_York this sum is 30 days and
+    // one hour, which made trash periods and request expiries depend on where the database server runs.
+    const { rows } = await h.pool.query(
+      `select current_setting('TimeZone') as tz,
+              extract(epoch from ('2026-10-14T12:00:00Z'::timestamptz + make_interval(days => 30))
+                                 - '2026-10-14T12:00:00Z'::timestamptz)::int as seconds`,
+    );
+    expect(rows[0]).toEqual({ tz: 'UTC', seconds: 30 * 86400 });
   });
 });
 

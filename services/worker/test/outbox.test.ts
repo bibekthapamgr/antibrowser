@@ -16,10 +16,13 @@ let worker: pg.Pool;
 let owner: pg.Pool;
 
 beforeAll(() => {
-  worker = new pg.Pool({ connectionString: process.env.WORKER_DATABASE_URL, options: '-c search_path=app' });
+  worker = new pg.Pool({
+    connectionString: process.env.WORKER_DATABASE_URL,
+    options: '-c search_path=app -c TimeZone=UTC',
+  });
   owner = new pg.Pool({
     connectionString: process.env.MIGRATION_DATABASE_URL,
-    options: '-c search_path=app',
+    options: '-c search_path=app -c TimeZone=UTC',
   });
 });
 afterAll(async () => {

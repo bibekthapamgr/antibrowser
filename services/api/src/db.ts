@@ -8,7 +8,10 @@ export function createPool(connectionString: string, max = 10): pg.Pool {
   return new pg.Pool({
     connectionString,
     max,
-    options: '-c search_path=app -c statement_timeout=5000 -c idle_in_transaction_session_timeout=10000',
+    // UTC sessions: calendar arithmetic (`+ interval '30 days'`) and day boundaries must not depend on the server's
+    // default time zone (a daylight-saving zone would make a 30-day trash period 30 days and 1 hour).
+    options:
+      '-c search_path=app -c TimeZone=UTC -c statement_timeout=5000 -c idle_in_transaction_session_timeout=10000',
     application_name: 'pb',
   });
 }

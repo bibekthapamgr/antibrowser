@@ -58,7 +58,7 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   const pool = createPool(config.databaseUrl, opts.poolMax ?? 20);
   const owner = new pg.Pool({
     connectionString: process.env.MIGRATION_DATABASE_URL,
-    options: '-c search_path=app',
+    options: '-c search_path=app -c TimeZone=UTC',
     max: 2,
   });
   const idp = await testIdp();
@@ -80,7 +80,7 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   await app.ready();
   const worker = new pg.Pool({
     connectionString: config.workerDatabaseUrl,
-    options: '-c search_path=app',
+    options: '-c search_path=app -c TimeZone=UTC',
     max: 4,
   });
   const jobs: JobDeps = { pool: worker, objects, kms };

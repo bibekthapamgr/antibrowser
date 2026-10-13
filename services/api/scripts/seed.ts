@@ -10,7 +10,7 @@ import { DEV_ISSUER, FIXTURES } from '../src/fixtures.ts';
 import { nameKey } from '../src/names.ts';
 
 export async function seed(connectionString: string): Promise<void> {
-  const client = new pg.Client({ connectionString, options: '-c search_path=app' });
+  const client = new pg.Client({ connectionString, options: '-c search_path=app -c TimeZone=UTC' });
   await client.connect();
   try {
     await client.query('begin');

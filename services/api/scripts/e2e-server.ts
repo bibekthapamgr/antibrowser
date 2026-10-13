@@ -36,7 +36,7 @@ const { port } = app.server.address() as AddressInfo;
 // The verification worker, as services/worker runs it (sizes, header, SHA-256, fencing, version CAS).
 const workerPool = new pg.Pool({
   connectionString: config.workerDatabaseUrl,
-  options: '-c search_path=app',
+  options: '-c search_path=app -c TimeZone=UTC',
   max: 2,
 });
 const jobs: JobDeps = { pool: workerPool, objects, kms };
