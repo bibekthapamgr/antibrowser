@@ -410,12 +410,14 @@ else
   systemctl start keycloak
   ok "keycloak running, nothing changed"
 fi
-printf '    waiting for Keycloak (the first start creates its database tables and takes a minute or two) '
-for _ in $(seq 1 150); do
-  curl -fsS -o /dev/null "$KC_BASE/realms/master" 2>/dev/null && break
-  printf '.'; sleep 2
-done
-echo
+if ! curl -fsS -o /dev/null "$KC_BASE/realms/master" 2>/dev/null; then
+  printf '    waiting for Keycloak (the first start creates its database tables and takes a minute or two) '
+  for _ in $(seq 1 150); do
+    curl -fsS -o /dev/null "$KC_BASE/realms/master" 2>/dev/null && break
+    printf '.'; sleep 2
+  done
+  echo
+fi
 if ! curl -fsS -o /dev/null "$KC_BASE/realms/master"; then
   journalctl -u keycloak -n 60 --no-pager
   die "Keycloak did not start (journalctl -u keycloak)"
@@ -575,6 +577,11 @@ EOF
 if [[ -n $ACCOUNT_TEXT ]]; then
   printf '%s\n' "$ACCOUNT_TEXT"
 elif [[ -z $EMAIL ]]; then
+  kc_call GET "/$REALM/users/count"
   echo
-  warn "no account was created. Create yours: bash $SELF add-user you@example.com"
+  if [[ $KC_STATUS == 200 && $(<"$WORK/body") =~ ^[1-9][0-9]*$ ]]; then
+    ok "accounts in the realm: $(<"$WORK/body") (more: bash $SELF add-user someone@example.com)"
+  else
+    warn "there is no account yet. Create yours: bash $SELF add-user you@example.com"
+  fi
 fi

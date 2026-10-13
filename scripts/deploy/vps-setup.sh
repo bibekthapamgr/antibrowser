@@ -288,6 +288,12 @@ pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT)\$" | grep -vE '^(
 
 # ----------------------------------------------------------------------------- summary
 step "Done"
+TUNNEL_EXTRA=""; SIGN_IN_HINT=""
+if [[ -f $ENV_DIR/oidc.env ]]; then  # sign-in through the local Keycloak (keycloak-setup.sh) needs its port too
+  kc_port=$(sed -nE 's|^OIDC_ISSUER=http://127\.0\.0\.1:([0-9]+)/.*|\1|p' "$ENV_DIR/oidc.env")
+  [[ -n $kc_port ]] && TUNNEL_EXTRA=" -L $kc_port:127.0.0.1:$kc_port"
+  SIGN_IN_HINT=$'\n'"    Sign-in: Keycloak is connected (keycloak-setup.sh); in Project Browser use http://127.0.0.1:$API_PORT"
+fi
 cat <<EOF
     Code:      $APP_DIR ($(as_pb git -C "$APP_DIR" log -1 --format=%h))
     Services:  systemctl status pb-api pb-worker    |  logs: journalctl -u pb-api -f
@@ -295,8 +301,8 @@ cat <<EOF
                (refreshes this script, pulls main, migrates, tests, restarts; \\cp skips the "overwrite?" prompt)
 
     Use the API from your Mac (new Terminal tab, keep it open):
-      ssh -N -L $API_PORT:127.0.0.1:$API_PORT root@<this-server>
-    then open http://127.0.0.1:$API_PORT/v1/health
+      ssh -N -L $API_PORT:127.0.0.1:$API_PORT$TUNNEL_EXTRA root@<this-server>
+    then open http://127.0.0.1:$API_PORT/v1/health$SIGN_IN_HINT
     Fixture token (on this server):
       runuser -u pb -- bash -c "cd $APP_DIR && /opt/node/bin/node --env-file=$ENV_FILE services/api/scripts/dev-token.ts acmeOwner"
 EOF
