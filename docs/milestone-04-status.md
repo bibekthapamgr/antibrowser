@@ -86,6 +86,10 @@ Rust 141 (runtime 33, storage 22 + 1 latency gate, update 16 + 1 Windows-only, i
 integration + 5 real-browser). TypeScript desktop unit/contract 25 (was 15), packages 18; API/worker suites unchanged
 (they need PostgreSQL and run in CI). UI end-to-end 59 (was 39).
 
+CI on the final code: run [38338258764](https://github.com/bibekthapamgr/antibrowser/actions/runs/38338258764) —
+Rust (Linux), TypeScript + PostgreSQL, manager UI end-to-end, secret scan, licence inventory, and the desktop build
+with all Rust tests on **Windows x64** and **macOS arm64**: all passed.
+
 ## Owner actions
 1. Try it on your Mac: build as before (`scripts/dev/try-runtime.sh`), then create a few profiles with clients, tag
    two at once, import `docs/import/examples/profiles.csv`, and empty the trash.
