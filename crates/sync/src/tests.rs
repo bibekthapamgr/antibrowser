@@ -358,6 +358,7 @@ fn app_killed_at_every_step_resumes_without_losing_or_duplicating_a_version() {
             engine(&w.a, &killing, &w.work, &never).upload(&mut job, Some(&source(&w.profile)));
         if first.is_ok() {
             assert!(kill_at > 5, "the loop covered every save ({kill_at})");
+            eprintln!("killed and resumed at each of {kill_at} saved steps");
             break;
         }
         assert_eq!(first, Err(SyncError::Store("killed".into())));

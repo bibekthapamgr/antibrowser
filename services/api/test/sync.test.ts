@@ -955,3 +955,44 @@ describe('other organizations', () => {
     expect(keyRows.rows[0].org_id).toBe(beta.id);
   });
 });
+
+describe('secrets stay out of logs, audit and events', () => {
+  it('data keys and signed URLs never appear in request logs, audit entries or outbox events', async () => {
+    const lines: string[] = [];
+    const logged = await harness({ logLines: lines });
+    try {
+      const headers = await logged.auth('acmeOwner');
+      const created = await logged.app.inject({
+        method: 'POST',
+        url: `/v1/orgs/${acme.id}/profiles`,
+        headers,
+        payload: { name: `logs-${randomBytes(3).toString('hex')}` },
+      });
+      const profile = created.json().id as string;
+      const done = await backup(logged, { headers, org: acme.id, profile, device: ownerDevice, base: 0 });
+      expect(done.operation.state).toBe('committed');
+      const plan = (
+        await logged.app.inject({
+          method: 'POST',
+          url: `/v1/orgs/${acme.id}/profiles/${profile}/restore-plans`,
+          headers,
+          payload: {},
+        })
+      ).json() as RestorePlan;
+      const secrets = [done.init.key.data_key, plan.key.data_key, plan.download.url];
+      const audit = await logged.owner.query<{ t: string }>(
+        'select details::text as t from audit_events where org_id = $1',
+        [acme.id],
+      );
+      const events = await logged.owner.query<{ t: string }>(
+        'select redacted_payload::text as t from outbox_events where org_id = $1',
+        [acme.id],
+      );
+      const haystack = [...lines, ...audit.rows.map((r) => r.t), ...events.rows.map((r) => r.t)].join('\n');
+      expect(lines.length).toBeGreaterThan(0);
+      for (const s of secrets) expect(haystack).not.toContain(s);
+    } finally {
+      await logged.close();
+    }
+  });
+});
