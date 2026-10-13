@@ -66,4 +66,42 @@ and real-S3 tests in CI; new: 13 agency scenarios including the 10,000-profile t
 role matrix, every new route in the cross-tenant swaps); contracts 14 (shared policy vectors); UI unit 30; UI end-to-end
 157 (9 new flows plus 11 new screens in light and dark with axe); worker 7.
 
-CI: see the end of this document.
+CI: full run green on Windows x64, macOS arm64 and Linux at `0f792f1`
+([ci 38440901373](https://github.com/bibekthapamgr/antibrowser/actions/runs/38440901373): fmt, clippy, all Rust tests per
+OS including the desktop agency tests, TypeScript + PostgreSQL 18 with the agency, role-matrix and cross-tenant suites,
+sync end to end with shared sessions, UI e2e with axe, license inventory, secret scan). Installers in
+[desktop internal build 38443560603](https://github.com/bibekthapamgr/antibrowser/actions/runs/38443560603); the test
+server update path in [deploy scripts 38435075219](https://github.com/bibekthapamgr/antibrowser/actions/runs/38435075219)
+(scripts unchanged since).
+
+## Test server
+Updating with `vps-setup.sh` (one run: the script itself did not change) applies migration
+`0006_agency_workspace.sql` and runs the API tests, including the 10,000-profile dashboard check; nothing new to
+install. Organization dashboards, tasks, bookmarks and the extension policy go through the same SSH tunnel as before
+([setup](setup.md#test-server-linux-vps)).
+
+## Found and fixed during verification
+- Chromium's `--window-name` switch was the first idea for showing the client in the window title; tried in Chromium
+  141 under a virtual display it does not change the title, so the client is shown with a built-in profile picture in
+  the toolbar instead (verified the same way: the picture appears, indices 27–55).
+- The extension inventory query grouped by an expression PostgreSQL rejects in a subquery; the API test found it before
+  any screen used it.
+- The check before opening judged the extensions recorded at the previous open; it now reads the closed profile's
+  files first, so an extension installed last session is judged before the browser starts.
+- Bulk confirmations now work for "select all matching" (the shell resolves the filter like the bulk action does).
+- On Windows the downloads test compared a `\\?\` path with the ordinary form the app stores; the test now compares
+  ordinary forms (found by the Windows CI job).
+
+## Known limitations
+- Enforce mode turns all extensions off for a session and cannot stop an install during a session (no per-profile
+  Chromium policy without administering the computer); it takes effect at the next open.
+- Tasks and shared bookmarks exist for organization clients; local workspaces have the overview, downloads and
+  extensions.
+- The memory estimate is this computer's median; it does not predict what a given site will use. RSS counts shared
+  memory in each process.
+- Profiles are never closed automatically; long-open profiles get a reminder only.
+- The client picture replaces a picture chosen inside the browser for profiles that have a client.
+
+## Release
+No release boundary at this milestone (team beta was reached at 08; paid launch after 14). Internal builds remain
+unsigned (owner action, milestone 12 updater).
