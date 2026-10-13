@@ -1,6 +1,6 @@
 {
   "name": "@pb/api",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,7 @@
     "./migrate": "./scripts/migrate.ts",
     "./seed": "./scripts/seed.ts"
   },
-  "description": "Control-plane API (Fastify modular monolith). Milestone 01 skeleton.",
+  "description": "Control-plane API (Fastify modular monolith): identity, organizations, authorization, leases and snapshots.",
   "scripts": {
     "dev": "node --env-file=../../infra/env/dev.env.example --watch src/server.ts",
     "start": "node src/server.ts",

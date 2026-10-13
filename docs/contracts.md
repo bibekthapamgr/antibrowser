@@ -45,7 +45,7 @@ Every organization-scoped row has `org_id`. Membership and role are derived on t
 ## Events (transactional outbox)
 Envelope: `event_id, org_id, actor_id, aggregate_id, aggregate_version, event_type, created_at, redacted_payload`. Written in the same transaction as the state change. Payload keys such as `password`, `secret`, `token`, `cookie`, `authorization`, `private_key` are dropped at any depth. Consumers deduplicate on `(consumer, event_id)`.
 
-Emitted now: `profile.created`, `profile.updated`, `lease.acquired`, `lease.renewed`, `lease.released`, `snapshot.committed`. Reserved: `device.registered` (devices become org-visible in 06).
+Emitted now: `profile.created`, `profile.updated`, `profile.deleted`, `lease.acquired`, `lease.renewed`, `lease.released`, `snapshot.committed`, and since 06 `organization.created`, `organization.updated`, `client.created`, `client.updated`, `membership.created`, `membership.updated`, `membership.removed`, `grant.created`, `grant.removed`. Reserved: `device.registered` (devices are account-level, not organization events). The security audit (who did what, including refused attempts) is a separate table, `audit_events` (ADR-0013).
 
 ## Leases
 `profile_leases(profile_id unique, holder_device_id, holder_user_id, fencing_token, expires_at, …)`. Expiry uses the database clock only. Each acquisition takes the next value of a monotonically increasing sequence. TTL 30–600 s (default 120). Writes that depend on the lease present the token and are refused if a newer lease exists.

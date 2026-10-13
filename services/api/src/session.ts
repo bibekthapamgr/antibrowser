@@ -54,9 +54,8 @@ export async function createSessionKeys(opts: {
     if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.d)
       throw new Error('SESSION_SIGNING_KEY must be a P-256 private JWK');
     const kid = jwk.kid ?? thumbprintId(jwk);
-    signing = { kid, key: await importJWK(jwk, 'ES256') };
-    const { d: _d, ...publicJwk } = jwk;
-    verifying.push({ kid, key: await importJWK(publicJwk, 'ES256') });
+    signing = { kid, key: await importJWK(ecKey(jwk, true), 'ES256') };
+    verifying.push({ kid, key: await importJWK(ecKey(jwk, false), 'ES256') });
   } else {
     // dev/test only (packages/config requires a configured key elsewhere): one key per process.
     const pair = await generateKeyPair('ES256', { extractable: true });
@@ -66,7 +65,7 @@ export async function createSessionKeys(opts: {
   }
   for (const jwk of opts.previousPublicKeysJwk ? (JSON.parse(opts.previousPublicKeysJwk) as JWK[]) : []) {
     if (jwk.d) throw new Error('SESSION_PREVIOUS_PUBLIC_KEYS must not contain private keys');
-    verifying.push({ kid: jwk.kid ?? thumbprintId(jwk), key: await importJWK(jwk, 'ES256') });
+    verifying.push({ kid: jwk.kid ?? thumbprintId(jwk), key: await importJWK(ecKey(jwk, false), 'ES256') });
   }
 
   return {
@@ -118,6 +117,15 @@ export async function createSessionKeys(opts: {
 }
 
 const seconds = (d: Date) => Math.floor(d.getTime() / 1000);
+
+/** The P-256 key material only (exported JWKs may also carry `key_ops`/`ext`, which do not fit the public half). */
+function ecKey(jwk: JWK, withPrivate: boolean): JWK {
+  const { x, y, d } = jwk;
+  if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !x || !y || (withPrivate && !d)) {
+    throw new Error('Session keys must be P-256 JWKs');
+  }
+  return withPrivate && d ? { kty: 'EC', crv: 'P-256', x, y, d } : { kty: 'EC', crv: 'P-256', x, y };
+}
 
 function decodeSegment(token: string, index: number): Record<string, unknown> | null {
   try {

@@ -11,7 +11,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { loadConfig } from '@pb/config/env';
 import type { Session } from '@pb/contracts';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type App, buildApp } from '../src/app.ts';
 import { createPool } from '../src/db.ts';
 
@@ -37,6 +37,8 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
   let app: App;
   let pool: pg.Pool;
   let owner: pg.Pool;
+  let version = 'unknown';
+  let passed = 0;
 
   beforeAll(async () => {
     const admin = await form(`${KC}/realms/master/protocol/openid-connect/token`, {
@@ -79,6 +81,10 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
       }),
     });
     expect(created.status).toBe(201);
+    const info = await fetch(`${KC}/admin/serverinfo`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    version = ((await info.json()) as { systemInfo?: { version?: string } }).systemInfo?.version ?? 'unknown';
 
     const config = loadConfig({ ...process.env, OIDC_ISSUER: issuer, OIDC_CLIENT_ID: CLIENT });
     pool = createPool(config.databaseUrl, 5);
@@ -92,7 +98,17 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     await app.ready();
   }, 60_000);
 
+  afterEach((ctx) => {
+    if (ctx.task.result?.state !== 'fail') passed++;
+  });
+
   afterAll(async () => {
+    // Evidence in the CI run summary (annotations are kept with the run).
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      console.log(
+        `::notice title=Keycloak sign-in::Keycloak ${version}: ${passed} of 5 sign-in checks passed (PKCE, state, iss, nonce, one-time ID token, re-authentication)`,
+      );
+    }
     await app?.close();
     await pool?.end();
     await owner?.end();

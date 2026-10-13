@@ -98,7 +98,7 @@ See [docs/spikes/README.md](spikes/README.md). Run as a **non-root** user so the
 | | dev | test | staging | prod |
 |---|---|---|---|---|
 | Database | `pb_dev` local | `pb_test` local/CI | managed, own account | managed, own account |
-| Identity | dev HS256 tokens | dev tokens | staging OIDC tenant | prod OIDC tenant |
+| Identity | dev HS256 tokens; optional local Keycloak | dev tokens + an in-process test provider; Keycloak in CI | staging OIDC realm | prod OIDC realm |
 | Bucket | `pb-snapshots-dev` (MinIO) | none | `pb-snapshots-staging` | `pb-snapshots-prod` |
 | Secrets | fixtures in repo | fixtures in repo | secret manager | secret manager |
 
@@ -115,4 +115,21 @@ ssh root@<server> 'bash /root/vps-setup.sh'      # second run deploys
 # later updates, on the server: \cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh
 ssh -N -L 8080:127.0.0.1:8080 root@<server>      # then http://127.0.0.1:8080/v1/health on your machine
 ```
-The server runs with `APP_ENV=dev` and development tokens, so the API must stay private until OIDC login exists (milestone 06).
+The server runs with `APP_ENV=dev` and development tokens, so the API must stay private (bound to `127.0.0.1`, reached
+through the SSH tunnel).
+
+## Sign-in for development (milestone 06)
+
+Sign-in needs an OpenID Connect provider; Keycloak is the reference ([identity/keycloak-setup.md](identity/keycloak-setup.md)).
+For a private test setup, run Keycloak next to the API (for example on port 8081, bound to `127.0.0.1`), create the
+realm and the public `projectbrowser://auth/callback` client as described there, and add to the API environment:
+
+```
+OIDC_ISSUER=http://127.0.0.1:8081/realms/project-browser
+OIDC_CLIENT_ID=project-browser-desktop
+```
+
+Plain `http` is accepted only for loopback addresses (API and desktop), so tunnel both ports
+(`ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 root@<server>`), then in the desktop app set the organization
+server to `http://127.0.0.1:8080` and sign in. Anything reachable from the internet must use https and
+`APP_ENV=staging|prod`, which also requires `SESSION_SIGNING_KEY`.
