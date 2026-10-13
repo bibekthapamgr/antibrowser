@@ -8,6 +8,7 @@
  * repository.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { loadConfig } from '@pb/config/env';
 import type { Session } from '@pb/contracts';
 import pg from 'pg';
@@ -103,10 +104,11 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
   });
 
   afterAll(async () => {
-    // Evidence in the CI run summary (annotations are kept with the run).
-    if (process.env.GITHUB_ACTIONS === 'true') {
-      console.log(
-        `::notice title=Keycloak sign-in::Keycloak ${version}: ${passed} of 5 sign-in checks passed (PKCE, state, iss, nonce, one-time ID token, re-authentication)`,
+    // Evidence for the CI run summary: ci.yml turns this file into an annotation (and fails if it is missing).
+    if (process.env.PB_KEYCLOAK_RESULT) {
+      writeFileSync(
+        process.env.PB_KEYCLOAK_RESULT,
+        `Keycloak ${version}: ${passed} of 5 sign-in checks passed (PKCE, state, iss, nonce, one-time ID token, unverified e-mail, re-authentication)`,
       );
     }
     await app?.close();

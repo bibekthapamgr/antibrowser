@@ -436,7 +436,7 @@ fn signs_in_with_pkce_and_keeps_only_the_refresh_token_in_the_keychain() {
     let enroll = &mock.requests("POST", "/v1/devices")[0];
     let body: Value = serde_json::from_str(&enroll.body).unwrap_or(Value::Null);
     assert_eq!(body["nonce"], json!(q["nonce"]));
-    assert_eq!(body["platform"], "linux-x64");
+    assert_eq!(body["platform"], pb_desktop_lib::state::platform());
 
     // Keychain: exactly the refresh token. Database and WAL: no token of any kind.
     let refresh = mock.world().refresh.clone().unwrap_or_default();

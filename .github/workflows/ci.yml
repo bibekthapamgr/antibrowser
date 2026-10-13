@@ -69,7 +69,12 @@ jobs:
           for i in $(seq 1 90); do curl -sf http://127.0.0.1:8081/realms/master >/dev/null && break; sleep 2; done
           curl -sf http://127.0.0.1:8081/realms/master >/dev/null || { docker logs keycloak | tail -50; exit 1; }
           echo "PB_KEYCLOAK_URL=http://127.0.0.1:8081" >> "$GITHUB_ENV"
+          echo "PB_KEYCLOAK_RESULT=$RUNNER_TEMP/keycloak-result.txt" >> "$GITHUB_ENV"
       - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
+      - name: Keycloak sign-in evidence
+        run: |
+          [ -s "$PB_KEYCLOAK_RESULT" ] || { echo "::error title=Keycloak sign-in::the Keycloak test did not run"; exit 1; }
+          echo "::notice title=Keycloak sign-in::$(cat "$PB_KEYCLOAK_RESULT")"
       - name: Permission matrix document is up to date
         run: |
           pnpm run docs:permissions >/dev/null
