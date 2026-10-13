@@ -1057,6 +1057,54 @@ export const ExtensionsView = Type.Object({
 });
 export type ExtensionsView = Static<typeof ExtensionsView>;
 
+// ---------------------------------------------------------------- milestone 10: automation on this computer
+const JobIdPattern = '^job_[0-9A-HJKMNP-TV-Z]{26}$';
+export const AutomationRun = Type.Object({
+  job_id: Type.String({ pattern: JobIdPattern }),
+  org_id: Type.String({ pattern: OrgIdPattern }),
+  org_profile_id: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+  /** The profile on this computer (once found or restored here). */
+  profile_id: Nullable(Type.String({ pattern: ProfileIdPattern })),
+  label: Nullable(Type.String({ maxLength: 120 })),
+  attempt: Type.Integer({ minimum: 1 }),
+  /** Session leases this job took on this computer. */
+  opens: Type.Integer({ minimum: 0 }),
+  state: Type.Enum(['opening', 'running', 'holding', 'closing', 'done']),
+  /** The result this computer reported (null: given back, or reported by the server instead). */
+  outcome: Nullable(Type.Enum(['SUCCEEDED', 'FAILED', 'CANCELED'])),
+  /** A job error code, or ABANDONED / ENDED / DISCONNECTED when this computer stopped reporting. */
+  error_code: Nullable(Type.String({ maxLength: 40 })),
+  steps_total: Type.Integer({ minimum: 0 }),
+  steps_done: Type.Integer({ minimum: 0 }),
+  /** While a debugging session is open: the loopback address a Playwright script on this computer connects to. */
+  debug_endpoint: Nullable(Type.String({ maxLength: 120 })),
+  started_at: Type.String(),
+  updated_at: Type.String(),
+});
+export type AutomationRun = Static<typeof AutomationRun>;
+export const AutomationEnrollment = Type.Object({
+  org_id: Type.String({ pattern: OrgIdPattern }),
+  agent_id: Type.String({ pattern: '^agt_[0-9A-HJKMNP-TV-Z]{26}$' }),
+  accepts: Type.Enum(['mine', 'org']),
+  max_jobs: Type.Integer({ minimum: 1, maximum: 10 }),
+  created_at: Type.String(),
+  /** Seconds since the organization's server last answered this computer (null: not yet since the app started). */
+  last_poll_seconds: Nullable(Type.Integer({ minimum: 0 })),
+  poll_error: Nullable(Type.String()),
+  /** False when an admin turned this computer off in the organization (no new jobs); null while unknown. */
+  enabled: Nullable(Type.Boolean()),
+  running: Type.Integer({ minimum: 0 }),
+});
+export type AutomationEnrollment = Static<typeof AutomationEnrollment>;
+export const AutomationStatus = Type.Object({
+  enrollments: Type.Array(AutomationEnrollment),
+  /** "Allow Playwright connections" on this computer (off by default). */
+  allow_debugging: Type.Boolean(),
+  running: Type.Array(Type.String({ pattern: JobIdPattern })),
+  runs: Type.Array(AutomationRun),
+});
+export type AutomationStatus = Static<typeof AutomationStatus>;
+
 export const DiagnosticsPreview = Type.Object({
   preview_id: Type.String({ maxLength: 40 }),
   /** Exactly what is saved. */
@@ -1473,6 +1521,30 @@ export const COMMANDS = {
     }),
     result: ExtensionsView,
   },
+  // Milestone 10: automation on this computer (ADR-0017). Errors: AUTOMATION_FORBIDDEN, AUTOMATION_NOT_ENROLLED,
+  // AUTOMATION_BUSY, UNKNOWN_JOB, CLOUD_OFFLINE, CLOUD_SIGNED_OUT, CLOUD_UNAVAILABLE.
+  get_automation_status: { args: Type.Object({}), result: AutomationStatus },
+  /** Lets this computer run the organization's jobs, as the person signed in here (only profiles they may open). */
+  automation_enroll: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      accepts: Type.Enum(['mine', 'org']),
+      maxJobs: Type.Integer({ minimum: 1, maximum: 10 }),
+    }),
+    result: AutomationStatus,
+  },
+  /** Stops taking the organization's jobs here (refused while its jobs run here). */
+  automation_unenroll: {
+    args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
+    result: AutomationStatus,
+  },
+  /** Stops a job running here: reported as canceled; the profile closes and its closing backup uploads. */
+  automation_stop_job: {
+    args: Type.Object({ jobId: Type.String({ pattern: JobIdPattern }) }),
+    result: AutomationStatus,
+  },
+  /** "Allow Playwright connections" on this computer (audited; turning it off ends open debugging sessions). */
+  automation_set_debugging: { args: Type.Object({ allow: Type.Boolean() }), result: AutomationStatus },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -1504,6 +1576,16 @@ export const EVENTS = {
     phase: Type.Optional(Nullable(Type.String())),
     error_code: Type.Optional(Nullable(Type.String())),
     requests: Type.Optional(Type.Array(TeamRequest, { maxItems: 50 })),
+  }),
+  /** Automation on this computer moved on (milestone 10): a poll (`error_code`, `enrolled`) or a job's state. */
+  automation: Type.Object({
+    kind: Type.Enum(['poll', 'job']),
+    org_id: Type.String({ pattern: OrgIdPattern }),
+    job_id: Type.Optional(Type.String({ pattern: JobIdPattern })),
+    state: Type.Optional(Type.String()),
+    outcome: Type.Optional(Nullable(Type.String())),
+    error_code: Type.Optional(Nullable(Type.String())),
+    enrolled: Type.Optional(Type.Boolean()),
   }),
   account: Type.Object({
     status: Type.Enum(['signed_in', 'signed_out', 'expired', 'failed']),

@@ -33,7 +33,12 @@ async function tokenFor(scopes: string[]): Promise<string> {
 beforeAll(async () => {
   h = await harness();
   owner = await h.signIn();
-  const o = await h.app.inject({ method: 'POST', url: '/v1/organizations', headers: owner.headers, payload: { name: 'SDK (test)' } });
+  const o = await h.app.inject({
+    method: 'POST',
+    url: '/v1/organizations',
+    headers: owner.headers,
+    payload: { name: 'SDK (test)' },
+  });
   org = o.json().id;
   await h.app.inject({
     method: 'PUT',
@@ -79,7 +84,12 @@ async function runAsComputer(jobId: string) {
   });
   const l = lease.json().lease;
   const report = (body: Record<string, unknown>) =>
-    h.app.inject({ method: 'POST', url: url(`/automation/jobs/${jobId}/report`), headers: owner.headers, payload: { attempt: c.job.attempt, ...body } });
+    h.app.inject({
+      method: 'POST',
+      url: url(`/automation/jobs/${jobId}/report`),
+      headers: owner.headers,
+      payload: { attempt: c.job.attempt, ...body },
+    });
   await report({ type: 'started', lease_id: l.id, fencing_token: l.fencing_token });
   for (const s of c.steps) {
     await report({ type: 'step_started', seq: s.seq });
@@ -87,7 +97,9 @@ async function runAsComputer(jobId: string) {
     if (s.action === 'screenshot') {
       const up = await h.app.inject({
         method: 'PUT',
-        url: url(`/automation/jobs/${jobId}/steps/${s.seq}/artifact?attempt=${c.job.attempt}&width=800&height=600`),
+        url: url(
+          `/automation/jobs/${jobId}/steps/${s.seq}/artifact?attempt=${c.job.attempt}&width=800&height=600`,
+        ),
         headers: { ...owner.headers, 'content-type': 'image/jpeg' },
         payload: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(64)]),
       });
@@ -123,7 +135,10 @@ describe('SDK against the API', () => {
     await runAsComputer(first.job.id);
     const done = await waiting;
     expect(done.job.state).toBe('SUCCEEDED');
-    expect(done.steps.find((s) => s.action === 'open_url')?.output).toEqual({ final_origin: SITE, http_status: 200 });
+    expect(done.steps.find((s) => s.action === 'open_url')?.output).toEqual({
+      final_origin: SITE,
+      http_status: 200,
+    });
     const art = done.artifacts[0];
     expect(art).toBeDefined();
     const bytes = await pb.jobs.screenshot(first.job.id, art?.id ?? '');
@@ -133,7 +148,11 @@ describe('SDK against the API', () => {
   });
 
   it('reports scope and approval errors as ApiError; cancels its jobs', async () => {
-    const readOnly = new ProjectBrowser({ baseUrl: base, orgId: org, token: await tokenFor(['profiles:read']) });
+    const readOnly = new ProjectBrowser({
+      baseUrl: base,
+      orgId: org,
+      token: await tokenFor(['profiles:read']),
+    });
     const denied = await readOnly.jobs
       .create({ profile_id: profile, steps: [{ action: 'open_url', url: `${SITE}/` }] })
       .catch((e: unknown) => e);
@@ -144,7 +163,10 @@ describe('SDK against the API', () => {
       .create({ profile_id: profile, steps: [{ action: 'open_url', url: 'https://elsewhere.example.net/' }] })
       .catch((e: unknown) => e);
     expect(off).toMatchObject({ status: 422, code: 'URL_NOT_APPROVED' });
-    const { job } = await pb.jobs.create({ profile_id: profile, steps: [], keep_open_minutes: 5 }, { idempotencyKey: idemKey() });
+    const { job } = await pb.jobs.create(
+      { profile_id: profile, steps: [], keep_open_minutes: 5 },
+      { idempotencyKey: idemKey() },
+    );
     const canceled = await pb.jobs.cancel(job.id, 'not needed');
     expect(canceled.state).toBe('CANCELED');
     await expect(pb.jobs.cancel(job.id)).rejects.toMatchObject({ code: 'JOB_FINISHED' });

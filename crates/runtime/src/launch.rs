@@ -13,10 +13,14 @@
 //!    time zones come from fixed lists, window sizes are bounded;
 //! 9. the only extension switch ever added is `--disable-extensions` (an organization policy in enforce mode,
 //!    milestone 09); switches that load or allow extensions (`--load-extension`, `--disable-extensions-except`) are
-//!    never accepted.
+//!    never accepted;
+//! 10. an automation session (milestone 10) adds `--enable-automation` (websites can tell, and the window says so)
+//!     and the launcher connects the DevTools protocol over a protected pipe (`--remote-debugging-pipe`, on Windows
+//!     with `--remote-debugging-io-pipes`): only this app holds the other ends. `--remote-debugging-port` and
+//!     `--remote-debugging-address` are never added, and no switch from a job or the UI is accepted.
 //!
 //! Only then is the `Launcher` called. The process is started from a structured argument list (never a shell
-//! string), the Chromium sandbox is never disabled, and no remote-debugging switch is ever added. This crate does
+//! string), the Chromium sandbox is never disabled, and no remote-debugging port is ever opened. This crate does
 //! not alter browser fingerprinting signals. See docs/security-model.md.
 
 use crate::environment::{Platform, PrivacyConfig};
@@ -87,6 +91,8 @@ pub struct LaunchSpec {
     pub dirs: ProfileDirs,
     /// Environment set for the browser on top of the minimal inherited one (e.g. `TZ`).
     pub env: Vec<(String, String)>,
+    /// Milestone 10: connect the DevTools protocol over a protected pipe (an automation session).
+    pub devtools: bool,
 }
 
 /// The profile is routed through the manager's loopback gateway on this port (fail-closed: no direct route).
@@ -105,6 +111,8 @@ pub struct LaunchRequest<'a> {
     /// The organization's extension policy turned extensions off for this session (milestone 09): Chromium's own
     /// `--disable-extensions` switch. Nothing else about extensions is ever passed on the command line.
     pub extensions_disabled: bool,
+    /// An automation session (milestone 10): `--enable-automation` and the DevTools protocol over a protected pipe.
+    pub automation: bool,
 }
 
 pub const MAX_START_URLS: usize = 10;
@@ -200,6 +208,10 @@ pub fn prepare_launch(
     if request.extensions_disabled {
         args.push("--disable-extensions".into());
     }
+    if request.automation {
+        // Websites can tell the session is automated (navigator.webdriver), and the window shows it.
+        args.push("--enable-automation".into());
+    }
     let mut env = vec![];
     if let Some(tz) = &environment.timezone
         && Platform::current() != Platform::Windows
@@ -217,6 +229,7 @@ pub fn prepare_launch(
         args,
         dirs,
         env,
+        devtools: request.automation,
     })
 }
 
@@ -227,10 +240,12 @@ fn flag(name: &str, path: &Path) -> OsString {
 }
 
 /// A started browser process. `child` is kept by the supervisor so the process can be reaped; it is `None` for
-/// test launchers and for processes adopted after a manager restart.
+/// test launchers and for processes adopted after a manager restart. `devtools`: this app's ends of the protected
+/// DevTools pipe (automation sessions only).
 pub struct Spawned {
     pub pid: u32,
     pub child: Option<Child>,
+    pub devtools: Option<pb_devtools::PipeEnds>,
 }
 
 pub trait Launcher: Send + Sync {
@@ -242,19 +257,34 @@ pub struct SystemLauncher;
 
 impl Launcher for SystemLauncher {
     fn spawn(&self, spec: &LaunchSpec) -> Result<Spawned, LaunchError> {
-        let child: Child = Command::new(&spec.executable)
-            .args(&spec.args)
-            .stdin(Stdio::null())
+        let mut cmd = Command::new(&spec.executable);
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .env_clear()
             .envs(safe_env())
-            .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .spawn()
-            .map_err(LaunchError::Spawn)?;
+            .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        // URLs come after `--`: the pipe switches go before them.
+        let split = spec
+            .args
+            .iter()
+            .position(|a| a == "--")
+            .unwrap_or(spec.args.len());
+        cmd.args(&spec.args[..split]);
+        let pipes = if spec.devtools {
+            let p = pb_devtools::DevtoolsPipes::create().map_err(LaunchError::Spawn)?;
+            p.attach(&mut cmd);
+            Some(p)
+        } else {
+            None
+        };
+        cmd.args(&spec.args[split..]);
+        let child: Child = cmd.spawn().map_err(LaunchError::Spawn)?;
         Ok(Spawned {
             pid: child.id(),
             child: Some(child),
+            // The browser's ends are closed here now that it has its own copies.
+            devtools: pipes.map(pb_devtools::DevtoolsPipes::into_ends),
         })
     }
 }
@@ -371,11 +401,68 @@ mod tests {
                     network: None,
                     environment: None,
                     extensions_disabled: disabled,
+                    automation: false,
                 },
             )
             .map(|spec| spec.args.iter().any(|a| a == "--disable-extensions"))
             .map_err(|e| e.code());
             assert_eq!(got, expected, "{switch:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn automation_sessions_say_so_and_never_open_a_debugging_port() -> Result<(), LaunchError> {
+        let (_tmp, root, browser) = setup();
+        let profile = id();
+        let urls = vec!["https://example.test/".to_owned()];
+        let spec = |automation: bool, switches: &[String]| {
+            prepare_launch(
+                &root,
+                Some(&browser),
+                ProfileState {
+                    exists: true,
+                    running: false,
+                },
+                LaunchRequest {
+                    profile_id: &profile,
+                    start_urls: &urls,
+                    switches,
+                    network: None,
+                    environment: None,
+                    extensions_disabled: false,
+                    automation,
+                },
+            )
+        };
+        let auto = spec(true, &[])?;
+        assert!(auto.devtools);
+        assert!(auto.args.iter().any(|a| a == "--enable-automation"));
+        let plain = spec(false, &[])?;
+        assert!(!plain.devtools);
+        assert!(!plain.args.iter().any(|a| a == "--enable-automation"));
+        for s in [&auto, &plain] {
+            assert!(
+                !s.args
+                    .iter()
+                    .any(|a| a.to_string_lossy().starts_with("--remote-debugging")),
+                "the pipe switch is the launcher's, never part of the spec"
+            );
+        }
+        // Nothing from configuration can open a port or turn automation on.
+        for bad in [
+            "--remote-debugging-port=9222",
+            "--remote-debugging-pipe",
+            "--remote-debugging-address=0.0.0.0",
+            "--enable-automation",
+        ] {
+            assert_eq!(
+                spec(false, &[bad.to_owned()])
+                    .map(|_| ())
+                    .map_err(|e| e.code()),
+                Err("DISALLOWED_SWITCH"),
+                "{bad}"
+            );
         }
         Ok(())
     }
@@ -400,6 +487,7 @@ mod tests {
                 network: None,
                 environment: None,
                 extensions_disabled: false,
+                automation: false,
             },
         )?;
         let args: Vec<String> = spec
@@ -477,6 +565,7 @@ mod tests {
                     network: None,
                     environment: None,
                     extensions_disabled: false,
+                    automation: false,
                 },
             )
             .err()
@@ -528,6 +617,7 @@ mod tests {
                     network: None,
                     environment: None,
                     extensions_disabled: false,
+                    automation: false,
                 },
             );
             assert!(matches!(err, Err(LaunchError::DisallowedSwitch)), "{bad}");
@@ -547,6 +637,7 @@ mod tests {
                 network: None,
                 environment: None,
                 extensions_disabled: false,
+                automation: false,
             },
         );
         assert!(matches!(err, Err(LaunchError::BadStartUrl)));
@@ -581,6 +672,7 @@ mod tests {
                 }),
                 environment: Some(&env),
                 extensions_disabled: false,
+                automation: false,
             },
         )?;
         let args: Vec<String> = spec
@@ -641,6 +733,7 @@ mod tests {
                 network: None,
                 environment: Some(&bad),
                 extensions_disabled: false,
+                automation: false,
             },
         );
         assert!(matches!(err, Err(LaunchError::BadEnvironment)));
@@ -687,6 +780,7 @@ mod tests {
                     network: None,
                     environment: None,
                     extensions_disabled: false,
+                    automation: false,
                 },
             );
             assert!(matches!(err, Err(LaunchError::BrowserNotConfigured)));

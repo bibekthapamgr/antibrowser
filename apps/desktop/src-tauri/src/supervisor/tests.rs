@@ -88,7 +88,11 @@ fn spawn(fx: &Fx, pid: u32) {
         .attach_spawn(
             &fx.store,
             &fx.id,
-            Spawned { pid, child: None },
+            Spawned {
+                pid,
+                child: None,
+                devtools: None,
+            },
             Path::new("/rt/chrome"),
         )
         .unwrap_or_else(|e| panic!("{e}"));

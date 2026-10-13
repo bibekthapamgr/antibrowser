@@ -86,6 +86,11 @@ const COMMANDS: &[&str] = &[
     "get_extensions",
     "rescan_extensions",
     "review_extension",
+    "get_automation_status",
+    "automation_enroll",
+    "automation_unenroll",
+    "automation_stop_job",
+    "automation_set_debugging",
 ];
 
 fn main() {

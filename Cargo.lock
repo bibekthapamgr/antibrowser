@@ -3084,6 +3084,7 @@ dependencies = [
  "hex",
  "keyring",
  "pb-cloud",
+ "pb-devtools",
  "pb-import",
  "pb-netproxy",
  "pb-runtime",
@@ -3159,6 +3160,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
  "hex",
+ "pb-devtools",
  "pb-seal",
  "serde",
  "serde_json",

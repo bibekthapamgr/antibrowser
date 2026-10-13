@@ -81,7 +81,10 @@ impl FakeBrowser {
     }
 
     pub fn methods(&self) -> Vec<String> {
-        self.state.lock().map(|s| s.methods.clone()).unwrap_or_default()
+        self.state
+            .lock()
+            .map(|s| s.methods.clone())
+            .unwrap_or_default()
     }
 
     pub fn closed(&self) -> bool {
@@ -124,7 +127,11 @@ fn serve(state: &Mutex<FakeState>, reader: std::io::PipeReader, mut writer: std:
             continue;
         };
         let id = v.get("id").cloned().unwrap_or(Value::Null);
-        let method = v.get("method").and_then(Value::as_str).unwrap_or("").to_owned();
+        let method = v
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         let params = v.get("params").cloned().unwrap_or(Value::Null);
         let session = v.get("sessionId").cloned();
         let mut out: Vec<Value> = vec![];

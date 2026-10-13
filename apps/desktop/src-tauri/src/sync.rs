@@ -27,8 +27,9 @@ use pb_sync::api::SnapshotInfo;
 use pb_sync::portability::{self, Here, Portability};
 use pb_sync::rest::{RestApi, Transport, id_ok};
 use pb_sync::{
-    ApiError, Engine, Job, JobStore, MemoryJobs, Objects, Opened, Poll, RestoreChecks, RestoreJob,
-    RestoreState, RestoreTarget, SessionApi, Source, SyncApi, SyncError, UploadJob, UploadState,
+    ApiError, AutomationApi, Engine, Job, JobStore, MemoryJobs, Objects, Opened, Poll,
+    RestoreChecks, RestoreJob, RestoreState, RestoreTarget, SessionApi, Source, SyncApi, SyncError,
+    UploadJob, UploadState,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -46,8 +47,8 @@ const WORKER_TICK: Duration = Duration::from_secs(60);
 
 /// The control plane (snapshots and session leases) and object storage, as one object (tests use
 /// [`pb_sync::fake::FakeClient`]).
-pub trait Backend: SyncApi + SessionApi + Objects {}
-impl<T: SyncApi + SessionApi + Objects + ?Sized> Backend for T {}
+pub trait Backend: SyncApi + SessionApi + Objects + AutomationApi {}
+impl<T: SyncApi + SessionApi + Objects + AutomationApi + ?Sized> Backend for T {}
 
 pub struct SyncRuntime {
     transfer: Transfer,
@@ -120,6 +121,9 @@ impl Transport for Shell<'_> {
         body: Option<&Value>,
     ) -> Result<Value, ApiError> {
         self.0.shell_api(method, path, idempotency_key, body)
+    }
+    fn put_bytes(&self, path: &str, content_type: &str, bytes: &[u8]) -> Result<Value, ApiError> {
+        self.0.shell_put_bytes(path, content_type, bytes)
     }
 }
 
@@ -352,6 +356,31 @@ impl AppState {
     pub(crate) fn with_session<T>(
         &self,
         f: impl FnOnce(&dyn SessionApi) -> T,
+    ) -> Result<T, SyncError> {
+        let injected = self.sync.backend.read().ok().and_then(|b| b.clone());
+        if let Some(b) = injected {
+            return Ok(f(&*b));
+        }
+        let store = self
+            .store()
+            .map_err(|_| SyncError::Local("LOCAL_STORE_ERROR".into()))?;
+        let device = store
+            .cloud_state(cs::DEVICE_ID)
+            .ok()
+            .flatten()
+            .filter(|d| id_ok("dev", d))
+            .ok_or(SyncError::Api(ApiError::SignedOut))?;
+        let api = RestApi {
+            transport: Shell(self),
+            device,
+        };
+        Ok(f(&api))
+    }
+
+    /// The automation endpoints (milestone 10) through the same backend.
+    pub(crate) fn with_automation<T>(
+        &self,
+        f: impl FnOnce(&dyn AutomationApi) -> T,
     ) -> Result<T, SyncError> {
         let injected = self.sync.backend.read().ok().and_then(|b| b.clone());
         if let Some(b) = injected {
@@ -1358,6 +1387,21 @@ impl AppState {
         )?;
         Ok(self.view(p))
     }
+}
+
+/// The local profile a "restore here" of this organization profile is being restored into, if one is unfinished
+/// (milestone 10: an automation job waits for it).
+pub(crate) fn restoring_here(store: &LocalStore, org_profile_id: &str) -> Option<ProfileId> {
+    store
+        .open_sync_jobs()
+        .ok()?
+        .iter()
+        .find_map(|j| match load_job(j) {
+            Some(Job::Restore(r)) if r.link_after && r.org_profile_id == org_profile_id => {
+                Some(j.local_profile_id.clone())
+            }
+            _ => None,
+        })
 }
 
 impl AppState {

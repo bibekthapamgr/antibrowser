@@ -8,9 +8,11 @@
 //! - [`engine`]: the resumable state machines.
 //! - [`portability`]: what a restored snapshot keeps on this computer (supported / sign-in required / unsupported).
 //! - [`rest`]: the snapshot API over HTTP (paths, bodies, parsing, error mapping), shared by the desktop and tests.
+//! - [`automation`] (milestone 10): what a computer that runs automation jobs needs from the control plane.
 //! - `fake` (feature `testing`): an in-memory server with the real rules and fault injection.
 
 pub mod api;
+pub mod automation;
 pub mod engine;
 pub mod job;
 pub mod portability;
@@ -23,6 +25,7 @@ pub use api::{
     ApiError, Beat, HandoffNote, HandoffRequest, Holder, LeaseInfo, ObjectError, Objects,
     OpenRequest, SessionApi, SessionOpened, SessionOutcome, SnapshotInfo, SyncApi,
 };
+pub use automation::{AutomationApi, ClaimedJob, JobReport};
 pub use engine::{Engine, Opened, Outcome, Poll, RestoreChecks, Source, SyncError, new_upload};
 pub use job::{
     Job, JobStore, LeaseMode, MemoryJobs, RestoreJob, RestoreState, RestoreTarget, UploadJob,

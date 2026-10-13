@@ -37,6 +37,33 @@ pub struct FakeLauncher {
     pub last_env: Mutex<Vec<(String, String)>>,
     /// The next browser "crashes" immediately (its process never appears).
     pub die_immediately: AtomicBool,
+    /// Automation launches (milestone 10): an in-memory browser answers DevTools on the pipe; this page is what the
+    /// next one shows, and every one started is kept here.
+    pub devtools_page: Mutex<pb_devtools::fake::FakePage>,
+    pub devtools: Mutex<Vec<pb_devtools::fake::FakeBrowser>>,
+}
+
+impl FakeLauncher {
+    /// The newest automation browser.
+    pub fn devtools_browser(&self) -> Option<pb_devtools::fake::FakeBrowser> {
+        self.devtools.lock().ok().and_then(|d| d.last().cloned())
+    }
+
+    fn devtools_for(&self, spec: &LaunchSpec) -> Option<pb_devtools::PipeEnds> {
+        if !spec.devtools {
+            return None;
+        }
+        let page = self
+            .devtools_page
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default();
+        let (browser, ends) = pb_devtools::fake::FakeBrowser::start(page).ok()?;
+        if let Ok(mut d) = self.devtools.lock() {
+            d.push(browser);
+        }
+        Some(ends)
+    }
 }
 
 impl Launcher for FakeLauncher {
@@ -58,7 +85,11 @@ impl Launcher for FakeLauncher {
         }
         let pid = self.next_pid.fetch_add(10, Ordering::SeqCst);
         if self.die_immediately.swap(false, Ordering::SeqCst) {
-            return Ok(Spawned { pid, child: None });
+            return Ok(Spawned {
+                pid,
+                child: None,
+                devtools: None,
+            });
         }
         let exe = spec.executable.to_string_lossy().into_owned();
         let mut main_args = vec![exe.clone()];
@@ -72,7 +103,11 @@ impl Launcher for FakeLauncher {
             &exe,
             vec![exe.clone(), "--type=renderer".into()],
         );
-        Ok(Spawned { pid, child: None })
+        Ok(Spawned {
+            pid,
+            child: None,
+            devtools: self.devtools_for(spec),
+        })
     }
 }
 
@@ -150,6 +185,8 @@ pub fn fixture_with(tmp: tempfile::TempDir, procs: Arc<FakeProcesses>, opts: Opt
         last_args: Mutex::new(vec![]),
         last_env: Mutex::new(vec![]),
         die_immediately: AtomicBool::new(false),
+        devtools_page: Mutex::new(pb_devtools::fake::FakePage::default()),
+        devtools: Mutex::new(vec![]),
     });
     let events = Arc::new(RecordingSink::default());
     let state = AppState::build(

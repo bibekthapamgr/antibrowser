@@ -139,7 +139,12 @@ impl Page {
         let target = match page {
             Some(t) => t,
             None => hub
-                .call("Target.createTarget", json!({ "url": "about:blank" }), None, CALL)?
+                .call(
+                    "Target.createTarget",
+                    json!({ "url": "about:blank" }),
+                    None,
+                    CALL,
+                )?
                 .get("targetId")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
@@ -197,9 +202,12 @@ impl Page {
         }
         let start = Instant::now();
         let events = self.hub.events();
-        let r = self
-            .hub
-            .call("Page.navigate", json!({ "url": url }), Some(&self.session), timeout)?;
+        let r = self.hub.call(
+            "Page.navigate",
+            json!({ "url": url }),
+            Some(&self.session),
+            timeout,
+        )?;
         if r.get("errorText")
             .and_then(Value::as_str)
             .is_some_and(|e| !e.is_empty())
@@ -260,7 +268,9 @@ impl Page {
             if start.elapsed() >= timeout {
                 return Err(StepError::ConditionNotMet);
             }
-            std::thread::sleep(Duration::from_millis(250).min(timeout.saturating_sub(start.elapsed())));
+            std::thread::sleep(
+                Duration::from_millis(250).min(timeout.saturating_sub(start.elapsed())),
+            );
             if self.hub.is_closed() {
                 return Err(StepError::BrowserClosed);
             }
@@ -301,9 +311,12 @@ impl Page {
     /// A JPEG of the visible part of an approved page, at most `max_bytes` (quality lowered twice before refusing).
     pub fn screenshot(&self, max_bytes: usize) -> Result<Shot, StepError> {
         self.on_approved_page()?;
-        let metrics = self
-            .hub
-            .call("Page.getLayoutMetrics", json!({}), Some(&self.session), CALL)?;
+        let metrics = self.hub.call(
+            "Page.getLayoutMetrics",
+            json!({}),
+            Some(&self.session),
+            CALL,
+        )?;
         let dim = |k: &str| {
             metrics
                 .pointer(&format!("/cssVisualViewport/{k}"))
@@ -349,7 +362,13 @@ impl Page {
 pub fn close_browser(hub: &Hub) -> Result<(), StepError> {
     hub.call("Browser.close", json!({}), None, Duration::from_secs(10))
         .map(|_| ())
-        .or_else(|e| if e == CdpError::Closed { Ok(()) } else { Err(e.into()) })
+        .or_else(|e| {
+            if e == CdpError::Closed {
+                Ok(())
+            } else {
+                Err(e.into())
+            }
+        })
 }
 
 fn elapsed(start: Instant) -> u64 {

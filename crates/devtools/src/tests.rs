@@ -28,7 +28,10 @@ fn opens_an_approved_address_and_reports_origin_status_and_time_only() {
     });
     let page = Page::attach(hub, sites()).unwrap_or_else(|e| panic!("{e}"));
     let opened = page
-        .open_url("https://app.example.com/login?next=%2Fhome", Duration::from_secs(5))
+        .open_url(
+            "https://app.example.com/login?next=%2Fhome",
+            Duration::from_secs(5),
+        )
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(opened.final_origin, "https://app.example.com");
     assert_eq!(opened.http_status, Some(201));
@@ -36,7 +39,9 @@ fn opens_an_approved_address_and_reports_origin_status_and_time_only() {
     // Never a debugging port, a script, an input event or a form.
     for m in fake.methods() {
         assert!(
-            !m.starts_with("Input.") && m != "Runtime.compileScript" && m != "DOM.setAttributeValue",
+            !m.starts_with("Input.")
+                && m != "Runtime.compileScript"
+                && m != "DOM.setAttributeValue",
             "{m}"
         );
     }
@@ -57,7 +62,10 @@ fn refuses_unapproved_addresses_and_pages_that_leave_the_approved_sites() {
         Err(StepError::PageLeftApprovedSites)
     );
     // No screenshot or condition on a page outside the approved sites.
-    assert_eq!(page.screenshot(1 << 20), Err(StepError::PageLeftApprovedSites));
+    assert_eq!(
+        page.screenshot(1 << 20),
+        Err(StepError::PageLeftApprovedSites)
+    );
     assert_eq!(
         page.wait_for(&Condition::Text("x".into()), Duration::from_millis(300)),
         Err(StepError::PageLeftApprovedSites)
@@ -75,24 +83,55 @@ fn waits_for_conditions_with_the_job_text_as_data_never_code() {
         p.title = "Dashboard - Acme".into();
         p.text = "Welcome back".into();
     });
-    assert!(page.wait_for(&Condition::Selector("#ready".into()), Duration::from_secs(2)).is_ok());
-    assert!(page.wait_for(&Condition::TitleContains("Dashboard".into()), Duration::from_secs(2)).is_ok());
-    assert!(page.wait_for(&Condition::Text("Welcome".into()), Duration::from_secs(2)).is_ok());
     assert!(
-        page.wait_for(&Condition::UrlPrefix("http://localhost:3000/app".into()), Duration::from_secs(1))
+        page.wait_for(
+            &Condition::Selector("#ready".into()),
+            Duration::from_secs(2)
+        )
+        .is_ok()
+    );
+    assert!(
+        page.wait_for(
+            &Condition::TitleContains("Dashboard".into()),
+            Duration::from_secs(2)
+        )
+        .is_ok()
+    );
+    assert!(
+        page.wait_for(&Condition::Text("Welcome".into()), Duration::from_secs(2))
             .is_ok()
     );
+    assert!(
+        page.wait_for(
+            &Condition::UrlPrefix("http://localhost:3000/app".into()),
+            Duration::from_secs(1)
+        )
+        .is_ok()
+    );
     assert_eq!(
-        page.wait_for(&Condition::Selector("#never".into()), Duration::from_millis(400)),
+        page.wait_for(
+            &Condition::Selector("#never".into()),
+            Duration::from_millis(400)
+        ),
         Err(StepError::ConditionNotMet)
     );
     // A hostile selector stays a string literal argument of a fixed function.
     let evil = "\")+alert(1)+(\"";
-    let _ = page.wait_for(&Condition::Selector(evil.into()), Duration::from_millis(100));
-    let exprs = fake.state.lock().map(|s| s.expressions.clone()).unwrap_or_default();
+    let _ = page.wait_for(
+        &Condition::Selector(evil.into()),
+        Duration::from_millis(100),
+    );
+    let exprs = fake
+        .state
+        .lock()
+        .map(|s| s.expressions.clone())
+        .unwrap_or_default();
     let last = exprs.last().cloned().unwrap_or_default();
     assert!(last.starts_with("(function(s){try{return document.querySelector(s)!==null}"));
-    assert!(last.ends_with(&format!("({})", serde_json::to_string(evil).unwrap_or_default())));
+    assert!(last.ends_with(&format!(
+        "({})",
+        serde_json::to_string(evil).unwrap_or_default()
+    )));
     let methods = fake.methods();
     assert!(methods.contains(&"Page.createIsolatedWorld".to_owned()));
 }
@@ -156,14 +195,23 @@ fn request(endpoint: &str, headers: &[(&str, &str)]) -> tungstenite::handshake::
         .unwrap_or_else(|e| panic!("request: {e}"));
     for (k, v) in headers {
         req.headers_mut().insert(
-            tungstenite::http::HeaderName::from_bytes(k.as_bytes()).unwrap_or_else(|e| panic!("{e}")),
+            tungstenite::http::HeaderName::from_bytes(k.as_bytes())
+                .unwrap_or_else(|e| panic!("{e}")),
             tungstenite::http::HeaderValue::from_str(v).unwrap_or_else(|e| panic!("{e}")),
         );
     }
     req
 }
 
-fn status_of(r: Result<(tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, tungstenite::handshake::client::Response), tungstenite::Error>) -> u16 {
+fn status_of(
+    r: Result<
+        (
+            tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+            tungstenite::handshake::client::Response,
+        ),
+        tungstenite::Error,
+    >,
+) -> u16 {
     match r {
         Ok(_) => 101,
         Err(tungstenite::Error::Http(resp)) => resp.status().as_u16(),
@@ -181,11 +229,20 @@ fn the_broker_relays_only_an_authenticated_local_script() {
     let bearer = format!("Bearer {secret}");
     // No capability, a wrong one, a web page (Origin), a rebinding Host, a wrong path.
     assert_eq!(status_of(connect(request(&endpoint, &[]))), 401);
-    assert_eq!(status_of(connect(request(&endpoint, &[("authorization", "Bearer nope")]))), 401);
     assert_eq!(
         status_of(connect(request(
             &endpoint,
-            &[("authorization", bearer.as_str()), ("origin", "https://evil.example")]
+            &[("authorization", "Bearer nope")]
+        ))),
+        401
+    );
+    assert_eq!(
+        status_of(connect(request(
+            &endpoint,
+            &[
+                ("authorization", bearer.as_str()),
+                ("origin", "https://evil.example")
+            ]
         ))),
         403
     );
@@ -194,30 +251,51 @@ fn the_broker_relays_only_an_authenticated_local_script() {
     r.headers_mut().insert(
         "host",
         tungstenite::http::HeaderValue::from_str(
-            rebind.trim_start_matches("ws://").split('/').next().unwrap_or(""),
+            rebind
+                .trim_start_matches("ws://")
+                .split('/')
+                .next()
+                .unwrap_or(""),
         )
         .unwrap_or_else(|e| panic!("{e}")),
     );
     assert_eq!(status_of(connect(r)), 403);
     let wrong = endpoint.replace("/cdp/job_", "/cdp/xob_");
-    assert_eq!(status_of(connect(request(&wrong, &[("authorization", bearer.as_str())]))), 404);
+    assert_eq!(
+        status_of(connect(request(
+            &wrong,
+            &[("authorization", bearer.as_str())]
+        ))),
+        404
+    );
     let refusals = b.refusals.lock().map(|r| r.clone()).unwrap_or_default();
     assert_eq!(
         refusals,
-        vec![Refusal::Capability, Refusal::Capability, Refusal::Origin, Refusal::Host, Refusal::Path]
+        vec![
+            Refusal::Capability,
+            Refusal::Capability,
+            Refusal::Origin,
+            Refusal::Host,
+            Refusal::Path
+        ]
     );
 
     // The real script: commands reach the browser, answers come back.
     let (mut ws, _) = connect(request(&endpoint, &[("authorization", bearer.as_str())]))
         .unwrap_or_else(|e| panic!("connect: {e}"));
-    ws.send(Message::text(json!({ "id": 1, "method": "Browser.getVersion" }).to_string()))
-        .unwrap_or_else(|e| panic!("{e}"));
+    ws.send(Message::text(
+        json!({ "id": 1, "method": "Browser.getVersion" }).to_string(),
+    ))
+    .unwrap_or_else(|e| panic!("{e}"));
     let answer: Value = loop {
         if let Message::Text(t) = ws.read().unwrap_or_else(|e| panic!("{e}")) {
             break serde_json::from_str(t.as_str()).unwrap_or(Value::Null);
         }
     };
-    assert_eq!(answer.pointer("/result/product").and_then(Value::as_str), Some("Fake/1.0"));
+    assert_eq!(
+        answer.pointer("/result/product").and_then(Value::as_str),
+        Some("Fake/1.0")
+    );
     // A second client while the first is connected is refused (one at a time).
     let second = connect(request(&endpoint, &[("authorization", bearer.as_str())]));
     if let Ok((mut ws2, _)) = second {
@@ -225,8 +303,10 @@ fn the_broker_relays_only_an_authenticated_local_script() {
         assert!(closed);
     }
     // Ids in the app's own range are never accepted from a client.
-    ws.send(Message::text(json!({ "id": crate::hub::OWN_IDS + 1, "method": "Browser.close" }).to_string()))
-        .unwrap_or_else(|e| panic!("{e}"));
+    ws.send(Message::text(
+        json!({ "id": crate::hub::OWN_IDS + 1, "method": "Browser.close" }).to_string(),
+    ))
+    .unwrap_or_else(|e| panic!("{e}"));
     std::thread::sleep(Duration::from_millis(200));
     assert!(!_fake.closed());
     assert!(hub.relayed() >= 1);
@@ -240,8 +320,17 @@ fn the_capability_expires_if_nobody_connects_in_time() {
     let b = broker(hub, &secret, Duration::from_millis(1));
     std::thread::sleep(Duration::from_millis(20));
     let bearer = format!("Bearer {secret}");
-    assert_eq!(status_of(connect(request(&b.endpoint(), &[("authorization", bearer.as_str())]))), 401);
-    assert_eq!(b.refusals.lock().map(|r| r.clone()).unwrap_or_default(), vec![Refusal::Expired]);
+    assert_eq!(
+        status_of(connect(request(
+            &b.endpoint(),
+            &[("authorization", bearer.as_str())]
+        ))),
+        401
+    );
+    assert_eq!(
+        b.refusals.lock().map(|r| r.clone()).unwrap_or_default(),
+        vec![Refusal::Expired]
+    );
 }
 
 fn rand_bytes() -> [u8; 16] {

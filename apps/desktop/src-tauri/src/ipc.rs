@@ -416,6 +416,22 @@ pub const HANDOFF_NOTE_INVALID: IpcError = IpcError::new(
     "Handoff notes are plain text of up to 500 characters.",
 );
 
+// Milestone 10: automation on this computer.
+pub const AUTOMATION_FORBIDDEN: IpcError = IpcError::new(
+    "AUTOMATION_FORBIDDEN",
+    "Your role in that organization does not allow running automation jobs on this computer.",
+);
+pub const AUTOMATION_NOT_ENROLLED: IpcError = IpcError::new(
+    "AUTOMATION_NOT_ENROLLED",
+    "This computer does not run automation jobs for that organization.",
+);
+pub const AUTOMATION_BUSY: IpcError = IpcError::new(
+    "AUTOMATION_BUSY",
+    "Jobs of that organization are running on this computer. Stop them first.",
+);
+pub const UNKNOWN_JOB: IpcError =
+    IpcError::new("UNKNOWN_JOB", "That job is not running on this computer.");
+
 /// A handoff note: plain text, at most 500 characters, never anything that looks like a password or key.
 pub fn clean_handoff_note(value: &str) -> Result<String, IpcError> {
     if value.len() > 500 * 4 {

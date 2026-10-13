@@ -125,9 +125,17 @@ impl DevtoolsPipes {
             use std::os::windows::io::AsRawHandle;
             // SAFETY: the handle is valid and owned by us for the duration of the call.
             let ok = unsafe {
-                SetHandleInformation(h.as_raw_handle() as HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+                SetHandleInformation(
+                    h.as_raw_handle() as HANDLE,
+                    HANDLE_FLAG_INHERIT,
+                    HANDLE_FLAG_INHERIT,
+                )
             };
-            if ok == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+            if ok == 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
         }
 
         let (browser_reads, we_write) = pipe()?;

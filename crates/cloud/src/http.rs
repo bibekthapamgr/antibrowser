@@ -186,6 +186,25 @@ impl Http {
         read(result)
     }
 
+    /// A raw body (milestone 10: a job's screenshot, `image/jpeg`) with the same rules as [`Http::request`].
+    pub fn put_bytes(
+        &self,
+        url: &Url,
+        bearer: Option<&str>,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Result<Response, HttpError> {
+        self.check(url)?;
+        let mut req = self
+            .agent
+            .put(url.as_str())
+            .header("accept", "application/json");
+        if let Some(t) = bearer {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        read(req.content_type(content_type).send(bytes))
+    }
+
     /// `application/x-www-form-urlencoded` POST (the OAuth token endpoint).
     pub fn post_form(&self, url: &Url, fields: &[(&str, &str)]) -> Result<Response, HttpError> {
         self.check(url)?;

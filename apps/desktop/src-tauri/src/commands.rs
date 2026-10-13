@@ -1229,3 +1229,70 @@ pub fn team_restore_recovery_copy<Rt: Runtime>(
     caller(&webview)?;
     state.restore_recovery_copy(&org_id, &org_profile_id, &snapshot_id, &name)
 }
+
+// ------------------------------------------------------------------------------- automation (milestone 10)
+
+/// Automation on this computer: the organizations it runs jobs for, whether Playwright connections are allowed,
+/// and the jobs it ran recently.
+#[tauri::command]
+pub fn get_automation_status<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+) -> R<crate::automation::AutomationStatus> {
+    caller(&webview)?;
+    state.automation_status()
+}
+
+/// Lets this computer run an organization's automation jobs (as the person signed in here).
+#[tauri::command]
+pub async fn automation_enroll<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    accepts: String,
+    max_jobs: u32,
+) -> R<crate::automation::AutomationStatus> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        state.automation_enroll(&org_id, &accepts, max_jobs)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Stops taking an organization's jobs on this computer.
+#[tauri::command]
+pub async fn automation_unenroll<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+) -> R<crate::automation::AutomationStatus> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || state.automation_unenroll(&org_id))
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Stops a job running on this computer (reported as canceled; the profile closes as usual).
+#[tauri::command]
+pub fn automation_stop_job<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    job_id: String,
+) -> R<crate::automation::AutomationStatus> {
+    caller(&webview)?;
+    state.automation_stop_job(&job_id)
+}
+
+/// "Allow Playwright connections" on this computer (off by default; audited).
+#[tauri::command]
+pub fn automation_set_debugging<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    allow: bool,
+) -> R<crate::automation::AutomationStatus> {
+    caller(&webview)?;
+    state.automation_set_debugging(allow)
+}

@@ -67,7 +67,8 @@ describe('client', () => {
     expect(new Set(keys).size).toBe(1);
     expect(keys[0]).toMatch(/^sdk-/);
     expect(f.calls[0]?.url).toBe(`https://api.test/v1/orgs/${ORG}/automation/jobs`);
-    expect((f.calls[0]?.init.headers as Record<string, string>).authorization).toMatch(/^Bearer pbt_/);
+    const headers = (f.calls[0]?.init.headers ?? {}) as Record<string, string>;
+    expect(headers.authorization).toMatch(/^Bearer pbt_/);
   });
 
   it('does not retry requests that are not safe to repeat, and surfaces the error envelope', async () => {
@@ -133,7 +134,12 @@ describe('debugging sessions', () => {
 
   it('connects only to a job endpoint on this computer', async () => {
     const seen: unknown[] = [];
-    const chromium = { connectOverCDP: async (e: string, o: unknown) => (seen.push([e, o]), 'browser') };
+    const chromium = {
+      connectOverCDP: async (e: string, o: unknown) => {
+        seen.push([e, o]);
+        return 'browser';
+      },
+    };
     await expect(connectPlaywright(chromium, 'ws://10.0.0.2:9222/devtools/browser/x', 's')).rejects.toThrow();
     await expect(
       connectPlaywright(chromium, 'ws://127.0.0.1:9222/devtools/browser/x', 's'),

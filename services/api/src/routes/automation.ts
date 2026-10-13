@@ -967,10 +967,15 @@ export function automationRoutes(app: App, deps: Deps): void {
             if (job.state !== 'RUNNING' || !job.lease_id || !job.lease_token) {
               throw new ApiError('JOB_CLAIM_STALE', 'Report `started` (with the lease) first');
             }
-            await requireLease(c, access.orgId, job.profile_id, agent, job.lease_id, job.lease_token);
             const steps = await stepsOf(c, job.id);
             const step = steps.find((s) => s.seq === r.seq);
             if (!step) throw new ApiError('NOT_FOUND', 'Step not found');
+            // Every step runs under the job's current session lease, except closing: it only records how the
+            // profile was given back (after a lost lease or a restart the lease may have ended already); the closing
+            // backup itself is fenced by its own lease.
+            if (step.action !== 'close_profile') {
+              await requireLease(c, access.orgId, job.profile_id, agent, job.lease_id, job.lease_token);
+            }
             const earlier = steps.filter((s) => s.seq < r.seq);
             if (step.action === 'close_profile') {
               // Closing always runs once nothing else is running (after a failure or a cancel too); what never ran

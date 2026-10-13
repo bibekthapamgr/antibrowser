@@ -133,6 +133,41 @@ struct State {
     seq: u64,
     faults: Vec<(&'static str, When)>,
     calls: Vec<&'static str>,
+    // Milestone 10: automation jobs, enrolled computers and screenshots.
+    jobs: Vec<FakeJob>,
+    agents: HashMap<String, (String, String, u32)>,
+    artifacts: HashMap<String, (String, u32, Vec<u8>)>,
+    reports: Vec<String>,
+}
+
+/// An automation job as the fake server keeps it (milestone 10).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FakeJob {
+    pub id: String,
+    pub org: String,
+    pub profile: String,
+    /// QUEUED, CLAIMED, RUNNING, SUCCEEDED, FAILED, CANCELED
+    pub state: &'static str,
+    pub attempt: u32,
+    pub agent: Option<String>,
+    pub steps: Vec<FakeStep>,
+    pub allowed: Vec<String>,
+    pub cancel: bool,
+    pub lease: Option<(String, String)>,
+    pub debug_sha: Option<String>,
+    pub keep_open: Option<u32>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FakeStep {
+    pub seq: u32,
+    pub action: String,
+    pub input: serde_json::Value,
+    pub state: String,
+    pub attempt: u32,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
 }
 
 pub struct FakeServer {
@@ -390,6 +425,129 @@ impl FakeServer {
     }
 
     /// A client for one device of one user, with access to `orgs`.
+    // ------------------------------------------------------------------------------------- automation (10)
+    /// Queues a job: open the profile, `steps` (API step objects), optional debugging and holding, close.
+    pub fn add_job(
+        &self,
+        org: &str,
+        profile: &str,
+        steps: Vec<serde_json::Value>,
+        keep_open: Option<u32>,
+        debug_sha: Option<&str>,
+        allowed: &[&str],
+    ) -> String {
+        let mut st = self.st();
+        st.seq += 1;
+        let id = ulid_like("job", st.seq);
+        let mut all = vec![("open_profile".to_owned(), serde_json::json!({}))];
+        for s in steps {
+            let action = s
+                .get("action")
+                .and_then(|a| a.as_str())
+                .unwrap_or("")
+                .to_owned();
+            all.push((action, s));
+        }
+        if debug_sha.is_some() {
+            all.push(("debug_bridge".into(), serde_json::json!({})));
+        }
+        if keep_open.is_some() {
+            all.push(("hold_open".into(), serde_json::json!({})));
+        }
+        all.push(("close_profile".into(), serde_json::json!({})));
+        let steps = all
+            .into_iter()
+            .enumerate()
+            .map(|(i, (action, input))| FakeStep {
+                seq: i as u32,
+                action,
+                input,
+                state: "pending".into(),
+                attempt: 0,
+                output: None,
+                error: None,
+            })
+            .collect();
+        st.jobs.push(FakeJob {
+            id: id.clone(),
+            org: org.to_owned(),
+            profile: profile.to_owned(),
+            state: "QUEUED",
+            attempt: 0,
+            agent: None,
+            steps,
+            allowed: allowed.iter().map(|a| (*a).to_owned()).collect(),
+            cancel: false,
+            lease: None,
+            debug_sha: debug_sha.map(str::to_owned),
+            keep_open,
+            error: None,
+        });
+        id
+    }
+
+    pub fn job(&self, id: &str) -> Option<FakeJob> {
+        self.st().jobs.iter().find(|j| j.id == id).cloned()
+    }
+
+    /// Like the API's cancel: a queued or claimed job ends now, a running one is asked to stop.
+    pub fn cancel_job(&self, id: &str) {
+        let mut st = self.st();
+        if let Some(j) = st.jobs.iter_mut().find(|j| j.id == id) {
+            if matches!(j.state, "QUEUED" | "CLAIMED") {
+                j.state = "CANCELED";
+                j.error = Some("CANCELED".into());
+            } else if j.state == "RUNNING" {
+                j.cancel = true;
+            }
+        }
+    }
+
+    /// The claim was not started in time (the sweeper): back to the queue.
+    pub fn requeue(&self, id: &str) {
+        let mut st = self.st();
+        if let Some(j) = st
+            .jobs
+            .iter_mut()
+            .find(|j| j.id == id && j.state == "CLAIMED")
+        {
+            j.state = "QUEUED";
+            j.agent = None;
+        }
+    }
+
+    /// Enrolled computers (agent ids).
+    pub fn agents(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.st().agents.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /// An admin removed the computer in the organization (its claims return to the queue).
+    pub fn drop_agent(&self, id: &str) {
+        let mut st = self.st();
+        st.agents.remove(id);
+        for j in st.jobs.iter_mut() {
+            if j.agent.as_deref() == Some(id) && matches!(j.state, "CLAIMED" | "RUNNING") {
+                j.state = if j.state == "CLAIMED" {
+                    "QUEUED"
+                } else {
+                    "FAILED"
+                };
+                j.agent = None;
+            }
+        }
+    }
+
+    pub fn artifact(&self, id: &str) -> Option<Vec<u8>> {
+        self.st().artifacts.get(id).map(|a| a.2.clone())
+    }
+
+    /// Report types received, in order (`started`, `step_started:3`, …).
+    pub fn reports(&self) -> Vec<String> {
+        self.st().reports.clone()
+    }
+
     pub fn client(self: &Arc<Self>, device: &str, orgs: &[&str]) -> FakeClient {
         FakeClient {
             server: self.clone(),
@@ -1372,5 +1530,394 @@ impl Objects for FakeClient {
             return Err(ObjectError::Offline);
         }
         Ok(offset as u64)
+    }
+}
+
+// ================================================================================================ automation (10)
+
+fn claimed_of(j: &FakeJob) -> crate::automation::ClaimedJob {
+    use crate::automation::{ClaimedJob, JobInfo, JobStepInfo};
+    let mut resume = None;
+    for s in &j.steps {
+        if s.state == "succeeded" || s.state == "skipped" {
+            continue;
+        }
+        if s.state == "running" || s.state == "pending" {
+            resume = Some(s.seq);
+        }
+        break;
+    }
+    ClaimedJob {
+        job: JobInfo {
+            id: j.id.clone(),
+            org_id: j.org.clone(),
+            profile_id: j.profile.clone(),
+            profile_name: "Profile".into(),
+            client_name: None,
+            label: None,
+            state: j.state.into(),
+            attempt: j.attempt,
+            keep_open_minutes: j.keep_open,
+            debug: j.debug_sha.is_some(),
+            requested_by_name: "Someone".into(),
+            cancel_requested_at: j.cancel.then(|| "now".into()),
+        },
+        steps: j
+            .steps
+            .iter()
+            .map(|s| JobStepInfo {
+                seq: s.seq,
+                action: s.action.clone(),
+                effect: String::new(),
+                input: s.input.clone(),
+                state: s.state.clone(),
+                attempt: s.attempt,
+                error_code: s.error.clone(),
+            })
+            .collect(),
+        allowed_origins: j.allowed.clone(),
+        lease_key: format!("{}-{}", j.id, j.agent.clone().unwrap_or_default()),
+        debug_capability_sha256: j.debug_sha.clone(),
+        resume_from: resume,
+    }
+}
+
+impl crate::automation::AutomationApi for FakeClient {
+    fn enroll_agent(
+        &self,
+        org: &str,
+        req: &crate::automation::EnrollRequest,
+    ) -> Result<crate::automation::AgentInfo, ApiError> {
+        let mut st = self.enter("enroll_agent")?;
+        if !self.orgs.iter().any(|o| o == org) || req.device_id != self.device {
+            return Err(code(404, "NOT_FOUND"));
+        }
+        let existing = st
+            .agents
+            .iter()
+            .find(|(_, (o, d, _))| o == org && *d == self.device)
+            .map(|(id, _)| id.clone());
+        let id = match existing {
+            Some(id) => id,
+            None => {
+                st.seq += 1;
+                let id = ulid_like("agt", st.seq);
+                st.agents.insert(
+                    id.clone(),
+                    (org.to_owned(), self.device.clone(), req.max_jobs),
+                );
+                id
+            }
+        };
+        Self::leave(&mut st, "enroll_agent")?;
+        Ok(crate::automation::AgentInfo {
+            id,
+            org_id: org.to_owned(),
+            device_id: self.device.clone(),
+            name: req.name.clone().unwrap_or_default(),
+            enabled: true,
+            accepts: req.accepts.clone(),
+            debug_allowed: false,
+            max_jobs: req.max_jobs,
+            online: true,
+            running_jobs: 0,
+            version: 1,
+        })
+    }
+
+    fn remove_agent(&self, org: &str, agent: &str) -> Result<(), ApiError> {
+        let mut st = self.enter("remove_agent")?;
+        match st.agents.get(agent) {
+            Some((o, d, _)) if o == org && *d == self.device => {}
+            _ => return Err(code(404, "NOT_FOUND")),
+        }
+        st.agents.remove(agent);
+        for j in st.jobs.iter_mut() {
+            if j.agent.as_deref() == Some(agent) && j.state == "CLAIMED" {
+                j.state = "QUEUED";
+                j.agent = None;
+            } else if j.agent.as_deref() == Some(agent) && j.state == "RUNNING" {
+                j.state = "FAILED";
+                j.error = Some("ACCESS_REMOVED".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn poll_agent(
+        &self,
+        org: &str,
+        agent: &str,
+        req: &crate::automation::PollRequest,
+    ) -> Result<crate::automation::PollAnswer, ApiError> {
+        let mut st = self.enter("poll_agent")?;
+        let Some((o, d, max_jobs)) = st.agents.get(agent).cloned() else {
+            return Err(code(404, "NOT_FOUND"));
+        };
+        if o != org || d != self.device {
+            return Err(code(404, "NOT_FOUND"));
+        }
+        let mut cancel = vec![];
+        let mut abandon = vec![];
+        let mut assigned = vec![];
+        let reported: Vec<String> = req.running.iter().map(|r| r.job_id.clone()).collect();
+        for r in &req.running {
+            match st.jobs.iter().find(|j| j.id == r.job_id) {
+                Some(j)
+                    if j.agent.as_deref() == Some(agent)
+                        && j.attempt == r.attempt
+                        && matches!(j.state, "CLAIMED" | "RUNNING") =>
+                {
+                    if j.cancel {
+                        cancel.push(j.id.clone());
+                    }
+                }
+                _ => abandon.push(r.job_id.clone()),
+            }
+        }
+        let held: Vec<FakeJob> = st
+            .jobs
+            .iter()
+            .filter(|j| {
+                j.agent.as_deref() == Some(agent) && matches!(j.state, "CLAIMED" | "RUNNING")
+            })
+            .cloned()
+            .collect();
+        for j in &held {
+            if !reported.contains(&j.id) {
+                assigned.push(claimed_of(j));
+                if j.cancel {
+                    cancel.push(j.id.clone());
+                }
+            }
+        }
+        let now = st.clock;
+        let mut slots = req.capacity.min(max_jobs.saturating_sub(held.len() as u32));
+        let busy: Vec<String> = st
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.state, "CLAIMED" | "RUNNING"))
+            .map(|j| j.profile.clone())
+            .collect();
+        let leased: Vec<String> = st
+            .leases
+            .iter()
+            .filter(|(_, l)| l.state == "active" && (l.live(now) || l.purpose == "session"))
+            .map(|(p, _)| p.clone())
+            .collect();
+        let mut taken = vec![];
+        for j in st.jobs.iter_mut() {
+            if slots == 0 {
+                break;
+            }
+            if j.org != org
+                || j.state != "QUEUED"
+                || busy.contains(&j.profile)
+                || leased.contains(&j.profile)
+                || taken.contains(&j.profile)
+                || (j.debug_sha.is_some() && !req.debug_allowed)
+            {
+                continue;
+            }
+            j.state = "CLAIMED";
+            j.attempt += 1;
+            j.agent = Some(agent.to_owned());
+            taken.push(j.profile.clone());
+            assigned.push(claimed_of(j));
+            slots -= 1;
+        }
+        st.reports.push("poll".into());
+        Self::leave(&mut st, "poll_agent")?;
+        Ok(crate::automation::PollAnswer {
+            agent: crate::automation::AgentInfo {
+                id: agent.to_owned(),
+                org_id: org.to_owned(),
+                device_id: self.device.clone(),
+                name: String::new(),
+                enabled: true,
+                accepts: "mine".into(),
+                debug_allowed: req.debug_allowed,
+                max_jobs,
+                online: true,
+                running_jobs: held.len() as u32,
+                version: 1,
+            },
+            assigned,
+            cancel,
+            abandon,
+            poll_after_seconds: 5,
+        })
+    }
+
+    fn report_job(
+        &self,
+        org: &str,
+        job: &str,
+        report: &crate::automation::JobReport,
+    ) -> Result<crate::automation::ReportAnswer, ApiError> {
+        use crate::automation::JobReport as R;
+        let mut st = self.enter("report_job")?;
+        let leases = st.leases.clone();
+        let device = self.device.clone();
+        let agents = st.agents.clone();
+        let Some(j) = st.jobs.iter_mut().find(|j| j.id == job && j.org == org) else {
+            return Err(code(404, "NOT_FOUND"));
+        };
+        let mine = j
+            .agent
+            .as_ref()
+            .and_then(|a| agents.get(a))
+            .is_some_and(|(_, d, _)| *d == device);
+        if !mine {
+            return Err(code(409, "JOB_CLAIM_STALE"));
+        }
+        if matches!(j.state, "SUCCEEDED" | "FAILED" | "CANCELED") {
+            return Err(code(409, "JOB_FINISHED"));
+        }
+        let attempt = match report {
+            R::Started { attempt, .. }
+            | R::StepStarted { attempt, .. }
+            | R::StepFinished { attempt, .. }
+            | R::Released { attempt, .. }
+            | R::Finished { attempt, .. } => *attempt,
+        };
+        if attempt != j.attempt {
+            return Err(code(409, "JOB_CLAIM_STALE"));
+        }
+        let current = leases.get(&j.profile).cloned();
+        let check = |lease_id: &str, token: &str| -> Result<(), ApiError> {
+            let Some(l) = &current else {
+                return Err(ApiError::Fenced {
+                    state: "superseded".into(),
+                });
+            };
+            if l.id != lease_id || l.state != "active" || l.purpose != "session" {
+                return Err(ApiError::Fenced {
+                    state: if l.id == lease_id {
+                        l.state.into()
+                    } else {
+                        "superseded".into()
+                    },
+                });
+            }
+            if l.device != device || l.fencing.to_string() != token {
+                return Err(ApiError::Fenced {
+                    state: "superseded".into(),
+                });
+            }
+            Ok(())
+        };
+        let label;
+        match report {
+            R::Started {
+                lease_id,
+                fencing_token,
+                ..
+            } => {
+                check(lease_id, fencing_token)?;
+                j.state = "RUNNING";
+                j.lease = Some((lease_id.clone(), fencing_token.clone()));
+                label = "started".to_owned();
+            }
+            R::StepStarted { seq, .. } => {
+                let Some((l, t)) = j.lease.clone() else {
+                    return Err(code(409, "JOB_CLAIM_STALE"));
+                };
+                // Like the API: closing is recorded without the lease (it may have ended already).
+                let closing = j
+                    .steps
+                    .iter()
+                    .any(|s| s.seq == *seq && s.action == "close_profile");
+                if !closing {
+                    check(&l, &t)?;
+                }
+                let cancel = j.cancel;
+                let Some(step) = j.steps.iter_mut().find(|s| s.seq == *seq) else {
+                    return Err(code(404, "NOT_FOUND"));
+                };
+                if !(cancel && step.action != "close_profile" && step.action != "hold_open") {
+                    step.state = "running".into();
+                    step.attempt += 1;
+                }
+                if step.action == "close_profile" {
+                    for s in j.steps.iter_mut() {
+                        if s.seq < *seq && s.state == "pending" {
+                            s.state = "skipped".into();
+                        }
+                    }
+                }
+                label = format!("step_started:{seq}");
+            }
+            R::StepFinished {
+                seq,
+                state,
+                error_code,
+                output,
+                ..
+            } => {
+                let Some(step) = j.steps.iter_mut().find(|s| s.seq == *seq) else {
+                    return Err(code(404, "NOT_FOUND"));
+                };
+                if step.state != "running" {
+                    return Err(code(400, "VALIDATION_FAILED"));
+                }
+                step.state = state.clone();
+                step.error = error_code.clone();
+                step.output = output.clone();
+                label = format!("step_finished:{seq}:{state}");
+            }
+            R::Released { error_code, .. } => {
+                if j.state != "CLAIMED" {
+                    return Err(code(409, "JOB_CLAIM_STALE"));
+                }
+                j.state = "QUEUED";
+                j.agent = None;
+                label = format!("released:{error_code}");
+            }
+            R::Finished {
+                state, error_code, ..
+            } => {
+                j.state = match state.as_str() {
+                    "SUCCEEDED" => "SUCCEEDED",
+                    "CANCELED" => "CANCELED",
+                    _ => "FAILED",
+                };
+                j.error = error_code.clone();
+                for s in j.steps.iter_mut() {
+                    if s.state == "pending" {
+                        s.state = "skipped".into();
+                    }
+                }
+                label = format!("finished:{state}");
+            }
+        }
+        let answer = crate::automation::ReportAnswer {
+            state: j.state.into(),
+            cancel_requested: j.cancel,
+        };
+        st.reports.push(label);
+        Self::leave(&mut st, "report_job")?;
+        Ok(answer)
+    }
+
+    fn upload_artifact(
+        &self,
+        org: &str,
+        job: &str,
+        seq: u32,
+        _attempt: u32,
+        _width: u32,
+        _height: u32,
+        jpeg: &[u8],
+    ) -> Result<String, ApiError> {
+        let mut st = self.enter("upload_artifact")?;
+        if !st.jobs.iter().any(|j| j.id == job && j.org == org) {
+            return Err(code(404, "NOT_FOUND"));
+        }
+        st.seq += 1;
+        let id = ulid_like("art", st.seq);
+        st.artifacts
+            .insert(id.clone(), (job.to_owned(), seq, jpeg.to_vec()));
+        Ok(id)
     }
 }

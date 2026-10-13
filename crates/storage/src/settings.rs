@@ -40,6 +40,9 @@ pub const PER_CLIENT_DOWNLOADS: &str = "downloads.per_client_folders";
 pub const OPEN_REMINDER: &str = "profiles.open_reminder_hours";
 /// Warn before opening profiles when the computer's free memory looks too low (milestone 09; on by default).
 pub const MEMORY_WARNING: &str = "resources.memory_warning";
+/// Lets owners' and admins' debugging jobs hand a session to a Playwright script on this computer (milestone 10;
+/// off by default; set only on this computer, through its own audited command, never by the server).
+pub const AUTOMATION_DEBUGGING: &str = "automation.allow_debugging";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -101,6 +104,12 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::Bool,
         ui_settable: true,
         default: || Value::from(true),
+    },
+    SettingSpec {
+        key: AUTOMATION_DEBUGGING,
+        kind: SettingKind::Bool,
+        ui_settable: false,
+        default: || Value::from(false),
     },
 ];
 

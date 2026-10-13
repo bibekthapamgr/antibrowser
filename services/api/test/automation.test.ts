@@ -712,6 +712,17 @@ describe('jobs: running on enrolled computers', () => {
     const next = await report(op, c.job.id, { type: 'step_started', attempt: c.job.attempt, seq: 1 });
     expect(next.statusCode).toBe(409);
     expect(next.json().code).toBe('FENCING_TOKEN_STALE');
+    // Closing is still recorded (it writes nothing to the profile; the closing backup is fenced by its own lease).
+    const closeSeq = c.steps.find((s) => s.action === 'close_profile')?.seq ?? -1;
+    const close = await report(op, c.job.id, { type: 'step_started', attempt: c.job.attempt, seq: closeSeq });
+    expect(close.statusCode, close.body).toBe(200);
+    await report(op, c.job.id, {
+      type: 'step_finished',
+      attempt: c.job.attempt,
+      seq: closeSeq,
+      state: 'failed',
+      error_code: 'LEASE_LOST',
+    });
     const fin = await report(op, c.job.id, {
       type: 'finished',
       attempt: c.job.attempt,
@@ -719,6 +730,10 @@ describe('jobs: running on enrolled computers', () => {
       error_code: 'LEASE_LOST',
     });
     expect(fin.json().job).toMatchObject({ state: 'FAILED', error_code: 'LEASE_LOST' });
+    const steps = (
+      await h.app.inject({ method: 'GET', url: url(`/automation/jobs/${c.job.id}`), headers: owner.headers })
+    ).json().steps;
+    expect(steps.map((s: { state: string }) => s.state)).toEqual(['succeeded', 'skipped', 'failed']);
   });
 
   it('retried launches use the same idempotency key: the same lease comes back', async () => {

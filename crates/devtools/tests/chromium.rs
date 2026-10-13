@@ -78,8 +78,17 @@ fn launch(exe: &str) -> Browser {
     let pipes = DevtoolsPipes::create().unwrap_or_else(|e| panic!("pipes: {e}"));
     let mut cmd = Command::new(exe);
     cmd.arg(format!("--user-data-dir={}", dir.path().display()))
-        .args(["--no-first-run", "--no-default-browser-check", "--enable-automation", "--headless=new"])
-        .args(["--disable-gpu", "--use-mock-keychain", "--password-store=basic"])
+        .args([
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--enable-automation",
+            "--headless=new",
+        ])
+        .args([
+            "--disable-gpu",
+            "--use-mock-keychain",
+            "--password-store=basic",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -109,31 +118,61 @@ fn steps_run_over_the_protected_pipe_on_a_real_browser() {
     // The pipe answers (no port was opened: nothing listens for DevTools).
     let version = b
         .hub
-        .call("Browser.getVersion", json!({}), None, Duration::from_secs(30))
+        .call(
+            "Browser.getVersion",
+            json!({}),
+            None,
+            Duration::from_secs(30),
+        )
         .unwrap_or_else(|e| panic!("the browser did not answer over the pipe: {e}"));
-    assert!(version.get("product").and_then(Value::as_str).is_some_and(|p| p.contains("Chrome")));
+    assert!(
+        version
+            .get("product")
+            .and_then(Value::as_str)
+            .is_some_and(|p| p.contains("Chrome"))
+    );
     let page = Page::attach(b.hub.clone(), approved).unwrap_or_else(|e| panic!("attach: {e}"));
     let opened = page
-        .open_url(&format!("http://127.0.0.1:{port}/start"), Duration::from_secs(30))
+        .open_url(
+            &format!("http://127.0.0.1:{port}/start"),
+            Duration::from_secs(30),
+        )
         .unwrap_or_else(|e| panic!("open: {e}"));
     assert_eq!(opened.final_origin, format!("http://127.0.0.1:{port}"));
     assert_eq!(opened.http_status, Some(200));
-    page.wait_for(&Condition::Selector("#ready".into()), Duration::from_secs(10))
-        .unwrap_or_else(|e| panic!("selector: {e}"));
-    page.wait_for(&Condition::TitleContains("Test Portal".into()), Duration::from_secs(5))
-        .unwrap_or_else(|e| panic!("title: {e}"));
-    page.wait_for(&Condition::Text("Welcome back".into()), Duration::from_secs(5))
-        .unwrap_or_else(|e| panic!("text: {e}"));
+    page.wait_for(
+        &Condition::Selector("#ready".into()),
+        Duration::from_secs(10),
+    )
+    .unwrap_or_else(|e| panic!("selector: {e}"));
+    page.wait_for(
+        &Condition::TitleContains("Test Portal".into()),
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("title: {e}"));
+    page.wait_for(
+        &Condition::Text("Welcome back".into()),
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("text: {e}"));
     assert_eq!(
-        page.wait_for(&Condition::Selector("#missing".into()), Duration::from_millis(600)),
+        page.wait_for(
+            &Condition::Selector("#missing".into()),
+            Duration::from_millis(600)
+        ),
         Err(StepError::ConditionNotMet)
     );
-    let shot = page.screenshot(1_572_864).unwrap_or_else(|e| panic!("screenshot: {e}"));
+    let shot = page
+        .screenshot(1_572_864)
+        .unwrap_or_else(|e| panic!("screenshot: {e}"));
     assert!(shot.jpeg.starts_with(&[0xff, 0xd8, 0xff]));
     assert!(shot.width > 0 && shot.height > 0);
     // A redirect to another origin is refused after the fact.
     assert_eq!(
-        page.open_url(&format!("http://127.0.0.1:{port}/away"), Duration::from_secs(30)),
+        page.open_url(
+            &format!("http://127.0.0.1:{port}/away"),
+            Duration::from_secs(30)
+        ),
         Err(StepError::PageLeftApprovedSites)
     );
     close_browser(&b.hub).unwrap_or_else(|e| panic!("close: {e}"));
@@ -156,20 +195,37 @@ fn automation_sessions_identify_as_automated() {
     let b = launch(&exe);
     let targets = b
         .hub
-        .call("Target.getTargets", json!({}), None, Duration::from_secs(30))
+        .call(
+            "Target.getTargets",
+            json!({}),
+            None,
+            Duration::from_secs(30),
+        )
         .unwrap_or_else(|e| panic!("{e}"));
     let target = targets
         .pointer("/targetInfos")
         .and_then(Value::as_array)
-        .and_then(|t| t.iter().find(|i| i.get("type").and_then(Value::as_str) == Some("page")))
+        .and_then(|t| {
+            t.iter()
+                .find(|i| i.get("type").and_then(Value::as_str) == Some("page"))
+        })
         .and_then(|i| i.get("targetId").and_then(Value::as_str))
         .map(str::to_owned)
         .unwrap_or_default();
     let session = b
         .hub
-        .call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None, Duration::from_secs(10))
+        .call(
+            "Target.attachToTarget",
+            json!({ "targetId": target, "flatten": true }),
+            None,
+            Duration::from_secs(10),
+        )
         .ok()
-        .and_then(|r| r.get("sessionId").and_then(Value::as_str).map(str::to_owned))
+        .and_then(|r| {
+            r.get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
         .unwrap_or_default();
     let r = b
         .hub
@@ -180,7 +236,10 @@ fn automation_sessions_identify_as_automated() {
             Duration::from_secs(10),
         )
         .unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(r.pointer("/result/value").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        r.pointer("/result/value").and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]
@@ -191,7 +250,12 @@ fn the_broker_hands_a_real_session_to_an_authenticated_script() {
     };
     let b = launch(&exe);
     b.hub
-        .call("Browser.getVersion", json!({}), None, Duration::from_secs(30))
+        .call(
+            "Browser.getVersion",
+            json!({}),
+            None,
+            Duration::from_secs(30),
+        )
         .unwrap_or_else(|e| panic!("{e}"));
     let secret = format!("cap-{}", std::process::id());
     let broker = Broker::start(
@@ -227,6 +291,11 @@ fn the_broker_hands_a_real_session_to_an_authenticated_script() {
             }
         }
     };
-    assert!(answer.pointer("/result/targetInfos").and_then(Value::as_array).is_some());
+    assert!(
+        answer
+            .pointer("/result/targetInfos")
+            .and_then(Value::as_array)
+            .is_some()
+    );
     broker.stop();
 }

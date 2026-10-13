@@ -182,6 +182,8 @@ impl AppState {
                 }),
                 environment: Some(&profile.privacy),
                 extensions_disabled: gate.disable,
+                // Milestone 10: an automation job opens this profile (DevTools over a protected pipe).
+                automation: self.wants_devtools(profile_id),
             },
         )?;
         // 5.
@@ -366,13 +368,17 @@ impl AppState {
             );
         }
         let t0 = Instant::now();
-        let spawned = match self.launcher.spawn(&spec) {
+        let mut spawned = match self.launcher.spawn(&spec) {
             Ok(s) => s,
             Err(e) => {
                 let err = IpcError::from(e);
                 return abort(err.code, err.message);
             }
         };
+        // Milestone 10: this app's ends of the protected DevTools pipe go to the job that asked for them.
+        if let Some(ends) = spawned.devtools.take() {
+            self.keep_devtools(id, ends);
+        }
         let _ = store.record_timing("browser_spawn_ms", t0.elapsed().as_secs_f64() * 1000.0);
         if self
             .supervisor

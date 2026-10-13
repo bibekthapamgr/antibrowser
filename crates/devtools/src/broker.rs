@@ -86,13 +86,20 @@ impl Broker {
                         if !peer.ip().is_loopback() {
                             continue;
                         }
-                        let (hub, cfg, s, c, r, busy) =
-                            (hub.clone(), cfg.clone(), s.clone(), c.clone(), r.clone(), busy.clone());
+                        let (hub, cfg, s, c, r, busy) = (
+                            hub.clone(),
+                            cfg.clone(),
+                            s.clone(),
+                            c.clone(),
+                            r.clone(),
+                            busy.clone(),
+                        );
                         std::thread::spawn(move || {
-                            if let Err(why) = serve(stream, &hub, &cfg, port, deadline, &s, &c, &busy) {
-                                if let Ok(mut l) = r.lock() {
-                                    l.push(why);
-                                }
+                            if let Err(why) =
+                                serve(stream, &hub, &cfg, port, deadline, &s, &c, &busy)
+                                && let Ok(mut l) = r.lock()
+                            {
+                                l.push(why);
                             }
                         });
                     }
@@ -148,7 +155,9 @@ fn serve(
     connections: &AtomicU64,
     busy: &AtomicBool,
 ) -> Result<(), Refusal> {
-    stream.set_nonblocking(false).map_err(|_| Refusal::NotWebSocket)?;
+    stream
+        .set_nonblocking(false)
+        .map_err(|_| Refusal::NotWebSocket)?;
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|_| Refusal::NotWebSocket)?;
@@ -156,6 +165,8 @@ fn serve(
     let hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let first = connections.load(Ordering::SeqCst) == 0;
     let mut refusal: Option<Refusal> = None;
+    // The callback's error type is tungstenite's (an HTTP response); it is built only for refusals.
+    #[allow(clippy::result_large_err)]
     let ws = tungstenite::accept_hdr(stream, |req: &Request, resp: Response| {
         match judge(req, &path, &hosts, first, deadline, &cfg.capability_sha256) {
             None => Ok(resp),
@@ -182,7 +193,9 @@ fn serve(
         return Err(Refusal::Busy);
     };
     connections.fetch_add(1, Ordering::SeqCst);
-    let _ = ws.get_mut().set_read_timeout(Some(Duration::from_millis(20)));
+    let _ = ws
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(20)));
     relay(&mut ws, hub, &rx, stop);
     hub.detach_client();
     busy.store(false, Ordering::SeqCst);

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-automation-set-debugging"
+description = "Enables the automation_set_debugging command without any pre-configured scope."
+commands.allow = ["automation_set_debugging"]
+
+[[permission]]
+identifier = "deny-automation-set-debugging"
+description = "Denies the automation_set_debugging command without any pre-configured scope."
+commands.deny = ["automation_set_debugging"]

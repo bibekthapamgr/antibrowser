@@ -8,6 +8,7 @@
 pub mod account;
 pub mod agency;
 pub mod authz;
+pub mod automation;
 pub mod commands;
 pub mod deeplink;
 pub mod diagnostics;
@@ -135,6 +136,11 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::get_extensions,
         commands::rescan_extensions,
         commands::review_extension,
+        commands::get_automation_status,
+        commands::automation_enroll,
+        commands::automation_unenroll,
+        commands::automation_stop_job,
+        commands::automation_set_debugging,
     ]
 }
 
@@ -308,6 +314,8 @@ pub fn run() {
             // Shared sessions this computer held resume: heartbeats, handoffs, lost connections (milestone 08).
             state.resume_team_sessions();
             state.start_team_worker();
+            // Automation jobs of the organizations this computer is enrolled for (milestone 10; outbound polls only).
+            state.start_automation_worker();
             // The health page's server card starts from a fresh check (milestone 09).
             state.check_server_later();
 

@@ -24,6 +24,15 @@ pub trait Transport: Send + Sync {
         idempotency_key: Option<&str>,
         body: Option<&Value>,
     ) -> Result<Value, ApiError>;
+    /// A raw `PUT` (milestone 10: a job's screenshot). Transports that cannot send one refuse.
+    fn put_bytes(
+        &self,
+        _path: &str,
+        _content_type: &str,
+        _bytes: &[u8],
+    ) -> Result<Value, ApiError> {
+        Err(bad())
+    }
 }
 
 /// Maps an API error answer (`{ code, message, safe_details }`) to what the engine distinguishes.
@@ -93,6 +102,22 @@ impl Transport for BearerTransport {
         let res = self
             .http
             .request(method, &url, Some(&self.token), &headers, body)
+            .map_err(|e| match e {
+                HttpError::Offline => ApiError::Offline,
+                _ => bad(),
+            })?;
+        let json = res.json().ok_or_else(bad)?;
+        if res.ok() {
+            Ok(json)
+        } else {
+            Err(map_error(res.status, &json))
+        }
+    }
+    fn put_bytes(&self, path: &str, content_type: &str, bytes: &[u8]) -> Result<Value, ApiError> {
+        let url = Url::parse(&format!("{}{path}", self.base)).map_err(|_| bad())?;
+        let res = self
+            .http
+            .put_bytes(&url, Some(&self.token), content_type, bytes)
             .map_err(|e| match e {
                 HttpError::Offline => ApiError::Offline,
                 _ => bad(),
@@ -476,5 +501,104 @@ impl<T: Transport> RestApi<T> {
             Some(item) => Ok(Some(snapshot_info(item)?)),
             None => Ok(None),
         }
+    }
+}
+
+// ================================================================================================ automation (10)
+
+impl<T: Transport> crate::automation::AutomationApi for RestApi<T> {
+    fn enroll_agent(
+        &self,
+        org: &str,
+        req: &crate::automation::EnrollRequest,
+    ) -> Result<crate::automation::AgentInfo, ApiError> {
+        if !id_ok("org", org) {
+            return Err(bad());
+        }
+        let body = serde_json::to_value(req).map_err(|_| bad())?;
+        let v = self.transport.call(
+            Method::Post,
+            &format!("/v1/orgs/{org}/automation/agents"),
+            None,
+            Some(&body),
+        )?;
+        serde_json::from_value(v).map_err(|_| bad())
+    }
+    fn remove_agent(&self, org: &str, agent: &str) -> Result<(), ApiError> {
+        if !id_ok("org", org) || !id_ok("agt", agent) {
+            return Err(bad());
+        }
+        self.transport
+            .call(
+                Method::Delete,
+                &format!("/v1/orgs/{org}/automation/agents/{agent}"),
+                None,
+                None,
+            )
+            .map(|_| ())
+    }
+    fn poll_agent(
+        &self,
+        org: &str,
+        agent: &str,
+        req: &crate::automation::PollRequest,
+    ) -> Result<crate::automation::PollAnswer, ApiError> {
+        if !id_ok("org", org) || !id_ok("agt", agent) {
+            return Err(bad());
+        }
+        let body = serde_json::to_value(req).map_err(|_| bad())?;
+        let v = self.transport.call(
+            Method::Post,
+            &format!("/v1/orgs/{org}/automation/agents/{agent}/poll"),
+            None,
+            Some(&body),
+        )?;
+        serde_json::from_value(v).map_err(|_| bad())
+    }
+    fn report_job(
+        &self,
+        org: &str,
+        job: &str,
+        report: &crate::automation::JobReport,
+    ) -> Result<crate::automation::ReportAnswer, ApiError> {
+        if !id_ok("org", org) || !id_ok("job", job) {
+            return Err(bad());
+        }
+        let body = serde_json::to_value(report).map_err(|_| bad())?;
+        let v = self.transport.call(
+            Method::Post,
+            &format!("/v1/orgs/{org}/automation/jobs/{job}/report"),
+            None,
+            Some(&body),
+        )?;
+        Ok(crate::automation::ReportAnswer {
+            state: s(&v, "/job/state")?,
+            cancel_requested: v
+                .get("cancel_requested")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+    fn upload_artifact(
+        &self,
+        org: &str,
+        job: &str,
+        seq: u32,
+        attempt: u32,
+        width: u32,
+        height: u32,
+        jpeg: &[u8],
+    ) -> Result<String, ApiError> {
+        if !id_ok("org", org) || !id_ok("job", job) {
+            return Err(bad());
+        }
+        let v = self.transport.put_bytes(
+            &format!(
+                "/v1/orgs/{org}/automation/jobs/{job}/steps/{seq}/artifact?attempt={attempt}&width={width}&height={height}"
+            ),
+            "image/jpeg",
+            jpeg,
+        )?;
+        s(&v, "/artifact_id")
     }
 }

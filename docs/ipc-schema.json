@@ -16085,6 +16085,1195 @@
           }
         }
       }
+    },
+    "get_automation_status": {
+      "args": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "enrollments",
+          "allow_debugging",
+          "running",
+          "runs"
+        ],
+        "properties": {
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "org_id",
+                "agent_id",
+                "accepts",
+                "max_jobs",
+                "created_at",
+                "last_poll_seconds",
+                "poll_error",
+                "enabled",
+                "running"
+              ],
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "accepts": {
+                  "enum": [
+                    "mine",
+                    "org"
+                  ]
+                },
+                "max_jobs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "last_poll_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "poll_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "running": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "allow_debugging": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "job_id",
+                "org_id",
+                "org_profile_id",
+                "profile_id",
+                "label",
+                "attempt",
+                "opens",
+                "state",
+                "outcome",
+                "error_code",
+                "steps_total",
+                "steps_done",
+                "debug_endpoint",
+                "started_at",
+                "updated_at"
+              ],
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "opens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "holding",
+                    "closing",
+                    "done"
+                  ]
+                },
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "CANCELED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "error_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "steps_total": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "steps_done": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "debug_endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "automation_enroll": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "accepts",
+          "maxJobs"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "accepts": {
+            "enum": [
+              "mine",
+              "org"
+            ]
+          },
+          "maxJobs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "enrollments",
+          "allow_debugging",
+          "running",
+          "runs"
+        ],
+        "properties": {
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "org_id",
+                "agent_id",
+                "accepts",
+                "max_jobs",
+                "created_at",
+                "last_poll_seconds",
+                "poll_error",
+                "enabled",
+                "running"
+              ],
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "accepts": {
+                  "enum": [
+                    "mine",
+                    "org"
+                  ]
+                },
+                "max_jobs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "last_poll_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "poll_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "running": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "allow_debugging": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "job_id",
+                "org_id",
+                "org_profile_id",
+                "profile_id",
+                "label",
+                "attempt",
+                "opens",
+                "state",
+                "outcome",
+                "error_code",
+                "steps_total",
+                "steps_done",
+                "debug_endpoint",
+                "started_at",
+                "updated_at"
+              ],
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "opens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "holding",
+                    "closing",
+                    "done"
+                  ]
+                },
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "CANCELED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "error_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "steps_total": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "steps_done": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "debug_endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "automation_unenroll": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "enrollments",
+          "allow_debugging",
+          "running",
+          "runs"
+        ],
+        "properties": {
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "org_id",
+                "agent_id",
+                "accepts",
+                "max_jobs",
+                "created_at",
+                "last_poll_seconds",
+                "poll_error",
+                "enabled",
+                "running"
+              ],
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "accepts": {
+                  "enum": [
+                    "mine",
+                    "org"
+                  ]
+                },
+                "max_jobs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "last_poll_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "poll_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "running": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "allow_debugging": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "job_id",
+                "org_id",
+                "org_profile_id",
+                "profile_id",
+                "label",
+                "attempt",
+                "opens",
+                "state",
+                "outcome",
+                "error_code",
+                "steps_total",
+                "steps_done",
+                "debug_endpoint",
+                "started_at",
+                "updated_at"
+              ],
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "opens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "holding",
+                    "closing",
+                    "done"
+                  ]
+                },
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "CANCELED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "error_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "steps_total": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "steps_done": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "debug_endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "automation_stop_job": {
+      "args": {
+        "type": "object",
+        "required": [
+          "jobId"
+        ],
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "enrollments",
+          "allow_debugging",
+          "running",
+          "runs"
+        ],
+        "properties": {
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "org_id",
+                "agent_id",
+                "accepts",
+                "max_jobs",
+                "created_at",
+                "last_poll_seconds",
+                "poll_error",
+                "enabled",
+                "running"
+              ],
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "accepts": {
+                  "enum": [
+                    "mine",
+                    "org"
+                  ]
+                },
+                "max_jobs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "last_poll_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "poll_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "running": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "allow_debugging": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "job_id",
+                "org_id",
+                "org_profile_id",
+                "profile_id",
+                "label",
+                "attempt",
+                "opens",
+                "state",
+                "outcome",
+                "error_code",
+                "steps_total",
+                "steps_done",
+                "debug_endpoint",
+                "started_at",
+                "updated_at"
+              ],
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "opens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "holding",
+                    "closing",
+                    "done"
+                  ]
+                },
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "CANCELED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "error_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "steps_total": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "steps_done": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "debug_endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "automation_set_debugging": {
+      "args": {
+        "type": "object",
+        "required": [
+          "allow"
+        ],
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "enrollments",
+          "allow_debugging",
+          "running",
+          "runs"
+        ],
+        "properties": {
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "org_id",
+                "agent_id",
+                "accepts",
+                "max_jobs",
+                "created_at",
+                "last_poll_seconds",
+                "poll_error",
+                "enabled",
+                "running"
+              ],
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "accepts": {
+                  "enum": [
+                    "mine",
+                    "org"
+                  ]
+                },
+                "max_jobs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "last_poll_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "poll_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "running": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "allow_debugging": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "job_id",
+                "org_id",
+                "org_profile_id",
+                "profile_id",
+                "label",
+                "attempt",
+                "opens",
+                "state",
+                "outcome",
+                "error_code",
+                "steps_total",
+                "steps_done",
+                "debug_endpoint",
+                "started_at",
+                "updated_at"
+              ],
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "org_profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "opens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "holding",
+                    "closing",
+                    "done"
+                  ]
+                },
+                "outcome": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "CANCELED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "error_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "steps_total": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "steps_done": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "debug_endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "events": {
@@ -16361,6 +17550,55 @@
             }
           },
           "maxItems": 50
+        }
+      }
+    },
+    "automation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "org_id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "poll",
+            "job"
+          ]
+        },
+        "org_id": {
+          "type": "string",
+          "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "job_id": {
+          "type": "string",
+          "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "state": {
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enrolled": {
+          "type": "boolean"
         }
       }
     },

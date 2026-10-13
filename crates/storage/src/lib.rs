@@ -9,6 +9,7 @@
 //! during writes. Every list query is bounded.
 
 pub mod agency;
+pub mod automation;
 pub mod bulk;
 pub mod catalog;
 pub mod cloud;

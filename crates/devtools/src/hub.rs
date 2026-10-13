@@ -230,7 +230,10 @@ fn route(s: &Shared, text: &str) {
         let event = Event {
             method: method.to_owned(),
             params: v.get("params").cloned().unwrap_or(Value::Null),
-            session_id: v.get("sessionId").and_then(Value::as_str).map(str::to_owned),
+            session_id: v
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         };
         if let Ok(mut l) = s.listeners.lock() {
             l.retain(|tx| tx.send(event.clone()).is_ok());

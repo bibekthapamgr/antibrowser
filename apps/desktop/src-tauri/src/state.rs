@@ -114,6 +114,8 @@ pub struct AppState {
     pub(crate) team: crate::team::TeamRuntime,
     /// Extensions, health, diagnostics previews and reminders (milestone 09).
     pub(crate) agency: crate::agency::AgencyRuntime,
+    /// Automation jobs run on this computer (milestone 10).
+    pub(crate) automation: crate::automation::AutomationRuntime,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -303,6 +305,7 @@ impl AppState {
             sync: crate::sync::SyncRuntime::new(),
             team: crate::team::TeamRuntime::new(),
             agency: crate::agency::AgencyRuntime::default(),
+            automation: crate::automation::AutomationRuntime::new(),
         }))
     }
 

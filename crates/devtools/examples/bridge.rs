@@ -12,13 +12,24 @@ use std::time::Duration;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::var("PB_CHROME_PATH")?;
     let digest = hex::decode(std::env::var("PB_CAPABILITY_SHA256")?)?;
-    let capability: [u8; 32] = digest.try_into().map_err(|_| "PB_CAPABILITY_SHA256 must be 32 bytes")?;
+    let capability: [u8; 32] = digest
+        .try_into()
+        .map_err(|_| "PB_CAPABILITY_SHA256 must be 32 bytes")?;
     let dir = tempfile::tempdir()?;
     let pipes = DevtoolsPipes::create()?;
     let mut cmd = Command::new(exe);
     cmd.arg(format!("--user-data-dir={}", dir.path().display()))
-        .args(["--no-first-run", "--no-default-browser-check", "--enable-automation", "--headless=new"])
-        .args(["--disable-gpu", "--use-mock-keychain", "--password-store=basic"])
+        .args([
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--enable-automation",
+            "--headless=new",
+        ])
+        .args([
+            "--disable-gpu",
+            "--use-mock-keychain",
+            "--password-store=basic",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -29,7 +40,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg("about:blank");
     let mut child = cmd.spawn()?;
     let hub = Hub::from(pipes.into_ends());
-    hub.call("Browser.getVersion", serde_json::json!({}), None, Duration::from_secs(30))?;
+    hub.call(
+        "Browser.getVersion",
+        serde_json::json!({}),
+        None,
+        Duration::from_secs(30),
+    )?;
     let broker = Broker::start(
         hub.clone(),
         BrokerConfig {

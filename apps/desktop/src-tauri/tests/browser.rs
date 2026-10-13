@@ -652,6 +652,109 @@ fn ten_launch_close_cycles_stay_clean() {
     assert!(runs.iter().all(|r| r.outcome == "clean"));
 }
 
+// ---------------------------------------------------------------------------------------------- automation (10)
+
+/// Milestone 10: an organization's job drives the real browser over its protected DevTools pipe (no port), under
+/// the profile's session lease, and hands the profile back with its closing backup (the in-memory server stands in
+/// for the API).
+#[test]
+fn an_automation_job_drives_the_real_browser_over_its_pipe() {
+    use pb_desktop_lib::automation::AutomationTiming;
+    const ORG: &str = "org_01J9ZSEED0ACME000000000000";
+    const PRF: &str = "prf_01J9ZSEED0A010000000000000";
+    const DEV: &str = "dev_01J9ZSEED0D1D1000000000000";
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(env) = env() else { return };
+    let server = pb_sync::fake::FakeServer::new(64 * 1024);
+    server.add_profile(ORG, PRF);
+    let store = env.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    store
+        .set_cloud_state(pb_storage::cloud::DEVICE_ID, Some(DEV))
+        .unwrap_or_else(|e| panic!("{e}"));
+    env.state
+        .use_sync_backend(Arc::new(server.client(DEV, &[ORG])));
+    env.state.set_sync_poll(pb_sync::Poll {
+        interval: Duration::from_millis(1),
+        max_wait: Duration::from_millis(200),
+    });
+    env.state.set_automation_timing(AutomationTiming {
+        poll: Duration::from_millis(50),
+        report_retry: Duration::from_millis(10),
+        report_tries: 2,
+        ..AutomationTiming::default()
+    });
+    let id = env.profile("Automated");
+    store
+        .link_org_profiles(ORG, &[(id.clone(), PRF.into())])
+        .unwrap_or_else(|e| panic!("{e}"));
+    env.state
+        .automation_enroll(ORG, "mine", 1)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let origin = format!("http://127.0.0.1:{}", env.server.port);
+    let job = server.add_job(
+        ORG,
+        PRF,
+        vec![
+            json!({ "action": "open_url", "url": env.server.url("read", "auto", "-") }),
+            json!({ "action": "wait_for", "condition": { "type": "title_contains", "text": "pb isolation" } }),
+            json!({ "action": "screenshot", "label": "page" }),
+        ],
+        None,
+        None,
+        &[&origin],
+    );
+    eprintln!("pb-step: automation job {job}");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        env.state.poll_once();
+        env.state.run_sync_jobs();
+        env.state.run_automation_tick();
+        let done = server
+            .job(&job)
+            .is_some_and(|j| matches!(j.state, "SUCCEEDED" | "FAILED" | "CANCELED"));
+        if done && env.state.automation_running().is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "job: {:?}; {}",
+            server.job(&job),
+            env.diagnose(&id)
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let j = server.job(&job).unwrap_or_else(|| panic!("no job"));
+    assert_eq!(j.state, "SUCCEEDED", "{:?}", j.steps);
+    let out = |action: &str| {
+        j.steps
+            .iter()
+            .find(|s| s.action == action)
+            .and_then(|s| s.output.clone())
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(out("open_url")["final_origin"], json!(origin));
+    assert_eq!(out("open_url")["http_status"], json!(200));
+    let art = out("screenshot")["artifact_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let jpeg = server.artifact(&art).unwrap_or_default();
+    assert!(
+        jpeg.len() > 100 && jpeg.starts_with(&[0xff, 0xd8, 0xff]),
+        "{} bytes",
+        jpeg.len()
+    );
+    assert_eq!(out("close_profile")["backup"], json!("committed"));
+    // The page was opened by the job (and reported to the test server like any visit).
+    assert!(env.server.wait_report("auto").is_some());
+    // DevTools went over the pipe: the browser never wrote a debugging port file.
+    assert!(!env.user_data(&id).join("DevToolsActivePort").exists());
+    // Handed back: closed, backed up, released.
+    assert!(!env.state.supervisor.is_tracked(&id));
+    assert_eq!(server.head(PRF).0, 1);
+    assert_eq!(server.lease_holder(PRF), None);
+}
+
 // ---------------------------------------------------------------------------------------------- portability spike
 
 fn platform_name() -> &'static str {

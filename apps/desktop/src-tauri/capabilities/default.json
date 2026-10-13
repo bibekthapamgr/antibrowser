@@ -90,6 +90,11 @@
     "allow-select-client-download-directory",
     "allow-get-extensions",
     "allow-rescan-extensions",
-    "allow-review-extension"
+    "allow-review-extension",
+    "allow-get-automation-status",
+    "allow-automation-enroll",
+    "allow-automation-unenroll",
+    "allow-automation-stop-job",
+    "allow-automation-set-debugging"
   ]
 }

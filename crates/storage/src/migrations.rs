@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -27,6 +27,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (7, "encrypted_sync", v7),
     (8, "team_sessions", v8),
     (9, "agency_workspace", v9),
+    (10, "automation", v10),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -727,6 +728,57 @@ fn v9(tx: &Transaction<'_>) -> rusqlite::Result<()> {
            select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
          drop table audit_log;
          alter table audit_log_v9 rename to audit_log;
+         create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
+}
+
+/// Milestone 10: the organizations this computer runs automation jobs for, and a record of the jobs it ran.
+fn v10(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table automation_enrollments (
+           org_id      text primary key check (org_id glob 'org_*' and length(org_id) = 30),
+           agent_id    text not null check (agent_id glob 'agt_*' and length(agent_id) = 30),
+           accepts     text not null check (accepts in ('mine', 'org')),
+           max_jobs    integer not null check (max_jobs between 1 and 10),
+           created_at  text not null default {NOW}
+         ) strict;
+
+         create table automation_runs (
+           job_id          text primary key check (job_id glob 'job_*' and length(job_id) = 30),
+           org_id          text not null check (org_id glob 'org_*' and length(org_id) = 30),
+           org_profile_id  text not null check (org_profile_id glob 'prf_*' and length(org_profile_id) = 30),
+           profile_id      text references profiles(id) on delete set null,
+           label           text check (label is null or length(label) <= 120),
+           attempt         integer not null check (attempt >= 1),
+           opens           integer not null default 0 check (opens between 0 and 1000),
+           state           text not null check (state in ('opening', 'running', 'holding', 'closing', 'done')),
+           outcome         text check (outcome is null or outcome in ('SUCCEEDED', 'FAILED', 'CANCELED')),
+           error_code      text check (error_code is null or length(error_code) <= 40),
+           steps_total     integer not null default 0,
+           steps_done      integer not null default 0,
+           debug_endpoint  text check (debug_endpoint is null or length(debug_endpoint) <= 120),
+           started_at      text not null default {NOW},
+           updated_at      text not null default {NOW}
+         ) strict;
+         create index automation_runs_updated_idx on automation_runs (updated_at desc);
+
+         create table audit_log_v10 (
+           seq         integer primary key autoincrement,
+           at          text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           profile_id  text,
+           action      text not null check (action in ('start', 'stop', 'force_stop', 'exit', 'crash', 'adopt',
+                         'interrupted', 'recover', 'backup', 'runtime_install', 'runtime_remove',
+                         'create', 'trash', 'restore', 'delete', 'purge', 'bulk', 'import', 'export',
+                         'proxy', 'network', 'sync', 'cloud_restore', 'team', 'extension', 'diagnostics',
+                         'automation')),
+           outcome     text not null check (length(outcome) <= 40),
+           run_id      text,
+           detail      text check (detail is null or length(detail) <= 200)
+         ) strict;
+         insert into audit_log_v10 (seq, at, profile_id, action, outcome, run_id, detail)
+           select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
+         drop table audit_log;
+         alter table audit_log_v10 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);"
     ))
 }

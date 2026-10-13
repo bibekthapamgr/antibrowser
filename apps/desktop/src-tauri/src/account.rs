@@ -884,4 +884,56 @@ impl AppState {
             return Err(pb_sync::rest::map_error(res.status, &json));
         }
     }
+
+    /// A raw upload made by the shell's own code (milestone 10: a job's screenshot), with the same rules.
+    pub(crate) fn shell_put_bytes(
+        &self,
+        path: &str,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Result<Value, pb_sync::ApiError> {
+        use pb_sync::ApiError as E;
+        let local = |code: &str| E::Code {
+            status: 0,
+            code: code.to_owned(),
+        };
+        let store = self.store().map_err(|_| local("LOCAL_STORE_ERROR"))?;
+        let server = store
+            .cloud_state(cs::SERVER_URL)
+            .map_err(|_| local("LOCAL_STORE_ERROR"))?
+            .ok_or(E::SignedOut)?;
+        if self.cloud_status() != SessionStatus::SignedIn {
+            return Err(E::SignedOut);
+        }
+        let url = api_url(&server, path).map_err(|_| local("CLOUD_BAD_SERVER"))?;
+        let mut retried = false;
+        loop {
+            let token = self.access_token(&server, retried).map_err(|e| match e {
+                NoAccess::Offline => E::Offline,
+                NoAccess::SignedOut => E::SignedOut,
+                NoAccess::Unavailable => local("CLOUD_UNAVAILABLE"),
+            })?;
+            let res = match self
+                .cloud
+                .http
+                .put_bytes(&url, Some(&token), content_type, bytes)
+            {
+                Ok(r) => r,
+                Err(HttpError::Offline) => return Err(E::Offline),
+                Err(e) => return Err(local(http_err(e).code)),
+            };
+            if res.status == 401 && !retried {
+                retried = true;
+                continue;
+            }
+            let json = res.json().ok_or_else(|| local("CLOUD_BAD_RESPONSE"))?;
+            if res.ok() {
+                return Ok(json);
+            }
+            if res.status == 401 {
+                self.expire_session();
+            }
+            return Err(pb_sync::rest::map_error(res.status, &json));
+        }
+    }
 }

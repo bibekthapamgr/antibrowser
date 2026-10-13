@@ -62,7 +62,10 @@ fn valid_host(h: &str) -> bool {
 fn host_port(s: &str, scheme: &'static str) -> Option<(String, u16)> {
     let (host, port) = match s.rsplit_once(':') {
         Some((h, p)) => {
-            if p.is_empty() || p.len() > 5 || !p.bytes().all(|c| c.is_ascii_digit()) || p.starts_with('0')
+            if p.is_empty()
+                || p.len() > 5
+                || !p.bytes().all(|c| c.is_ascii_digit())
+                || p.starts_with('0')
             {
                 return None;
             }
@@ -172,15 +175,13 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../packages/contracts/fixtures/automation-cases.json"
         );
-        let cases: Cases =
-            serde_json::from_str(&std::fs::read_to_string(path).unwrap_or_default()).unwrap_or_else(|_| {
-                Cases {
-                    patterns: PatternCases {
-                        valid: vec![],
-                        invalid: vec![],
-                    },
-                    matches: vec![],
-                }
+        let cases: Cases = serde_json::from_str(&std::fs::read_to_string(path).unwrap_or_default())
+            .unwrap_or_else(|_| Cases {
+                patterns: PatternCases {
+                    valid: vec![],
+                    invalid: vec![],
+                },
+                matches: vec![],
             });
         assert!(!cases.matches.is_empty(), "vectors must load");
         for p in &cases.patterns.valid {

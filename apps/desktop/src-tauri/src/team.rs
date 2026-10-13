@@ -81,6 +81,12 @@ pub struct Refusal {
     pub since: Option<String>,
 }
 
+/// An automation job's open (milestone 10): its idempotency key and what to do once the lease is held.
+pub(crate) struct JobOpen<'a> {
+    pub key: &'a str,
+    pub after_lease: &'a dyn Fn(&str, &str) -> Result<(), String>,
+}
+
 pub struct TeamRuntime {
     live: Mutex<HashMap<ProfileId, Live>>,
     /// Operations of opens in progress (a repeated click joins the same one).
@@ -343,8 +349,8 @@ impl AppState {
             this.refresh_policy_if_stale(&org_id);
             let result = match existing.filter(|s| leased(&s.phase) && s.lease_id.is_some()) {
                 // Still ours (closing, pending, lost): reopen under the same lease.
-                Some(s) => this.reopen_shared(s, url.as_deref(), &op_id),
-                None => this.open_shared(&id, url.as_deref(), &op_id),
+                Some(s) => this.reopen_shared(s, url.as_deref(), &op_id, None),
+                None => this.open_shared(&id, url.as_deref(), &op_id, None),
             };
             if let Ok(mut m) = this.team.opening.lock() {
                 m.remove(&id);
@@ -357,11 +363,57 @@ impl AppState {
         Ok(Started { operation_id: op })
     }
 
+    /// Opens an organization profile for an automation job (milestone 10, ADR-0017): the same lease, restore and
+    /// launch as a person's open, but synchronous, with the job's idempotency key, and with a hook right after the
+    /// lease is held (the job reports it; an error stops the open and gives the profile back).
+    pub(crate) fn open_for_job(
+        self: &Arc<Self>,
+        id: &ProfileId,
+        job: &JobOpen<'_>,
+    ) -> Result<String, (&'static str, &'static str)> {
+        let store = self
+            .store()
+            .map_err(|_| ("INTERNAL", "Something went wrong opening the profile."))?;
+        if self.sync_restoring(&store, id) {
+            return Err((ipc::PROFILE_RESTORING.code, ipc::PROFILE_RESTORING.message));
+        }
+        let link = store
+            .sync_link(id)
+            .ok()
+            .flatten()
+            .ok_or((ipc::SYNC_NOT_LINKED.code, ipc::SYNC_NOT_LINKED.message))?;
+        if link.conflict_head.is_some() {
+            return Err((
+                ipc::SYNC_CONFLICT_OPEN.code,
+                ipc::SYNC_CONFLICT_OPEN.message,
+            ));
+        }
+        let existing = store.team_session(id).ok().flatten();
+        if let Some(s) = &existing
+            && matches!(s.phase.as_str(), "taken_over" | "revoked")
+        {
+            return Err((ipc::SESSION_ENDED.code, ipc::SESSION_ENDED.message));
+        }
+        let op = self.ops.start(OpKind::LaunchProfile, Some(id.to_string()));
+        self.refresh_policy_if_stale(&link.org_id);
+        let result = match existing.filter(|s| leased(&s.phase) && s.lease_id.is_some()) {
+            Some(s) => self.reopen_shared(s, None, &op, Some(job)),
+            None => self.open_shared(id, None, &op, Some(job)),
+        };
+        if let Err((code, message)) = result {
+            self.ops.fail(&op, code, message);
+            self.notify_running_changed();
+            return Err((code, message));
+        }
+        Ok(op)
+    }
+
     fn open_shared(
         self: &Arc<Self>,
         id: &ProfileId,
         start_url: Option<&str>,
         op: &str,
+        job: Option<&JobOpen<'_>>,
     ) -> Result<(), (&'static str, &'static str)> {
         let internal = ("INTERNAL", "Something went wrong opening the profile.");
         let store = self.store().map_err(|_| internal)?;
@@ -376,12 +428,16 @@ impl AppState {
         ))?;
         // An unfinished backup of this profile is replaced by the session's own closing backup.
         self.cancel_uploads_of(&store, id);
-        let open_key = store
-            .team_session(id)
-            .ok()
-            .flatten()
-            .map(|s| s.open_key)
-            .unwrap_or_else(|| pb_sync::job::random_id("open-").unwrap_or_default());
+        // A job uses its own key: every retry of the job on this computer gets the same lease (milestone 10).
+        let open_key = match job {
+            Some(j) => j.key.to_owned(),
+            None => store
+                .team_session(id)
+                .ok()
+                .flatten()
+                .map(|s| s.open_key)
+                .unwrap_or_else(|| pb_sync::job::random_id("open-").unwrap_or_default()),
+        };
         let mut session = TeamSession {
             local_profile_id: id.clone(),
             org_id: link.org_id.clone(),
@@ -454,6 +510,17 @@ impl AppState {
             Some(&format!("lease {}", opened.lease.id)),
         );
         self.refresh_capabilities(&store, id, &link.org_id, &link.org_profile_id);
+        // An automation job reports its lease before anything else happens (it may have been canceled meanwhile).
+        if let Some(j) = job
+            && let Err(code) = (j.after_lease)(&opened.lease.id, &opened.lease.fencing_token)
+        {
+            self.end_session(&store, &mut session, SessionOutcome::Failed);
+            let _ = store.audit(Some(id), "team", "job_stopped", None, Some(&code));
+            return Err((
+                "JOB_STOPPED",
+                "The automation job was stopped before the profile opened.",
+            ));
+        }
 
         // This computer's copy must be the newest backup before the browser opens.
         let user_data = self.root.dirs(id).user_data;
@@ -493,6 +560,7 @@ impl AppState {
         mut session: TeamSession,
         start_url: Option<&str>,
         op: &str,
+        job: Option<&JobOpen<'_>>,
     ) -> Result<(), (&'static str, &'static str)> {
         let internal = ("INTERNAL", "Something went wrong opening the profile.");
         let store = self.store().map_err(|_| internal)?;
@@ -503,6 +571,16 @@ impl AppState {
                 return Err((ipc::SESSION_ENDED.code, ipc::SESSION_ENDED.message));
             }
             Beat::Failed(e) => return Err(open_error(&e)),
+        }
+        if let (Some(j), Some(lease), Some(token)) =
+            (job, session.lease_id.clone(), session.fencing_token.clone())
+            && let Err(code) = (j.after_lease)(&lease, &token)
+        {
+            let _ = store.audit(Some(&id), "team", "job_stopped", None, Some(&code));
+            return Err((
+                "JOB_STOPPED",
+                "The automation job was stopped before the profile opened.",
+            ));
         }
         self.cancel_uploads_of(&store, &id);
         session.upload_job_id = None;
