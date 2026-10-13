@@ -42,6 +42,7 @@ profile (list, confirmations, notices, the palette, resource use).
 ## Measurements
 Dashboard at 10,000 profiles in one client (API test with 10,000 profiles, a past session each and 30,000 audit events,
 local PostgreSQL 16, in-process requests, 15 requests each): owner median 118 ms (max 159 ms); operator with 5
-granted profiles median 23 ms (max 34 ms). The test fails above a 500 ms median; the roadmap target for metadata reads
-is p95 ≤ 250 ms in the primary region. The desktop profile list itself was already windowed for 10,000 rows
+granted profiles median 23 ms (max 34 ms). The test fails above a 1,000 ms median (a regression guard that also
+holds on shared CI runners and the 1-CPU test server); the roadmap target for metadata reads is p95 ≤ 250 ms in the
+primary region. The desktop profile list itself was already windowed for 10,000 rows
 (milestone 04).
