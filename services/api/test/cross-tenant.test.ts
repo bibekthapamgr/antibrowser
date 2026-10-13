@@ -30,6 +30,13 @@ const MISSING = {
   request: fx('hrq', 'ZZZZ'),
   task: fx('tsk', 'ZZZZ'),
   bookmark: fx('bkm', 'ZZZZ'),
+  token: fx('tok', 'ZZZZ'),
+  agent: fx('agt', 'ZZZZ'),
+  job: fx('job', 'ZZZZ'),
+  artifact: fx('art', 'ZZZZ'),
+  webhook: fx('whk', 'ZZZZ'),
+  delivery: fx('dlv', 'ZZZZ'),
+  seq: '2',
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -45,6 +52,13 @@ const FOREIGN: Ids = {
   request: '',
   task: '',
   bookmark: '',
+  token: '',
+  agent: '',
+  job: '',
+  artifact: fx('art', 'B1A1'),
+  webhook: '',
+  delivery: fx('dlv', 'B1D1'),
+  seq: '2',
 };
 
 let h: Harness;
@@ -72,6 +86,14 @@ async function betaState(): Promise<string> {
     'client_bookmarks o where o.org_id = $1',
     'extension_policies o where o.org_id = $1',
     'extension_reports o where o.org_id = $1',
+    'api_tokens o where o.org_id = $1',
+    'automation_settings o where o.org_id = $1',
+    'automation_agents o where o.org_id = $1',
+    'automation_jobs o where o.org_id = $1',
+    'job_steps o where o.org_id = $1',
+    'job_artifacts o where o.org_id = $1',
+    'webhook_endpoints o where o.org_id = $1',
+    'webhook_deliveries o where o.org_id = $1',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -198,6 +220,50 @@ beforeAll(async () => {
       })
     ).statusCode,
   ).toBe(204);
+  // Milestone 10: a beta API token, approved sites, computer, job (with a screenshot), webhook and delivery.
+  const tok = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/api-tokens`,
+    headers: betaOwner,
+    payload: { name: 'Beta integration', scopes: ['profiles:read'], expires_in_days: 30 },
+  });
+  expect(tok.statusCode, tok.body).toBe(201);
+  FOREIGN.token = tok.json().token.id;
+  const agent = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/automation/agents`,
+    headers: betaOwner,
+    payload: { device_id: FIXTURES.devices.betaOwnerLaptop.id },
+  });
+  expect(agent.statusCode, agent.body).toBe(201);
+  FOREIGN.agent = agent.json().id;
+  const job = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/automation/jobs`,
+    headers: { ...betaOwner, 'idempotency-key': idemKey() },
+    payload: { profile_id: FOREIGN.profile, steps: [], keep_open_minutes: 5 },
+  });
+  expect(job.statusCode, job.body).toBe(201);
+  FOREIGN.job = job.json().job.id;
+  await h.owner.query(
+    `insert into job_artifacts (id, org_id, job_id, sequence, content_type, bytes, sha256, width, height)
+     values ($1, $2, $3, 1, 'image/jpeg', '\\xffd8ffe0'::bytea, $4, 1, 1)`,
+    [FOREIGN.artifact, beta.id, FOREIGN.job, 'a'.repeat(64)],
+  );
+  const hook = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/webhook-endpoints`,
+    headers: betaOwner,
+    payload: { url: 'https://hooks.beta.example/pb', events: ['automation.job.failed'] },
+  });
+  expect(hook.statusCode, hook.body).toBe(201);
+  FOREIGN.webhook = hook.json().endpoint.id;
+  await h.owner.query(
+    `insert into webhook_deliveries (id, org_id, endpoint_id, event_id, event_type, event_created_at, payload, state,
+                                     next_attempt_at)
+     values ($1, $2, $3, $4, 'automation.job.failed', now(), '{}', 'dead', null)`,
+    [FOREIGN.delivery, beta.id, FOREIGN.webhook, fx('evt', 'B1E1')],
+  );
 });
 afterAll(async () => {
   await h.close();
@@ -433,6 +499,100 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
       payload: { device_id: FIXTURES.devices.acmeOwnerLaptop.id, extensions: [] },
     },
     { name: 'extension inventory', method: 'GET', url: `${base}/extension-inventory` },
+    // Milestone 10: automation, API tokens and webhooks.
+    { name: 'automation settings', method: 'GET', url: `${base}/automation/settings` },
+    {
+      name: 'change automation settings',
+      method: 'PUT',
+      url: `${base}/automation/settings`,
+      payload: { allowed_origins: [], expected_version: 1 },
+    },
+    { name: 'list jobs', method: 'GET', url: `${base}/automation/jobs?profile_id=${ids.profile}` },
+    {
+      name: 'ask for a job',
+      method: 'POST',
+      url: `${base}/automation/jobs`,
+      headers: { 'idempotency-key': idemKey() },
+      payload: { profile_id: ids.profile, steps: [], keep_open_minutes: 1, queue_timeout_seconds: 30 },
+    },
+    { name: 'get job', method: 'GET', url: `${base}/automation/jobs/${ids.job}` },
+    { name: 'cancel job', method: 'POST', url: `${base}/automation/jobs/${ids.job}/cancel`, payload: {} },
+    {
+      name: 'job screenshot',
+      method: 'GET',
+      url: `${base}/automation/jobs/${ids.job}/artifacts/${ids.artifact}`,
+    },
+    {
+      name: 'report on a job',
+      method: 'POST',
+      url: `${base}/automation/jobs/${ids.job}/report`,
+      payload: { type: 'finished', attempt: 1, state: 'FAILED' },
+    },
+    {
+      name: 'upload a screenshot',
+      method: 'PUT',
+      url: `${base}/automation/jobs/${ids.job}/steps/${ids.seq}/artifact?attempt=1&width=1&height=1`,
+      headers: { 'content-type': 'image/jpeg' },
+      payload: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]),
+    },
+    {
+      name: 'enroll a computer',
+      method: 'POST',
+      url: `${base}/automation/agents`,
+      payload: { device_id: FIXTURES.devices.acmeOwnerLaptop.id },
+    },
+    { name: 'list computers', method: 'GET', url: `${base}/automation/agents` },
+    {
+      name: 'change a computer',
+      method: 'PATCH',
+      url: `${base}/automation/agents/${ids.agent}`,
+      payload: { enabled: false, expected_version: 1 },
+    },
+    { name: 'remove a computer', method: 'DELETE', url: `${base}/automation/agents/${ids.agent}` },
+    {
+      name: 'poll as a computer',
+      method: 'POST',
+      url: `${base}/automation/agents/${ids.agent}/poll`,
+      payload: { running: [], capacity: 0, debug_allowed: false },
+    },
+    { name: 'list tokens', method: 'GET', url: `${base}/api-tokens` },
+    {
+      name: 'create a token',
+      method: 'POST',
+      url: `${base}/api-tokens`,
+      payload: { name: 'x', scopes: ['profiles:read'], client_ids: [ids.client], expires_in_days: 1 },
+    },
+    { name: 'rotate a token', method: 'POST', url: `${base}/api-tokens/${ids.token}/rotate`, payload: {} },
+    { name: 'revoke a token', method: 'DELETE', url: `${base}/api-tokens/${ids.token}` },
+    { name: 'the calling token', method: 'GET', url: `${base}/api-tokens/current` },
+    { name: 'list webhooks', method: 'GET', url: `${base}/webhook-endpoints` },
+    {
+      name: 'add a webhook',
+      method: 'POST',
+      url: `${base}/webhook-endpoints`,
+      payload: { url: 'https://hooks.example.com/x', events: ['automation.job.failed'] },
+    },
+    { name: 'get a webhook', method: 'GET', url: `${base}/webhook-endpoints/${ids.webhook}` },
+    {
+      name: 'change a webhook',
+      method: 'PATCH',
+      url: `${base}/webhook-endpoints/${ids.webhook}`,
+      payload: { state: 'disabled', expected_version: 1 },
+    },
+    { name: 'delete a webhook', method: 'DELETE', url: `${base}/webhook-endpoints/${ids.webhook}` },
+    {
+      name: 'rotate a webhook secret',
+      method: 'POST',
+      url: `${base}/webhook-endpoints/${ids.webhook}/rotate-secret`,
+      payload: {},
+    },
+    { name: 'test a webhook', method: 'POST', url: `${base}/webhook-endpoints/${ids.webhook}/test` },
+    { name: 'webhook deliveries', method: 'GET', url: `${base}/webhook-endpoints/${ids.webhook}/deliveries` },
+    {
+      name: 'redeliver',
+      method: 'POST',
+      url: `${base}/webhook-endpoints/${ids.webhook}/deliveries/${ids.delivery}/redeliver`,
+    },
     {
       name: 'import local workspace',
       method: 'POST',
@@ -469,6 +629,13 @@ describe('coverage', () => {
       request: '{requestId}',
       task: '{taskId}',
       bookmark: '{bookmarkId}',
+      token: '{tokenId}',
+      agent: '{agentId}',
+      job: '{jobId}',
+      artifact: '{artifactId}',
+      webhook: '{endpointId}',
+      delivery: '{deliveryId}',
+      seq: '{seq}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),
@@ -511,6 +678,12 @@ describe('another organization’s ids inside our own organization', () => {
       request: MISSING.request,
       task: MISSING.task,
       bookmark: MISSING.bookmark,
+      token: MISSING.token,
+      agent: MISSING.agent,
+      job: MISSING.job,
+      artifact: MISSING.artifact,
+      webhook: MISSING.webhook,
+      delivery: MISSING.delivery,
       [kind]: value,
     } as Ids);
 
@@ -526,6 +699,12 @@ describe('another organization’s ids inside our own organization', () => {
     'request',
     'task',
     'bookmark',
+    'token',
+    'agent',
+    'job',
+    'artifact',
+    'webhook',
+    'delivery',
   ] as const) {
     it(`${kind} ids answer like nonexistent ids on every endpoint that takes one`, async () => {
       const before = await betaState();
@@ -612,7 +791,7 @@ describe('another organization’s ids inside our own organization', () => {
       ),
     );
     const all = JSON.stringify(lists.map((l) => l.json()));
-    for (const id of Object.values(FOREIGN)) expect(all).not.toContain(id);
+    for (const [kind, id] of Object.entries(FOREIGN)) if (kind !== 'seq') expect(all).not.toContain(id);
   });
 
   it('cannot move a profile between organizations by editing it', async () => {

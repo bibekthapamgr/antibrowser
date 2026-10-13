@@ -29,6 +29,7 @@ export function clientRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/clients',
     {
+      config: { tokens: true },
       schema: {
         tags: ['clients'],
         params: OrgParams,
@@ -101,7 +102,10 @@ export function clientRoutes(app: App, deps: Deps): void {
 
   app.get(
     '/orgs/:orgId/clients/:clientId',
-    { schema: { tags: ['clients'], params: ClientParams, response: { 200: Client, ...errors } } },
+    {
+      config: { tokens: true },
+      schema: { tags: ['clients'], params: ClientParams, response: { 200: Client, ...errors } },
+    },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       const client = await withTx(deps.pool, access, (c) =>

@@ -42,6 +42,7 @@ GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
 
 step() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
+warn() { printf '    \033[33m!!\033[0m  %s\n' "$*"; }
 die()  { printf '\n\033[1;31mSTOPPED:\033[0m %s\n' "$*" >&2; exit 1; }
 as_pb() {
   runuser -u "$APP_USER" -- env HOME="$APP_HOME" PATH="$NODE_ROOT/bin:/usr/local/bin:/usr/bin:/bin" \
@@ -247,6 +248,7 @@ RestrictNamespaces=true
 LockPersonality=true
 CapabilityBoundingSet=
 AmbientCapabilities=
+${5:-}
 
 [Install]
 WantedBy=multi-user.target
@@ -334,7 +336,7 @@ step "Services (systemd)"
 if ! systemctl is-active --quiet pb-api && port_in_use "$API_PORT"; then
   die "port $API_PORT is already in use on this server. Re-run with PB_API_PORT=<free port> bash $SELF"
 fi
-unit() {  # name, description, workdir, entry
+unit() {  # name, description, workdir, entry, [extra [Service] lines]
   cat > "/etc/systemd/system/$1.service" <<EOF
 [Unit]
 Description=$2
@@ -364,17 +366,29 @@ RestrictNamespaces=true
 LockPersonality=true
 CapabilityBoundingSet=
 AmbientCapabilities=
+${5:-}
 
 [Install]
 WantedBy=multi-user.target
 EOF
 }
 unit pb-api "Project Browser API (test server)" "$APP_DIR/services/api" "src/server.ts"
-unit pb-worker "Project Browser outbox worker (test server)" "$APP_DIR/services/worker" "src/main.ts"
+# Milestone 10: the worker delivers webhooks to addresses customers choose. Besides its own checks (public addresses
+# only, pinned DNS, no redirects), it may not reach private, link-local (cloud metadata) or carrier-grade NAT networks
+# at all. Loopback stays reachable (PostgreSQL, storage); this server's DNS resolvers stay reachable.
+RESOLVERS=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
+WORKER_EGRESS="IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 0.0.0.0/8 fc00::/7 fe80::/10"
+[[ -n ${RESOLVERS// /} ]] && WORKER_EGRESS="$WORKER_EGRESS"$'\n'"IPAddressAllow=$RESOLVERS"
+unit pb-worker "Project Browser outbox worker (test server)" "$APP_DIR/services/worker" "src/main.ts" "$WORKER_EGRESS"
 systemctl daemon-reload
 systemctl enable -q pb-api pb-worker
 systemctl restart pb-api pb-worker
 ok "pb-api and pb-worker enabled and restarted"
+if systemctl show pb-worker -p IPAddressDeny 2>/dev/null | grep -q '169.254'; then
+  ok "worker egress: private and link-local networks blocked for webhook deliveries (systemd IPAddressDeny)"
+else
+  warn "this systemd does not apply IPAddressDeny; webhook deliveries rely on the worker's own address checks"
+fi
 
 # ----------------------------------------------------------------------------- smoke test
 step "Smoke test"

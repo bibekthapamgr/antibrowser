@@ -1,22 +1,36 @@
 import type { AppConfig } from '@pb/config/env';
-import { ApiError, isId } from '@pb/contracts';
+import { ApiError, type ApiScope, isId, parseApiToken } from '@pb/contracts';
 import { jwtVerify } from 'jose';
 import type pg from 'pg';
 import { withTx } from './db.ts';
 import { DEV_ISSUER } from './fixtures.ts';
-import type { SessionKeys } from './session.ts';
+import { type SessionKeys, sameDigest, sha256Hex } from './session.ts';
+
+/** What an API token allows on top of its owner's own access (milestone 10, ADR-0017). */
+export interface TokenGrant {
+  id: string;
+  name: string;
+  orgId: string;
+  scopes: ApiScope[];
+  /** null: every client the owner can reach. */
+  clientIds: string[] | null;
+  /** null: every profile the owner can reach. */
+  profileIds: string[] | null;
+}
 
 /**
  * Who is calling. `session` principals come from API session tokens (a signed-in device); `dev` principals from the
- * development-only HS256 tokens, which packages/config never enables outside dev/test.
+ * development-only HS256 tokens, which packages/config never enables outside dev/test; `token` principals from API
+ * tokens (milestone 10): they act as the token's owner, limited by the token's organization, scopes and restrictions.
  */
 export interface Principal {
-  kind: 'session' | 'dev';
+  kind: 'session' | 'dev' | 'token';
   userId: string;
   deviceId: string | null;
   sessionId: string | null;
   /** Last real authentication at the identity provider (for operations that need a recent sign-in). */
   authTime: Date;
+  token?: TokenGrant;
 }
 
 export interface Authenticator {
@@ -30,6 +44,8 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
   return {
     async authenticate(authorization) {
       const token = bearer(authorization);
+      const api = parseApiToken(token);
+      if (api) return apiTokenPrincipal(pool, api.tokenId, api.secret);
       const session = await keys.verify(token);
       if (session) {
         await assertSessionActive(pool, session.userId, session.sessionId, session.deviceId);
@@ -71,6 +87,67 @@ async function assertSessionActive(pool: pg.Pool, userId: string, sessionId: str
       reason: 'session_revoked',
     });
   }
+}
+
+/**
+ * An API token: the digest must match (constant time) the current secret, or the previous one during a rotation's
+ * grace period; the token must not be expired or revoked; its owner must be enabled and still a member. Every
+ * failure answers the same UNAUTHENTICATED (a guessed id learns nothing).
+ */
+async function apiTokenPrincipal(pool: pg.Pool, tokenId: string, secret: string): Promise<Principal> {
+  const invalid = () =>
+    new ApiError('UNAUTHENTICATED', 'Invalid or expired credentials', { reason: 'token_invalid' });
+  const { rows } = await withTx(pool, { orgId: null, userId: null }, (c) =>
+    c.query<{
+      org_id: string;
+      user_id: string;
+      token_hash: string;
+      previous_hash: string | null;
+      previous_valid: boolean;
+      scopes: ApiScope[];
+      client_ids: string[] | null;
+      profile_ids: string[] | null;
+      expired: boolean;
+      revoked: boolean;
+      user_disabled: boolean;
+      member: boolean;
+      name: string;
+    }>('select * from app.api_token_for_auth($1)', [tokenId]),
+  );
+  const t = rows[0];
+  const digest = sha256Hex(secret);
+  if (!t) throw invalid();
+  const matches =
+    sameDigest(digest, t.token_hash) ||
+    (t.previous_valid && t.previous_hash !== null && sameDigest(digest, t.previous_hash));
+  if (!matches) throw invalid();
+  if (t.revoked)
+    throw new ApiError('UNAUTHENTICATED', 'This API token was revoked', { reason: 'token_revoked' });
+  if (t.expired)
+    throw new ApiError('UNAUTHENTICATED', 'This API token has expired', { reason: 'token_expired' });
+  if (t.user_disabled || !t.member) {
+    throw new ApiError('UNAUTHENTICATED', 'The owner of this API token no longer has access', {
+      reason: 'token_owner_inactive',
+    });
+  }
+  await withTx(pool, { orgId: null, userId: null }, (c) =>
+    c.query('select app.api_token_touch($1)', [tokenId]),
+  );
+  return {
+    kind: 'token',
+    userId: t.user_id,
+    deviceId: null,
+    sessionId: null,
+    authTime: new Date(0),
+    token: {
+      id: tokenId,
+      name: t.name,
+      orgId: t.org_id,
+      scopes: t.scopes,
+      clientIds: t.client_ids,
+      profileIds: t.profile_ids,
+    },
+  };
 }
 
 async function devPrincipal(pool: pg.Pool, key: Uint8Array, token: string): Promise<Principal> {

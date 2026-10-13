@@ -89,6 +89,16 @@ describe('loadConfig', () => {
     expect(cfg.objectStore).toMatchObject({ publicEndpoint: 'https://s3.example', forcePathStyle: false });
   });
 
+  it('webhooks reach private destinations only in dev/test (milestone 10)', () => {
+    const key = keyFile({ 'root-1': realKey }, 'root-1');
+    expect(loadConfig({ ...prod, KMS_LOCAL_KEY_FILE: key }).webhooks.allowPrivateDestinations).toBe(false);
+    expect(() =>
+      loadConfig({ ...prod, KMS_LOCAL_KEY_FILE: key, WEBHOOK_ALLOW_PRIVATE_DESTINATIONS: 'true' }),
+    ).toThrow(/WEBHOOK_ALLOW_PRIVATE_DESTINATIONS is only permitted/);
+    const dev = loadConfig({ ...base, APP_ENV: 'test', WEBHOOK_ALLOW_PRIVATE_DESTINATIONS: 'true' });
+    expect(dev.webhooks.allowPrivateDestinations).toBe(true);
+  });
+
   it('snapshot storage needs a root key provider, kept in an owner-only file outside dev/test', () => {
     expect(() => loadConfig(prod)).toThrow(/key provider/);
     expect(() =>

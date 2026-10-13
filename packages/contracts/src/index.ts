@@ -1,4 +1,5 @@
 export * from './agency.ts';
+export * from './automation.ts';
 export * from './errors.ts';
 export * from './events.ts';
 export * from './ids.ts';

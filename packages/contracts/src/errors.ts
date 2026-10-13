@@ -44,6 +44,21 @@ export const ERROR_CODES = {
   ENTITLEMENT_REQUIRED: { status: 403, retryable: false },
   /** A note that looks like a password, key, token or card number. Notes are not a place for secrets. */
   NOTE_LOOKS_SECRET: { status: 422, retryable: false },
+  // Milestone 10
+  /** The API token may not call this route, or lacks the scope this operation needs (safe_details say which). */
+  TOKEN_SCOPE_MISSING: { status: 403, retryable: false },
+  /** A workflow address is not on the organization's approved sites. */
+  URL_NOT_APPROVED: { status: 422, retryable: false },
+  /** Too many queued jobs for the organization or the token; retry after some finish. */
+  QUEUE_FULL: { status: 429, retryable: true },
+  /** The job already finished (canceling or reporting on it changes nothing). */
+  JOB_FINISHED: { status: 409, retryable: false },
+  /** A report from a computer that no longer holds this job (it was given back, reassigned or ended). */
+  JOB_CLAIM_STALE: { status: 409, retryable: false },
+  /** The chosen computer cannot run this job (turned off, removed, or it does not allow debugging sessions). */
+  AGENT_UNAVAILABLE: { status: 409, retryable: false },
+  /** A webhook address that resolves to a private, local or reserved network, or is otherwise not allowed. */
+  WEBHOOK_DESTINATION_BLOCKED: { status: 422, retryable: false },
   INTERNAL: { status: 500, retryable: true },
   UNAVAILABLE: { status: 503, retryable: true },
 } as const;

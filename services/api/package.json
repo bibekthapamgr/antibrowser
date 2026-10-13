@@ -9,7 +9,9 @@
     "./seed": "./scripts/seed.ts",
     "./backup/jobs": "./src/backup/jobs.ts",
     "./backup/keys": "./src/backup/keys.ts",
-    "./backup/objects": "./src/backup/objects.ts"
+    "./backup/objects": "./src/backup/objects.ts",
+    "./webhooks/signing": "./src/webhooks/signing.ts",
+    "./automation": "./src/automation.ts"
   },
   "description": "Control-plane API (Fastify modular monolith): identity, organizations, authorization, leases and snapshots.",
   "scripts": {

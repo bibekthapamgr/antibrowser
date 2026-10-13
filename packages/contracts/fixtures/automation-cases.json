@@ -1,0 +1,85 @@
+{
+  "description": "Shared vectors for approved-site matching (packages/contracts/src/automation.ts and crates/devtools/src/origin.rs). Patterns: scheme and host (optional leading *.), optional port, lowercase ASCII.",
+  "patterns": {
+    "valid": [
+      "https://app.example.com",
+      "https://*.example.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:8080",
+      "https://example.com:8443",
+      "https://xn--bcher-kva.example",
+      "http://localhost"
+    ],
+    "invalid": [
+      "https://App.Example.com",
+      "https://*.com",
+      "https://*",
+      "ftp://example.com",
+      "https://example.com/",
+      "https://example.com/path",
+      "https://user@example.com",
+      "https://example.com:0",
+      "https://example.com:080",
+      "https://example.com:70000",
+      "https://-bad.example.com",
+      "https://bad-.example.com",
+      "https://example..com",
+      "https://example.com.",
+      "https://*.*.example.com",
+      "https://ex ample.com",
+      "https://bücher.example",
+      "javascript:alert(1)",
+      ""
+    ]
+  },
+  "matches": [
+    { "url": "https://app.example.com", "patterns": ["https://app.example.com"], "allowed": true },
+    { "url": "https://app.example.com/", "patterns": ["https://app.example.com"], "allowed": true },
+    { "url": "https://app.example.com/a/b?c=d#e", "patterns": ["https://app.example.com"], "allowed": true },
+    { "url": "https://app.example.com:443/x", "patterns": ["https://app.example.com"], "allowed": true },
+    { "url": "https://app.example.com:8443/x", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "http://app.example.com/", "patterns": ["https://app.example.com"], "allowed": false },
+    {
+      "url": "https://evil.com/?https://app.example.com",
+      "patterns": ["https://app.example.com"],
+      "allowed": false
+    },
+    { "url": "https://app.example.com.evil.com/", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://app.example.com@evil.com/", "patterns": ["https://app.example.com"], "allowed": false },
+    {
+      "url": "https://evil.com\\@app.example.com/",
+      "patterns": ["https://app.example.com"],
+      "allowed": false
+    },
+    { "url": "https://APP.example.com/", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://app.example.com./", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://a.example.com/", "patterns": ["https://*.example.com"], "allowed": true },
+    { "url": "https://a.b.example.com/", "patterns": ["https://*.example.com"], "allowed": true },
+    { "url": "https://example.com/", "patterns": ["https://*.example.com"], "allowed": false },
+    { "url": "https://badexample.com/", "patterns": ["https://*.example.com"], "allowed": false },
+    { "url": "http://localhost:3000/login", "patterns": ["http://localhost:3000"], "allowed": true },
+    { "url": "http://localhost:3001/login", "patterns": ["http://localhost:3000"], "allowed": false },
+    { "url": "http://localhost/", "patterns": ["http://localhost"], "allowed": true },
+    { "url": "http://localhost:80/", "patterns": ["http://localhost"], "allowed": true },
+    { "url": "http://127.0.0.1:8080/", "patterns": ["http://127.0.0.1:8080"], "allowed": true },
+    { "url": "http://2130706433:8080/", "patterns": ["http://127.0.0.1:8080"], "allowed": false },
+    { "url": "http://0x7f.0.0.1:8080/", "patterns": ["http://127.0.0.1:8080"], "allowed": false },
+    { "url": "https://app.example.com:0443/", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://app.example.com /", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://app.example.com\t/", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "https://app.example.com", "patterns": [], "allowed": false },
+    { "url": "file:///etc/passwd", "patterns": ["https://app.example.com"], "allowed": false },
+    { "url": "data:text/html,hi", "patterns": ["https://app.example.com"], "allowed": false },
+    {
+      "url": "https://b.example.org/",
+      "patterns": ["https://a.example.org", "https://b.example.org"],
+      "allowed": true
+    },
+    {
+      "url": "https://xn--bcher-kva.example/",
+      "patterns": ["https://xn--bcher-kva.example"],
+      "allowed": true
+    },
+    { "url": "https://bücher.example/", "patterns": ["https://xn--bcher-kva.example"], "allowed": false }
+  ]
+}

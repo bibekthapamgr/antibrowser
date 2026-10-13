@@ -24,6 +24,12 @@ export const LIMITS = {
   orgCreatePerUser: { bucket: 'org.create.user', max: 10, windowSeconds: 86_400 },
   // Milestone 07: each restore plan unwraps a data key.
   restorePerUser: { bucket: 'restore.user', max: 120, windowSeconds: 600 },
+  // Milestone 10: API tokens per token and per organization (all its tokens together); job creation per organization.
+  apiPerToken: { bucket: 'api.token', max: 600, windowSeconds: 60 },
+  apiPerOrg: { bucket: 'api.org', max: 3000, windowSeconds: 60 },
+  jobCreatePerOrg: { bucket: 'job.create.org', max: 1000, windowSeconds: 3600 },
+  tokenCreatePerUser: { bucket: 'token.create.user', max: 30, windowSeconds: 3600 },
+  webhookTestPerOrg: { bucket: 'webhook.test.org', max: 30, windowSeconds: 600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

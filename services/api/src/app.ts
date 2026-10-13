@@ -16,9 +16,11 @@ import { type Authenticator, createAuthenticator, type Principal } from './auth.
 import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
 import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
+import { hit, LIMITS } from './ratelimit.ts';
 import { agencyRoutes } from './routes/agency.ts';
 import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
+import { automationRoutes } from './routes/automation.ts';
 import { backupRoutes } from './routes/backups.ts';
 import { clientRoutes } from './routes/clients.ts';
 import { deviceRoutes } from './routes/devices.ts';
@@ -32,6 +34,8 @@ import { organizationRoutes } from './routes/organizations.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
+import { tokenRoutes } from './routes/tokens.ts';
+import { webhookRoutes } from './routes/webhooks.ts';
 import { createSessionKeys, type SessionKeys } from './session.ts';
 import type { TenantAccess } from './tenancy.ts';
 
@@ -62,6 +66,8 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     public?: boolean;
+    /** Milestone 10: API tokens may call this route (deny by default; scopes are checked by the route). */
+    tokens?: boolean;
   }
 }
 
@@ -143,16 +149,26 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.9.0',
+        version: '0.10.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
-          'concurrency, Idempotency-Key on lease acquisition, snapshot commit and local workspace import. ' +
-          'Authentication: OIDC sign-in in the system browser (Authorization Code + PKCE), then API session tokens ' +
-          '(ADR-0013). Authorization: organization role combined with client/profile grants, deny by default; ' +
-          'identifiers outside the caller’s reach answer 404 exactly like nonexistent ones.',
+          'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +
+          'jobs. Authentication: OIDC sign-in in the system browser (Authorization Code + PKCE), then API session ' +
+          'tokens (ADR-0013); or an API token (`Authorization: Bearer pbt_…`, ADR-0017) on the routes marked ' +
+          '"API tokens: yes", acting as its owner within its scopes and restrictions. Authorization: organization ' +
+          'role combined with client/profile grants, deny by default; identifiers outside the caller’s reach answer ' +
+          '404 exactly like nonexistent ones.',
       },
       components: {
-        securitySchemes: { bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
+        securitySchemes: {
+          bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          apiToken: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'pbt_<token id>_<secret>',
+            description: 'API token (milestone 10). Only routes marked "API tokens: yes" accept it.',
+          },
+        },
       },
       security: [{ bearer: [] }],
     },
@@ -170,6 +186,17 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
   app.addHook('onRequest', async (req) => {
     if (req.is404 || req.routeOptions.config.public) return;
     req.principal = await deps.auth.authenticate(req.headers.authorization);
+    const token = req.principal.token;
+    if (token) {
+      // Deny by default: a token reaches only routes declared for tokens, at a bounded rate per token and tenant.
+      if (!req.routeOptions.config.tokens) {
+        throw new ApiError('TOKEN_SCOPE_MISSING', 'API tokens cannot use this route', {
+          route: 'not_for_tokens',
+        });
+      }
+      await hit(pool, LIMITS.apiPerToken, token.id);
+      await hit(pool, LIMITS.apiPerOrg, token.orgId);
+    }
   });
 
   app.setErrorHandler(async (err, req, reply) => {
@@ -208,6 +235,12 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     const pgErr = err as { code?: string; message?: string };
     if (pgErr.code === 'P0001' && pgErr.message === 'LAST_OWNER') {
       return send('LAST_OWNER', 'An organization must keep at least one owner; transfer ownership first');
+    }
+    if (pgErr.code === 'P0001' && pgErr.message === 'JOB_FINISHED') {
+      return send('JOB_FINISHED', 'This job already finished');
+    }
+    if (pgErr.code === 'P0001' && pgErr.message === 'JOB_TRANSITION') {
+      return send('JOB_CLAIM_STALE', 'This job is not in a state that allows this');
     }
     if (pgErr.code === '23505') return send('ALREADY_EXISTS', 'This already exists');
     // A composite (org_id, id) reference that does not resolve inside the organization: reported like a missing id.
@@ -259,6 +292,9 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       leaseRoutes(scoped, deps);
       sessionRoutes(scoped, deps);
       agencyRoutes(scoped, deps);
+      tokenRoutes(scoped, deps);
+      automationRoutes(scoped, deps);
+      webhookRoutes(scoped, deps);
       snapshotRoutes(scoped, deps);
       backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);

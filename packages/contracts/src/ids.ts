@@ -38,6 +38,13 @@ export const ID_PREFIXES = {
   // Milestone 09: client tasks and shared bookmarks.
   task: 'tsk',
   bookmark: 'bkm',
+  // Milestone 10: developer API and authorized automation.
+  apiToken: 'tok',
+  agent: 'agt',
+  job: 'job',
+  artifact: 'art',
+  webhookEndpoint: 'whk',
+  webhookDelivery: 'dlv',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

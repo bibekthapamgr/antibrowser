@@ -10,6 +10,7 @@
  */
 import {
   ApiError,
+  ID_PATTERN,
   isId,
   PERMISSION_CAPABILITY,
   type Permission,
@@ -17,10 +18,11 @@ import {
   ROLE_SCOPE,
   type Role,
   roleAllows,
+  scopesAllow,
 } from '@pb/contracts';
 import type pg from 'pg';
 import { auditAlone } from './audit.ts';
-import type { Principal } from './auth.ts';
+import type { Principal, TokenGrant } from './auth.ts';
 import { withTx } from './db.ts';
 
 export interface TenantAccess {
@@ -30,6 +32,8 @@ export interface TenantAccess {
   role: Role;
   scope: ResourceScope;
   requestId: string;
+  /** Set when the caller is an API token (milestone 10): scopes and restrictions narrow the owner's own access. */
+  token?: TokenGrant;
 }
 
 export interface RequestInfo {
@@ -43,6 +47,8 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
   if (!principal) throw new ApiError('UNAUTHENTICATED', 'Authentication required');
   const notFound = new ApiError('NOT_FOUND', 'Organization not found');
   if (!isId('organization', orgId)) throw notFound;
+  // A token belongs to exactly one organization: any other answers like an organization that does not exist.
+  if (principal.token && principal.token.orgId !== orgId) throw notFound;
   const { rows } = await withTx(pool, { orgId, userId: principal.userId }, (c) =>
     c.query<{ role: Role }>('select role from memberships where org_id = $1 and user_id = $2', [
       orgId,
@@ -70,6 +76,7 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
     role,
     scope: ROLE_SCOPE[role],
     requestId: req.id,
+    ...(principal.token ? { token: principal.token } : {}),
   };
   req.tenant = access;
   return access;
@@ -79,13 +86,58 @@ export function requirePermission(access: TenantAccess, permission: Permission):
   if (!roleAllows(access.role, permission)) {
     throw new ApiError('FORBIDDEN', 'Your role does not allow this action', { permission });
   }
+  if (access.token && !scopesAllow(access.token.scopes, permission)) {
+    throw new ApiError('TOKEN_SCOPE_MISSING', 'This API token’s scopes do not include this action', {
+      permission,
+    });
+  }
+}
+
+/** Ids embedded as SQL literals: only after a strict format check (they can never contain quotes). */
+function idList(kind: 'cli' | 'prf', ids: readonly string[]): string {
+  const pattern = new RegExp(ID_PATTERN(kind));
+  for (const id of ids) {
+    if (!pattern.test(id)) throw new ApiError('INTERNAL', 'Malformed restriction');
+  }
+  return `array[${ids.map((id) => `'${id}'`).join(',')}]::text[]`;
+}
+
+/**
+ * SQL condition for an API token's restrictions on profile `p` (true without a token or restriction): listed profiles
+ * and every profile of listed clients.
+ */
+function tokenProfileClause(access: TenantAccess, p: string): string {
+  const t = access.token;
+  if (!t || (!t.clientIds && !t.profileIds)) return 'true';
+  const parts: string[] = [];
+  if (t.profileIds) parts.push(`${p}.id = any(${idList('prf', t.profileIds)})`);
+  if (t.clientIds) parts.push(`${p}.client_id = any(${idList('cli', t.clientIds)})`);
+  return `(${parts.join(' or ')})`;
+}
+
+/** Same for client `c`: listed clients, and clients of listed profiles. */
+function tokenClientClause(access: TenantAccess, c: string): string {
+  const t = access.token;
+  if (!t || (!t.clientIds && !t.profileIds)) return 'true';
+  const parts: string[] = [];
+  if (t.clientIds) parts.push(`${c}.id = any(${idList('cli', t.clientIds)})`);
+  if (t.profileIds) {
+    parts.push(`exists (select 1 from profiles tp where tp.org_id = ${c}.org_id and tp.client_id = ${c}.id
+                          and tp.id = any(${idList('prf', t.profileIds)}))`);
+  }
+  return `(${parts.join(' or ')})`;
 }
 
 /**
  * SQL condition: the profile row `p` is inside the member's scope. `userParam` is the placeholder holding the user id.
- * A client grant covers every profile of that client; a profile grant covers one profile.
+ * A client grant covers every profile of that client; a profile grant covers one profile. An API token narrows this
+ * further to its restrictions.
  */
 export function profileVisible(access: TenantAccess, p: string, userParam: string): string {
+  return `(${roleProfileVisible(access, p, userParam)} and ${tokenProfileClause(access, p)})`;
+}
+
+function roleProfileVisible(access: TenantAccess, p: string, userParam: string): string {
   // Every branch references the user parameter so callers can always bind it.
   switch (access.scope) {
     case 'organization':
@@ -101,6 +153,10 @@ export function profileVisible(access: TenantAccess, p: string, userParam: strin
 
 /** SQL condition: the client row `c` is inside the member's scope (granted directly, or one of its profiles is). */
 export function clientVisible(access: TenantAccess, c: string, userParam: string): string {
+  return `(${roleClientVisible(access, c, userParam)} and ${tokenClientClause(access, c)})`;
+}
+
+function roleClientVisible(access: TenantAccess, c: string, userParam: string): string {
   switch (access.scope) {
     case 'organization':
       return `(${userParam}::text is not null)`;
@@ -113,6 +169,15 @@ export function clientVisible(access: TenantAccess, c: string, userParam: string
                               or g.profile_id in (select pp.id from profiles pp
                                                    where pp.org_id = ${c}.org_id and pp.client_id = ${c}.id
                                                      and pp.deleted_at is null)))`;
+  }
+}
+
+/** Interactive sign-in only: API tokens never manage tokens, webhooks, computers or members. */
+export function requireInteractive(principal: Principal | null): void {
+  if (principal?.kind === 'token') {
+    throw new ApiError('TOKEN_SCOPE_MISSING', 'API tokens cannot use this route', {
+      route: 'interactive_only',
+    });
   }
 }
 

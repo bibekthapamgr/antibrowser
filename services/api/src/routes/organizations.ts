@@ -20,6 +20,7 @@ import type pg from 'pg';
 import Type from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { endMemberAutomation } from '../automation.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
@@ -107,7 +108,10 @@ export function organizationRoutes(app: App, deps: Deps): void {
 
   app.get(
     '/orgs/:orgId',
-    { schema: { tags: ['organizations'], params: OrgParams, response: { 200: Organization, ...errors } } },
+    {
+      config: { tokens: true },
+      schema: { tags: ['organizations'], params: OrgParams, response: { 200: Organization, ...errors } },
+    },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'org.read');
@@ -289,6 +293,17 @@ export function organizationRoutes(app: App, deps: Deps): void {
           access.orgId,
           req.params.userId,
         ]);
+        // Milestone 10: their API tokens stop, their computers stop running jobs, their queued jobs end.
+        await endMemberAutomation(
+          c,
+          {
+            orgId: access.orgId,
+            userId: access.userId,
+            deviceId: access.deviceId,
+            requestId: access.requestId,
+          },
+          req.params.userId,
+        );
         // Their open sessions end with the membership (their app closes them at its next heartbeat).
         await endLeasesOutOfReach(
           c,

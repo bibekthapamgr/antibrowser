@@ -41,6 +41,23 @@ export const PERMISSIONS = [
   // Milestone 09: client tasks (create and edit what one can see) and the browser extension policy.
   'tasks.write',
   'extensions.manage',
+  // Milestone 10: developer API and authorized automation (ADR-0017).
+  /** See automation jobs on profiles one can see. */
+  'automation.read',
+  /** Ask for jobs on profiles one may open (the grant's `launch` capability), cancel one's own jobs. */
+  'automation.run',
+  /** Approved sites, job limits, every job and every computer that runs jobs. */
+  'automation.manage',
+  /** Jobs that hand a browser session to a local Playwright script (full control of that session). */
+  'automation.debug',
+  /** Let one's own computer run jobs (as oneself: only profiles one may open). */
+  'automation.agent',
+  /** Create API tokens for oneself, never beyond one's own access. */
+  'tokens.create',
+  /** See and revoke everyone's API tokens. */
+  'tokens.manage',
+  /** Webhook endpoints, their secrets and deliveries. */
+  'webhooks.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -62,6 +79,10 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'snapshot.commit',
     'snapshot.restore',
     'tasks.write',
+    'automation.read',
+    'automation.run',
+    'automation.agent',
+    'tokens.create',
   ],
   viewer: ['org.read', 'clients.read', 'profile.read'],
   billing: ['org.read', 'billing.read'],

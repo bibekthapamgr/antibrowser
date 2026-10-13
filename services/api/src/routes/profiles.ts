@@ -75,6 +75,7 @@ export function profileRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/profiles',
     {
+      config: { tokens: true },
       schema: {
         tags: ['profiles'],
         description: 'Profiles the caller can see, oldest first; optional name search and client filter.',
@@ -117,6 +118,7 @@ export function profileRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/profiles',
     {
+      config: { tokens: true },
       schema: {
         tags: ['profiles'],
         params: OrgParams,
@@ -131,6 +133,17 @@ export function profileRoutes(app: App, deps: Deps): void {
       const id = newId('profile');
       const profile = await withTx(deps.pool, access, async (c) => {
         const clientId = req.body.client_id ?? null;
+        // A token limited to some profiles cannot create more; one limited to clients creates only inside them.
+        if (access.token?.profileIds && !access.token.clientIds) {
+          throw new ApiError('TOKEN_SCOPE_MISSING', 'This API token is limited to specific profiles', {
+            restriction: 'profile_ids',
+          });
+        }
+        if (access.token?.clientIds && !clientId) {
+          throw new ApiError('TOKEN_SCOPE_MISSING', 'This API token creates profiles only for its clients', {
+            restriction: 'client_ids',
+          });
+        }
         if (clientId) await activeClient(c, access, clientId);
         const { rows } = await c.query<ProfileRow>(
           `insert into profiles as p (id, org_id, name, client_id, notes, created_by)
@@ -288,7 +301,10 @@ export function profileRoutes(app: App, deps: Deps): void {
 
   app.get(
     '/orgs/:orgId/profiles/:profileId',
-    { schema: { tags: ['profiles'], params: ProfileParams, response: { 200: Profile, ...errors } } },
+    {
+      config: { tokens: true },
+      schema: { tags: ['profiles'], params: ProfileParams, response: { 200: Profile, ...errors } },
+    },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       const profile = await withTx(deps.pool, access, (c) =>
@@ -307,6 +323,7 @@ export function profileRoutes(app: App, deps: Deps): void {
   app.patch(
     '/orgs/:orgId/profiles/:profileId',
     {
+      config: { tokens: true },
       schema: {
         tags: ['profiles'],
         description: 'Requires If-Match: "<version>" or body.expected_version. Stale versions return 409.',
@@ -381,6 +398,7 @@ export function profileRoutes(app: App, deps: Deps): void {
   app.delete(
     '/orgs/:orgId/profiles/:profileId',
     {
+      config: { tokens: true },
       schema: {
         tags: ['profiles'],
         description:

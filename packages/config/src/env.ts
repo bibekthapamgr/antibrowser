@@ -68,6 +68,12 @@ export interface AppConfig {
   } | null;
   /** Root key provider for organization keys (milestone 07). Required whenever object storage is configured. */
   kms: LocalKmsConfig | null;
+  /**
+   * Webhooks (milestone 10). allowPrivateDestinations lets dev/test deliver to local receivers (refused elsewhere: in
+   * staging and production only public HTTPS destinations are accepted and resolved addresses are checked again at
+   * every delivery).
+   */
+  webhooks: { allowPrivateDestinations: boolean };
 }
 
 export class ConfigError extends Error {
@@ -193,6 +199,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
     problems.push(`OBJECT_STORE_BUCKET is required in ${appEnv}`);
   }
 
+  const allowPrivateDestinations = env.WEBHOOK_ALLOW_PRIVATE_DESTINATIONS === 'true';
+  if (allowPrivateDestinations && !local) {
+    problems.push('WEBHOOK_ALLOW_PRIVATE_DESTINATIONS is only permitted when APP_ENV is dev or test');
+  }
+
   const kms = loadKms(env, local, problems);
   if (objectStore && !kms)
     problems.push('a key provider (KMS_LOCAL_KEY_FILE) is required with object storage');
@@ -212,6 +223,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     trustProxyHops,
     objectStore,
     kms,
+    webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
   };
 }
 

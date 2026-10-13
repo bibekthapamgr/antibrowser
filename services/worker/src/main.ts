@@ -12,8 +12,10 @@ import {
 import { localKeyProvider } from '@pb/api/backup/keys';
 import { s3ObjectStore } from '@pb/api/backup/objects';
 import { loadConfig } from '@pb/config/env';
+import { AGENT_TIMING, WEBHOOK_LIMITS } from '@pb/contracts';
 import pg from 'pg';
 import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys, purgeRateLimits } from './outbox.ts';
+import { processWebhooks, sweepAutomation, type WebhookDeps, webhookFanoutConsumer } from './webhooks.ts';
 
 const config = loadConfig();
 const pool = new pg.Pool({
@@ -31,6 +33,19 @@ const jobs: JobDeps | null =
   config.objectStore && config.kms
     ? { pool, objects: s3ObjectStore(config.objectStore), kms: localKeyProvider(config.kms), log }
     : null;
+
+// Webhooks (milestone 10): signing secrets are encrypted with the root key, so deliveries need the key provider.
+const webhooks: WebhookDeps | null = config.kms
+  ? {
+      pool,
+      kms: localKeyProvider(config.kms),
+      options: {
+        allowPrivate: config.webhooks.allowPrivateDestinations,
+        timeoutMs: WEBHOOK_LIMITS.timeoutMs,
+      },
+      log,
+    }
+  : null;
 
 let running = true;
 const stop = () => {
@@ -52,11 +67,29 @@ async function task(name: string, run: () => Promise<number | Record<string, num
 
 let lastPurge = 0;
 let lastSweep = 0;
-log('info', 'worker started', { env: config.appEnv, snapshots: jobs ? 'enabled' : 'not configured' });
+let lastAutomationSweep = 0;
+log('info', 'worker started', {
+  env: config.appEnv,
+  snapshots: jobs ? 'enabled' : 'not configured',
+  webhooks: webhooks ? 'enabled' : 'not configured',
+});
 while (running) {
   try {
-    const { processed, failed } = await processBatch(pool, [auditIndexConsumer]);
+    const { processed, failed } = await processBatch(pool, [auditIndexConsumer, webhookFanoutConsumer]);
     if (processed || failed) log('info', 'outbox batch', { processed, failed });
+    let sent = 0;
+    if (webhooks) {
+      const w = await processWebhooks(webhooks);
+      sent = w.delivered + w.failed + w.dead;
+      if (sent) log('info', 'webhook deliveries', { ...w });
+    }
+    if (Date.now() - lastAutomationSweep > 5_000) {
+      await task('automation sweep', async () => {
+        const r = await sweepAutomation(pool, AGENT_TIMING);
+        return { ...r };
+      });
+      lastAutomationSweep = Date.now();
+    }
     let synced = 0;
     if (jobs) {
       const r = await processSyncWork(jobs, 5);
@@ -81,7 +114,7 @@ while (running) {
       await task('orphan objects swept', () => sweepOrphans(jobs));
       lastSweep = Date.now();
     }
-    if (processed === 0 && synced === 0) await new Promise((r) => setTimeout(r, 500));
+    if (processed === 0 && synced === 0 && sent === 0) await new Promise((r) => setTimeout(r, 500));
   } catch (err) {
     log('error', 'worker loop error', errorInfo(err));
     await new Promise((r) => setTimeout(r, 2000));

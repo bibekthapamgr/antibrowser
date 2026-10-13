@@ -3,7 +3,13 @@ import { ApiError } from '@pb/contracts';
 import type pg from 'pg';
 
 /** Operations that require an Idempotency-Key (milestone 01 contract). */
-export type IdempotentOperation = 'lease.acquire' | 'snapshot.commit' | 'billing.job' | 'import.run';
+export type IdempotentOperation =
+  | 'lease.acquire'
+  | 'snapshot.commit'
+  | 'billing.job'
+  | 'import.run'
+  // Milestone 10: a repeated job request answers the job created by the first one.
+  | 'automation.job';
 
 const KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 

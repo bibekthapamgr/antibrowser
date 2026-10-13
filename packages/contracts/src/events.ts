@@ -47,6 +47,13 @@ export const EVENT_TYPES = [
   'bookmark.updated',
   'bookmark.deleted',
   'extension_policy.updated',
+  // Milestone 10: job state changes (delivered to webhooks) and test deliveries.
+  'automation.job.queued',
+  'automation.job.started',
+  'automation.job.succeeded',
+  'automation.job.failed',
+  'automation.job.canceled',
+  'webhook.test',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

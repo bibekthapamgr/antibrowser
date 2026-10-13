@@ -414,6 +414,72 @@ const OPS: Op[] = [
     ok: 200,
     request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/extension-inventory` }),
   },
+  // Milestone 10: automation, API tokens and webhooks.
+  {
+    name: 'read the automation settings',
+    permission: 'automation.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/automation/settings` }),
+  },
+  {
+    name: 'change the approved sites (stale version)',
+    permission: 'automation.manage',
+    scoped: false,
+    ok: 409,
+    request: () => ({
+      method: 'PUT',
+      url: `/v1/orgs/${acme.id}/automation/settings`,
+      payload: { allowed_origins: ['https://matrix.example'], expected_version: 999 },
+    }),
+  },
+  {
+    name: 'list automation jobs',
+    permission: 'automation.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/automation/jobs` }),
+  },
+  {
+    name: 'ask for a job that opens a granted profile',
+    permission: 'automation.run',
+    scoped: false,
+    ok: 201,
+    request: () => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/automation/jobs`,
+      headers: { 'idempotency-key': idemKey() },
+      payload: { profile_id: shop, steps: [], keep_open_minutes: 1, queue_timeout_seconds: 30 },
+    }),
+  },
+  {
+    name: 'list the computers that run jobs',
+    permission: 'automation.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/automation/agents` }),
+  },
+  {
+    name: 'list own API tokens',
+    permission: 'tokens.create',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/api-tokens` }),
+  },
+  {
+    name: 'list everyone’s API tokens',
+    permission: 'tokens.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/api-tokens?all=true` }),
+  },
+  {
+    name: 'list webhook endpoints',
+    permission: 'webhooks.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/webhook-endpoints` }),
+  },
 ];
 
 let h: Harness;
