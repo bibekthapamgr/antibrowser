@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Project Browser control-plane API",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "description": "Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic concurrency, Idempotency-Key on lease acquisition, snapshot commit and local workspace import. Authentication: OIDC sign-in in the system browser (Authorization Code + PKCE), then API session tokens (ADR-0013). Authorization: organization role combined with client/profile grants, deny by default; identifiers outside the caller’s reach answer 404 exactly like nonexistent ones."
   },
   "components": {
@@ -80,6 +80,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -139,6 +145,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -229,6 +241,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -288,6 +306,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -392,6 +416,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -451,6 +481,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -709,6 +745,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -768,6 +810,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -917,6 +965,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -976,6 +1030,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1257,6 +1317,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1316,6 +1382,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1388,6 +1460,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1447,6 +1525,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1597,6 +1681,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1656,6 +1746,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1794,6 +1890,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1853,6 +1955,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -1982,6 +2090,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2041,6 +2155,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2179,6 +2299,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2238,6 +2364,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2365,6 +2497,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2424,6 +2562,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2575,6 +2719,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2634,6 +2784,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2813,6 +2969,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -2872,6 +3034,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3045,6 +3213,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3104,6 +3278,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3194,6 +3374,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3253,6 +3439,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3414,6 +3606,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3473,6 +3671,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3670,6 +3874,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3729,6 +3939,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3917,6 +4133,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -3976,6 +4198,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4132,6 +4360,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4191,6 +4425,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4319,6 +4559,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4378,6 +4624,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4488,6 +4740,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4547,6 +4805,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4743,6 +5007,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4802,6 +5072,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -4984,6 +5260,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5043,6 +5325,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5204,6 +5492,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5263,6 +5557,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5460,6 +5760,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5519,6 +5825,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5706,6 +6018,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5765,6 +6083,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -5945,6 +6269,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6004,6 +6334,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6095,6 +6431,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6154,6 +6496,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6260,6 +6608,8 @@
                           "client_id",
                           "notes",
                           "version",
+                          "snapshot_version",
+                          "last_snapshot_at",
                           "created_at",
                           "updated_at"
                         ],
@@ -6295,6 +6645,22 @@
                           "version": {
                             "type": "integer",
                             "minimum": 1
+                          },
+                          "snapshot_version": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "last_snapshot_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "created_at": {
                             "type": "string",
@@ -6363,6 +6729,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6422,6 +6794,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6512,6 +6890,8 @@
                     "client_id",
                     "notes",
                     "version",
+                    "snapshot_version",
+                    "last_snapshot_at",
                     "created_at",
                     "updated_at"
                   ],
@@ -6547,6 +6927,22 @@
                     "version": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "snapshot_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "last_snapshot_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -6600,6 +6996,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6659,6 +7061,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6819,6 +7227,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -6878,6 +7292,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7074,6 +7494,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7133,6 +7559,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7198,6 +7630,8 @@
                     "client_id",
                     "notes",
                     "version",
+                    "snapshot_version",
+                    "last_snapshot_at",
                     "created_at",
                     "updated_at"
                   ],
@@ -7233,6 +7667,22 @@
                     "version": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "snapshot_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "last_snapshot_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -7286,6 +7736,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7345,6 +7801,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7447,6 +7909,8 @@
                     "client_id",
                     "notes",
                     "version",
+                    "snapshot_version",
+                    "last_snapshot_at",
                     "created_at",
                     "updated_at"
                   ],
@@ -7482,6 +7946,22 @@
                     "version": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "snapshot_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "last_snapshot_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -7535,6 +8015,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7594,6 +8080,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7684,6 +8176,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7743,6 +8241,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7892,6 +8396,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -7951,6 +8461,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8156,6 +8672,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8215,6 +8737,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8375,6 +8903,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8434,6 +8968,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8546,6 +9086,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8605,6 +9151,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8631,12 +9183,12 @@
         }
       }
     },
-    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots": {
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots/init": {
       "post": {
         "tags": [
           "snapshots"
         ],
-        "description": "Commit an encrypted snapshot manifest. Requires Idempotency-Key and the live fencing token.",
+        "description": "Starts an encrypted snapshot upload. Requires Idempotency-Key and the live lease. Returns a fresh data key (shown once to this device; a replay of the same request returns the same upload) and upload limits.",
         "requestBody": {
           "required": true,
           "content": {
@@ -8644,25 +9196,19 @@
               "schema": {
                 "type": "object",
                 "required": [
+                  "base_version",
                   "fencing_token",
-                  "sha256",
-                  "size_bytes",
                   "platform",
-                  "browser_revision",
-                  "encryption"
+                  "browser_version"
                 ],
                 "properties": {
+                  "base_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
                   "fencing_token": {
                     "type": "string",
                     "pattern": "^[1-9][0-9]{0,18}$"
-                  },
-                  "sha256": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                  },
-                  "size_bytes": {
-                    "type": "integer",
-                    "minimum": 1
                   },
                   "platform": {
                     "enum": [
@@ -8672,31 +9218,15 @@
                       "linux-x64"
                     ]
                   },
-                  "browser_revision": {
+                  "browser_version": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "pattern": "^[0-9A-Za-z._+-]+$"
                   },
-                  "encryption": {
-                    "type": "object",
-                    "required": [
-                      "scheme",
-                      "key_id"
-                    ],
-                    "properties": {
-                      "scheme": {
-                        "type": "string",
-                        "enum": [
-                          "aes-256-gcm-chunked-v1"
-                        ]
-                      },
-                      "key_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 128
-                      }
-                    },
-                    "additionalProperties": false
+                  "estimated_size": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 },
                 "additionalProperties": false
@@ -8732,47 +9262,157 @@
                 "schema": {
                   "type": "object",
                   "required": [
-                    "id",
-                    "profile_id",
-                    "object_key",
-                    "sha256",
-                    "size_bytes",
-                    "platform",
-                    "browser_revision",
-                    "fencing_token",
-                    "created_at"
+                    "operation",
+                    "key",
+                    "upload"
                   ],
                   "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    "operation": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "profile_id",
+                        "snapshot_id",
+                        "state",
+                        "base_version",
+                        "version",
+                        "error_code",
+                        "expires_at",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "snapshot_id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "state": {
+                          "enum": [
+                            "uploading",
+                            "verifying",
+                            "committed",
+                            "failed",
+                            "canceled",
+                            "expired"
+                          ]
+                        },
+                        "base_version": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "version": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "error_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        }
+                      },
+                      "additionalProperties": false
                     },
-                    "profile_id": {
-                      "type": "string",
-                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    "key": {
+                      "type": "object",
+                      "required": [
+                        "scheme",
+                        "schema_version",
+                        "key_version",
+                        "data_key",
+                        "org_id",
+                        "profile_id",
+                        "snapshot_id"
+                      ],
+                      "properties": {
+                        "scheme": {
+                          "type": "string",
+                          "enum": [
+                            "aes-256-gcm-chunked-v1"
+                          ]
+                        },
+                        "schema_version": {
+                          "type": "integer"
+                        },
+                        "key_version": {
+                          "type": "string",
+                          "pattern": "^okv_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "data_key": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9+/]{43}=$"
+                        },
+                        "org_id": {
+                          "type": "string",
+                          "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "snapshot_id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        }
+                      },
+                      "additionalProperties": false
                     },
-                    "object_key": {
-                      "type": "string"
-                    },
-                    "sha256": {
-                      "type": "string"
-                    },
-                    "size_bytes": {
-                      "type": "integer"
-                    },
-                    "platform": {
-                      "type": "string"
-                    },
-                    "browser_revision": {
-                      "type": "string"
-                    },
-                    "fencing_token": {
-                      "type": "string"
-                    },
-                    "created_at": {
-                      "type": "string",
-                      "format": "date-time",
-                      "description": "UTC, RFC 3339"
+                    "upload": {
+                      "type": "object",
+                      "required": [
+                        "part_size",
+                        "max_parts",
+                        "max_bytes"
+                      ],
+                      "properties": {
+                        "part_size": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "max_parts": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "max_bytes": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   },
                   "additionalProperties": false
@@ -8787,44 +9427,1006 @@
                 "schema": {
                   "type": "object",
                   "required": [
+                    "operation",
+                    "key",
+                    "upload"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "profile_id",
+                        "snapshot_id",
+                        "state",
+                        "base_version",
+                        "version",
+                        "error_code",
+                        "expires_at",
+                        "created_at",
+                        "updated_at"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "snapshot_id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "state": {
+                          "enum": [
+                            "uploading",
+                            "verifying",
+                            "committed",
+                            "failed",
+                            "canceled",
+                            "expired"
+                          ]
+                        },
+                        "base_version": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "version": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "error_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "key": {
+                      "type": "object",
+                      "required": [
+                        "scheme",
+                        "schema_version",
+                        "key_version",
+                        "data_key",
+                        "org_id",
+                        "profile_id",
+                        "snapshot_id"
+                      ],
+                      "properties": {
+                        "scheme": {
+                          "type": "string",
+                          "enum": [
+                            "aes-256-gcm-chunked-v1"
+                          ]
+                        },
+                        "schema_version": {
+                          "type": "integer"
+                        },
+                        "key_version": {
+                          "type": "string",
+                          "pattern": "^okv_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "data_key": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9+/]{43}=$"
+                        },
+                        "org_id": {
+                          "type": "string",
+                          "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "snapshot_id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "upload": {
+                      "type": "object",
+                      "required": [
+                        "part_size",
+                        "max_parts",
+                        "max_bytes"
+                      ],
+                      "properties": {
+                        "part_size": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "max_parts": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "max_bytes": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots/{snapshotId}/parts": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Signed URLs (valid 900 s) to upload the named parts of this device's upload. Needs the live lease.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "part_numbers"
+                ],
+                "properties": {
+                  "part_numbers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "snapshotId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "parts"
+                  ],
+                  "properties": {
+                    "parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "part_number",
+                          "url",
+                          "expires_at"
+                        ],
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Parts the storage already holds for this device’s upload (to resume after an interruption).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "snapshotId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "parts"
+                  ],
+                  "properties": {
+                    "parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "part_number",
+                          "size",
+                          "etag"
+                        ],
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000
+                          },
+                          "size": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "etag": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots/{snapshotId}/commit": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Declares the uploaded object (SHA-256, sizes, parts) and hands it to verification (202). Repeating a commit returns the operation as it is. 409 VERSION_CONFLICT when another device committed first.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fencing_token",
+                  "digest",
+                  "ciphertext_size",
+                  "plaintext_size",
+                  "parts"
+                ],
+                "properties": {
+                  "fencing_token": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "ciphertext_size": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "plaintext_size": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "parts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "part_number",
+                        "etag"
+                      ],
+                      "properties": {
+                        "part_number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10000
+                        },
+                        "etag": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 10000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "snapshotId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
                     "id",
                     "profile_id",
-                    "object_key",
-                    "sha256",
-                    "size_bytes",
-                    "platform",
-                    "browser_revision",
-                    "fencing_token",
-                    "created_at"
+                    "snapshot_id",
+                    "state",
+                    "base_version",
+                    "version",
+                    "error_code",
+                    "expires_at",
+                    "created_at",
+                    "updated_at"
                   ],
                   "properties": {
                     "id": {
                       "type": "string",
-                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                      "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
                     },
                     "profile_id": {
                       "type": "string",
                       "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
                     },
-                    "object_key": {
-                      "type": "string"
+                    "snapshot_id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
                     },
-                    "sha256": {
-                      "type": "string"
+                    "state": {
+                      "enum": [
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "failed",
+                        "canceled",
+                        "expired"
+                      ]
                     },
-                    "size_bytes": {
-                      "type": "integer"
+                    "base_version": {
+                      "type": "integer",
+                      "minimum": 0
                     },
-                    "platform": {
-                      "type": "string"
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
-                    "browser_revision": {
-                      "type": "string"
+                    "error_code": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
-                    "fencing_token": {
-                      "type": "string"
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
                     },
                     "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "profile_id",
+                    "snapshot_id",
+                    "state",
+                    "base_version",
+                    "version",
+                    "error_code",
+                    "expires_at",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "snapshot_id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "enum": [
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "failed",
+                        "canceled",
+                        "expired"
+                      ]
+                    },
+                    "base_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
                       "type": "string",
                       "format": "date-time",
                       "description": "UTC, RFC 3339"
@@ -8871,6 +10473,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8930,6 +10538,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -8954,12 +10568,517 @@
             }
           }
         }
-      },
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots/{snapshotId}/cancel": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Cancels this device’s unfinished upload (the profile keeps its last committed snapshot).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "snapshotId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "profile_id",
+                    "snapshot_id",
+                    "state",
+                    "base_version",
+                    "version",
+                    "error_code",
+                    "expires_at",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "snapshot_id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "enum": [
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "failed",
+                        "canceled",
+                        "expired"
+                      ]
+                    },
+                    "base_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/sync-operations/{operationId}": {
       "get": {
         "tags": [
           "snapshots"
         ],
-        "description": "Snapshot manifests of one profile, newest first.",
+        "description": "State of one upload (uploading, verifying, committed, failed, canceled, expired).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "operationId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "profile_id",
+                    "snapshot_id",
+                    "state",
+                    "base_version",
+                    "version",
+                    "error_code",
+                    "expires_at",
+                    "created_at",
+                    "updated_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^syn_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "profile_id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "snapshot_id": {
+                      "type": "string",
+                      "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "enum": [
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "failed",
+                        "canceled",
+                        "expired"
+                      ]
+                    },
+                    "base_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots": {
+      "get": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Committed snapshots of one profile (version history), newest first.",
         "parameters": [
           {
             "schema": {
@@ -9019,13 +11138,21 @@
                         "required": [
                           "id",
                           "profile_id",
-                          "object_key",
-                          "sha256",
-                          "size_bytes",
+                          "status",
+                          "version",
+                          "parent_version",
+                          "digest",
+                          "ciphertext_size",
+                          "plaintext_size",
                           "platform",
-                          "browser_revision",
-                          "fencing_token",
-                          "created_at"
+                          "browser_version",
+                          "schema_version",
+                          "encryption_scheme",
+                          "key_version",
+                          "created_by",
+                          "device_id",
+                          "created_at",
+                          "committed_at"
                         ],
                         "properties": {
                           "id": {
@@ -9036,25 +11163,1230 @@
                             "type": "string",
                             "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
                           },
-                          "object_key": {
-                            "type": "string"
+                          "status": {
+                            "enum": [
+                              "pending",
+                              "verifying",
+                              "committed",
+                              "failed",
+                              "canceled",
+                              "expired",
+                              "deleted"
+                            ]
                           },
-                          "sha256": {
-                            "type": "string"
+                          "version": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
-                          "size_bytes": {
-                            "type": "integer"
+                          "parent_version": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "digest": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "ciphertext_size": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "plaintext_size": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "platform": {
                             "type": "string"
                           },
-                          "browser_revision": {
+                          "browser_version": {
                             "type": "string"
                           },
-                          "fencing_token": {
+                          "schema_version": {
+                            "type": "integer"
+                          },
+                          "encryption_scheme": {
                             "type": "string"
+                          },
+                          "key_version": {
+                            "type": "string"
+                          },
+                          "created_by": {
+                            "type": "string",
+                            "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "device_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          },
+                          "committed_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "maxItems": 100
+                    },
+                    "next_cursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/restore-plans": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "description": "Authorizes restoring one committed snapshot (default: the newest): a signed download URL and the data key, for this device only. Needs snapshot.restore; every plan is audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "snapshot_id": {
+                    "type": "string",
+                    "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "snapshot",
+                    "head_version",
+                    "download",
+                    "key"
+                  ],
+                  "properties": {
+                    "snapshot": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "profile_id",
+                        "status",
+                        "version",
+                        "parent_version",
+                        "digest",
+                        "ciphertext_size",
+                        "plaintext_size",
+                        "platform",
+                        "browser_version",
+                        "schema_version",
+                        "encryption_scheme",
+                        "key_version",
+                        "created_by",
+                        "device_id",
+                        "created_at",
+                        "committed_at"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "status": {
+                          "enum": [
+                            "pending",
+                            "verifying",
+                            "committed",
+                            "failed",
+                            "canceled",
+                            "expired",
+                            "deleted"
+                          ]
+                        },
+                        "version": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "parent_version": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "digest": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "ciphertext_size": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "plaintext_size": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "platform": {
+                          "type": "string"
+                        },
+                        "browser_version": {
+                          "type": "string"
+                        },
+                        "schema_version": {
+                          "type": "integer"
+                        },
+                        "encryption_scheme": {
+                          "type": "string"
+                        },
+                        "key_version": {
+                          "type": "string"
+                        },
+                        "created_by": {
+                          "type": "string",
+                          "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "device_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        "committed_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "head_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "download": {
+                      "type": "object",
+                      "required": [
+                        "url",
+                        "expires_at"
+                      ],
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "key": {
+                      "type": "object",
+                      "required": [
+                        "scheme",
+                        "schema_version",
+                        "key_version",
+                        "data_key",
+                        "org_id",
+                        "profile_id",
+                        "snapshot_id"
+                      ],
+                      "properties": {
+                        "scheme": {
+                          "type": "string",
+                          "enum": [
+                            "aes-256-gcm-chunked-v1"
+                          ]
+                        },
+                        "schema_version": {
+                          "type": "integer"
+                        },
+                        "key_version": {
+                          "type": "string",
+                          "pattern": "^okv_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "data_key": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9+/]{43}=$"
+                        },
+                        "org_id": {
+                          "type": "string",
+                          "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "profile_id": {
+                          "type": "string",
+                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "snapshot_id": {
+                          "type": "string",
+                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/backup-policy": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "description": "Retention, trash period, storage quota and usage of the organization’s snapshots.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "retention_days",
+                    "trash_days",
+                    "quota_bytes",
+                    "max_snapshot_bytes",
+                    "used_bytes"
+                  ],
+                  "properties": {
+                    "retention_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 90
+                    },
+                    "trash_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 90
+                    },
+                    "quota_bytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "max_snapshot_bytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "used_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "backups"
+        ],
+        "description": "Changes retention days and the trash period (owners and admins). Quotas are not editable here.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "retention_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90
+                  },
+                  "trash_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90
+                  }
+                },
+                "additionalProperties": false,
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "retention_days",
+                    "trash_days",
+                    "quota_bytes",
+                    "max_snapshot_bytes",
+                    "used_bytes"
+                  ],
+                  "properties": {
+                    "retention_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 90
+                    },
+                    "trash_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 90
+                    },
+                    "quota_bytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "max_snapshot_bytes": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "used_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/trash": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "description": "Deleted profiles that can still be restored, most recently deleted first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "profile",
+                          "deleted_at",
+                          "purge_after"
+                        ],
+                        "properties": {
+                          "profile": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "org_id",
+                              "name",
+                              "client_id",
+                              "notes",
+                              "version",
+                              "snapshot_version",
+                              "last_snapshot_at",
+                              "created_at",
+                              "updated_at"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              "org_id": {
+                                "type": "string",
+                                "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 120
+                              },
+                              "client_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "notes": {
+                                "type": "string",
+                                "maxLength": 2000
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "snapshot_version": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "last_snapshot_at": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "UTC, RFC 3339"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "deleted_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          },
+                          "purge_after": {
                             "type": "string",
                             "format": "date-time",
                             "description": "UTC, RFC 3339"
@@ -9116,6 +12448,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -9175,6 +12513,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -9201,12 +12545,12 @@
         }
       }
     },
-    "/v1/orgs/{orgId}/profiles/{profileId}/snapshots/{snapshotId}/download": {
+    "/v1/orgs/{orgId}/profiles/{profileId}/undelete": {
       "post": {
         "tags": [
-          "snapshots"
+          "backups"
         ],
-        "description": "Authorizes downloading one snapshot for a few minutes. Until milestone 07 adds storage this returns the object key and expiry only; every request is authorized and audited.",
+        "description": "Restores a deleted profile from the trash (with its snapshots).",
         "parameters": [
           {
             "schema": {
@@ -9225,15 +12569,6 @@
             "in": "path",
             "name": "profileId",
             "required": true
-          },
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
-            },
-            "in": "path",
-            "name": "snapshotId",
-            "required": true
           }
         ],
         "responses": {
@@ -9244,63 +12579,72 @@
                 "schema": {
                   "type": "object",
                   "required": [
-                    "snapshot",
-                    "object_key",
-                    "expires_at"
+                    "id",
+                    "org_id",
+                    "name",
+                    "client_id",
+                    "notes",
+                    "version",
+                    "snapshot_version",
+                    "last_snapshot_at",
+                    "created_at",
+                    "updated_at"
                   ],
                   "properties": {
-                    "snapshot": {
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "profile_id",
-                        "object_key",
-                        "sha256",
-                        "size_bytes",
-                        "platform",
-                        "browser_revision",
-                        "fencing_token",
-                        "created_at"
-                      ],
-                      "properties": {
-                        "id": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "org_id": {
+                      "type": "string",
+                      "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "client_id": {
+                      "anyOf": [
+                        {
                           "type": "string",
-                          "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$"
+                          "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
                         },
-                        "profile_id": {
-                          "type": "string",
-                          "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
-                        },
-                        "object_key": {
-                          "type": "string"
-                        },
-                        "sha256": {
-                          "type": "string"
-                        },
-                        "size_bytes": {
-                          "type": "integer"
-                        },
-                        "platform": {
-                          "type": "string"
-                        },
-                        "browser_revision": {
-                          "type": "string"
-                        },
-                        "fencing_token": {
-                          "type": "string"
-                        },
-                        "created_at": {
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "snapshot_version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "last_snapshot_at": {
+                      "anyOf": [
+                        {
                           "type": "string",
                           "format": "date-time",
                           "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
                         }
-                      },
-                      "additionalProperties": false
+                      ]
                     },
-                    "object_key": {
-                      "type": "string"
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
                     },
-                    "expires_at": {
+                    "updated_at": {
                       "type": "string",
                       "format": "date-time",
                       "description": "UTC, RFC 3339"
@@ -9347,6 +12691,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -9406,6 +12756,512 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/keys": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "description": "The organization’s key versions (never the keys themselves) and how many snapshots each holds.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "keys",
+                    "kms_provider"
+                  ],
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "version",
+                          "status",
+                          "snapshots",
+                          "created_at",
+                          "retired_at",
+                          "destroy_after",
+                          "destroyed_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^okv_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "retired",
+                              "destroyed"
+                            ]
+                          },
+                          "snapshots": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          },
+                          "retired_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "destroy_after": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "destroyed_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "kms_provider": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/keys/rotate": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "description": "Rotates the organization key (owners; needs a recent sign-in). Existing snapshots are re-wrapped in the background without re-uploading; the old version is destroyed after it is no longer used.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "keys",
+                    "kms_provider"
+                  ],
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "version",
+                          "status",
+                          "snapshots",
+                          "created_at",
+                          "retired_at",
+                          "destroy_after",
+                          "destroyed_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^okv_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "retired",
+                              "destroyed"
+                            ]
+                          },
+                          "snapshots": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          },
+                          "retired_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "destroy_after": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "destroyed_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "UTC, RFC 3339"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "kms_provider": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -9620,6 +13476,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -9679,6 +13541,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -10037,6 +13905,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]
@@ -10096,6 +13970,12 @@
                         "INVITATION_USED",
                         "INVITATION_WRONG_ACCOUNT",
                         "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
                         "INTERNAL",
                         "UNAVAILABLE"
                       ]

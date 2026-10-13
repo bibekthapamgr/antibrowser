@@ -22,6 +22,8 @@ export const LIMITS = {
   acceptPerUser: { bucket: 'accept.user', max: 10, windowSeconds: 600 },
   acceptPerIp: { bucket: 'accept.ip', max: 30, windowSeconds: 600 },
   orgCreatePerUser: { bucket: 'org.create.user', max: 10, windowSeconds: 86_400 },
+  // Milestone 07: each restore plan unwraps a data key.
+  restorePerUser: { bucket: 'restore.user', max: 120, windowSeconds: 600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

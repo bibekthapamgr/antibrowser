@@ -46,19 +46,13 @@ const acquire = (
     headers: { ...headers, 'idempotency-key': idemKey },
     payload: ttl ? { device_id: device, ttl_seconds: ttl } : { device_id: device },
   });
+/** A fenced write: starting a snapshot upload needs the caller's live lease and its current fencing token. */
 const snapshot = (headers: Record<string, string>, id: string, token: string, idemKey = key()) =>
   h.app.inject({
     method: 'POST',
-    url: `/v1/orgs/${acme.id}/profiles/${id}/snapshots`,
+    url: `/v1/orgs/${acme.id}/profiles/${id}/snapshots/init`,
     headers: { ...headers, 'idempotency-key': idemKey },
-    payload: {
-      fencing_token: token,
-      sha256: 'a'.repeat(64),
-      size_bytes: 4096,
-      platform: 'windows-x64',
-      browser_revision: 'test-rev',
-      encryption: { scheme: 'aes-256-gcm-chunked-v1', key_id: 'test-key' },
-    },
+    payload: { base_version: 0, fencing_token: token, platform: 'windows-x64', browser_version: 'test-rev' },
   });
 
 describe('idempotency keys', () => {

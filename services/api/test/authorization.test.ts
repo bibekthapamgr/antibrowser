@@ -11,6 +11,7 @@ import { type Permission, ROLE_SCOPE, type Role, roleAllows } from '@pb/contract
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FIXTURES } from '../src/fixtures.ts';
 import { type Harness, harness, idemKey } from './helpers.ts';
+import { backup } from './sync-helpers.ts';
 
 const { acme } = FIXTURES.orgs;
 const shop = FIXTURES.profiles.acmeShop.id; // granted: operator (via Client North), viewer (directly)
@@ -212,22 +213,15 @@ const OPS: Op[] = [
     }),
   },
   {
-    name: 'commit a snapshot of a granted profile (no lease)',
+    name: 'start a snapshot upload of a granted profile (no lease)',
     permission: 'snapshot.commit',
     scoped: true,
     ok: 409,
     request: () => ({
       method: 'POST',
-      url: `/v1/orgs/${acme.id}/profiles/${shop}/snapshots`,
+      url: `/v1/orgs/${acme.id}/profiles/${shop}/snapshots/init`,
       headers: { 'idempotency-key': idemKey() },
-      payload: {
-        fencing_token: '999999',
-        sha256: 'b'.repeat(64),
-        size_bytes: 1,
-        platform: 'linux-x64',
-        browser_revision: 'r',
-        encryption: { scheme: 'aes-256-gcm-chunked-v1', key_id: 'k' },
-      },
+      payload: { base_version: 0, fencing_token: '999999', platform: 'linux-x64', browser_version: '1' },
     }),
   },
   {
@@ -236,6 +230,56 @@ const OPS: Op[] = [
     scoped: true,
     ok: 200,
     request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/profiles/${shop}/snapshots` }),
+  },
+  {
+    name: 'restore a snapshot of a granted profile',
+    permission: 'snapshot.restore',
+    scoped: true,
+    ok: 200,
+    request: () => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/profiles/${shop}/restore-plans`,
+      payload: {},
+    }),
+  },
+  {
+    name: 'read the backup policy',
+    permission: 'org.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/backup-policy` }),
+  },
+  {
+    name: 'change the backup policy (same values)',
+    permission: 'backups.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({
+      method: 'PATCH',
+      url: `/v1/orgs/${acme.id}/backup-policy`,
+      payload: { retention_days: 7 },
+    }),
+  },
+  {
+    name: 'list the organization key versions',
+    permission: 'backups.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/keys` }),
+  },
+  {
+    name: 'rotate the organization key (no recent sign-in)',
+    permission: 'keys.manage',
+    scoped: false,
+    ok: 401,
+    request: () => ({ method: 'POST', url: `/v1/orgs/${acme.id}/keys/rotate` }),
+  },
+  {
+    name: 'list the trash',
+    permission: 'profile.delete',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/trash` }),
   },
   {
     name: 'read the audit log',
@@ -251,6 +295,19 @@ const headers = {} as Record<Role, Record<string, string>>;
 beforeAll(async () => {
   h = await harness();
   for (const [role, user] of Object.entries(MEMBERS)) headers[role as Role] = await h.auth(user);
+  // A committed snapshot of the granted profile, so restore plans can be authorized.
+  const profile = await h.app.inject({
+    method: 'GET',
+    url: `/v1/orgs/${acme.id}/profiles/${shop}`,
+    headers: headers.owner,
+  });
+  await backup(h, {
+    headers: headers.owner,
+    org: acme.id,
+    profile: shop,
+    device: FIXTURES.devices.acmeOwnerLaptop.id,
+    base: profile.json().snapshot_version,
+  });
 });
 afterAll(async () => {
   await h.close();

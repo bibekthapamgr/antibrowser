@@ -13,9 +13,12 @@ import Fastify, {
 import type pg from 'pg';
 import { auditAlone } from './audit.ts';
 import { type Authenticator, createAuthenticator, type Principal } from './auth.ts';
+import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
+import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
 import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
+import { backupRoutes } from './routes/backups.ts';
 import { clientRoutes } from './routes/clients.ts';
 import { deviceRoutes } from './routes/devices.ts';
 import { grantRoutes } from './routes/grants.ts';
@@ -45,6 +48,8 @@ export interface Deps {
   sessions: SessionKeys;
   /** Null when no identity provider is configured (dev/test without OIDC): sign-in routes answer UNAVAILABLE. */
   idTokens: IdTokenVerifier | null;
+  /** Snapshot storage and the root key provider (milestone 07). Null when not configured: snapshot routes answer 503. */
+  backup: { objects: ObjectStore; kms: RootKeyProvider } | null;
 }
 
 declare module 'fastify' {
@@ -72,6 +77,9 @@ export interface BuildOptions {
   idTokens?: IdTokenVerifier;
   /** Tests may capture log lines (to prove tokens never reach them). */
   logStream?: { write(line: string): void };
+  /** Tests inject an in-memory object store (and key provider) instead of S3. */
+  objects?: ObjectStore;
+  kms?: RootKeyProvider;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -117,14 +125,23 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
           allowLoopbackHttp: config.appEnv === 'dev' || config.appEnv === 'test',
         })
       : null);
-  const deps: Deps = { config, pool, auth: createAuthenticator(config, pool, sessions), sessions, idTokens };
+  const objects = opts.objects ?? (config.objectStore ? s3ObjectStore(config.objectStore) : null);
+  const kms = opts.kms ?? (config.kms ? localKeyProvider(config.kms) : null);
+  const deps: Deps = {
+    config,
+    pool,
+    auth: createAuthenticator(config, pool, sessions),
+    sessions,
+    idTokens,
+    backup: objects && kms ? { objects, kms } : null,
+  };
 
   await app.register(swagger, {
     openapi: {
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.6.0',
+        version: '0.7.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit and local workspace import. ' +
@@ -239,6 +256,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       profileRoutes(scoped, deps);
       leaseRoutes(scoped, deps);
       snapshotRoutes(scoped, deps);
+      backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);
       importRoutes(scoped, deps);
     },

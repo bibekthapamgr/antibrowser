@@ -13,6 +13,9 @@ regexes = [
   '''ci-superuser-only''',
   '''local-superuser-only''',
   '''pb-local-only-password''',
+  # Milestone 07 fixtures: S3 test credentials and the local root key ("dev-only-insecure-root-key-32byt").
+  '''pb-local-fixture-secret-key''',
+  '''ZGV2LW9ubHktaW5zZWN1cmUtcm9vdC1rZXktMzJieXQ=''',
   # Fake JWT used by the crash-report scrubber test (header {"alg":"HS256"}, payload {"sub":"1234567890"}, no real signature).
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.abcdef012345''',
   # Forged token from the milestone 01 API test (history only; payload {"sub":"usr_x"}, signature is the text

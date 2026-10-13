@@ -25,6 +25,9 @@ web UIs may hide controls but are never the authority. Decisions: [ADR-0013](adr
 | `profile.launch` | yes | yes | yes | — | — |
 | `snapshot.read` | yes | yes | yes | — | — |
 | `snapshot.commit` | yes | yes | yes | — | — |
+| `snapshot.restore` | yes | yes | yes | — | — |
+| `backups.manage` | yes | yes | — | — | — |
+| `keys.manage` | yes | — | — | — | — |
 | `lease.force_release` | yes | yes | — | — | — |
 | `grants.manage` | yes | yes | — | — | — |
 | `audit.read` | yes | yes | — | — | — |

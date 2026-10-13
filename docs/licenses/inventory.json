@@ -1,11 +1,35 @@
 {
-  "generated_at": "2026-10-13T07:03:11.549Z",
+  "generated_at": "2026-10-13T09:49:52.805Z",
   "dependencies": [
     {
       "ecosystem": "cargo",
       "name": "adler2",
       "version": "2.0.1",
       "license": "0BSD OR MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "aead",
+      "version": "0.6.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "aead-stream",
+      "version": "0.6.0",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "aes",
+      "version": "0.9.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "aes-gcm",
+      "version": "0.11.1",
+      "license": "Apache-2.0 OR MIT"
     },
     {
       "ecosystem": "cargo",
@@ -339,6 +363,18 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "cipher",
+      "version": "0.5.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cmov",
+      "version": "0.5.4",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "combine",
       "version": "4.6.8",
       "license": "MIT"
@@ -401,6 +437,12 @@
       "ecosystem": "cargo",
       "name": "core-graphics-types",
       "version": "0.2.0",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cpubits",
+      "version": "0.1.1",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -479,6 +521,18 @@
       "ecosystem": "cargo",
       "name": "ctor",
       "version": "1.0.13",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ctr",
+      "version": "0.10.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ctutils",
+      "version": "0.4.3",
       "license": "Apache-2.0 OR MIT"
     },
     {
@@ -765,6 +819,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "filetime",
+      "version": "0.2.29",
+      "license": "MIT/Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "find-msvc-tools",
       "version": "0.1.14",
       "license": "MIT OR Apache-2.0"
@@ -936,6 +996,12 @@
       "name": "getrandom",
       "version": "0.4.3",
       "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ghash",
+      "version": "0.6.0",
+      "license": "Apache-2.0 OR MIT"
     },
     {
       "ecosystem": "cargo",
@@ -1203,6 +1269,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "inout",
+      "version": "0.2.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "ipnet",
       "version": "2.12.2",
       "license": "MIT OR Apache-2.0"
@@ -1301,6 +1373,12 @@
       "ecosystem": "cargo",
       "name": "jni-sys-macros",
       "version": "0.4.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "jobserver",
+      "version": "0.1.35",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -1811,6 +1889,12 @@
       "ecosystem": "cargo",
       "name": "polling",
       "version": "3.11.0",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "polyval",
+      "version": "0.7.3",
       "license": "Apache-2.0 OR MIT"
     },
     {
@@ -2421,6 +2505,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "tar",
+      "version": "0.4.46",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "target-lexicon",
       "version": "0.12.16",
       "license": "Apache-2.0 WITH LLVM-exception"
@@ -2753,6 +2843,12 @@
       "ecosystem": "cargo",
       "name": "unicode-segmentation",
       "version": "1.13.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "universal-hash",
+      "version": "0.6.1",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -3399,6 +3495,24 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "zstd",
+      "version": "0.13.3",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "zstd-safe",
+      "version": "7.3.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "zstd-sys",
+      "version": "2.1.1+zstd.1.5.7",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "zvariant",
       "version": "5.15.0",
       "license": "MIT"
@@ -3414,6 +3528,120 @@
       "name": "zvariant_utils",
       "version": "4.2.0",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/checksums",
+      "version": "3.1001.3",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/client-s3",
+      "version": "3.1142.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/core",
+      "version": "3.978.3",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-env",
+      "version": "3.972.74",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-http",
+      "version": "3.972.76",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-ini",
+      "version": "3.973.19",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-login",
+      "version": "3.972.81",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-node",
+      "version": "3.972.86",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-process",
+      "version": "3.972.74",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-sso",
+      "version": "3.973.18",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-web-identity",
+      "version": "3.972.80",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/middleware-sdk-s3",
+      "version": "3.972.79",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/nested-clients",
+      "version": "3.997.48",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/s3-request-presigner",
+      "version": "3.1142.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/signature-v4-multi-region",
+      "version": "3.996.48",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/token-providers",
+      "version": "3.1150.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/types",
+      "version": "3.974.6",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/xml-builder",
+      "version": "3.972.41",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws/lambda-invoke-store",
+      "version": "0.3.0",
+      "license": "Apache-2.0"
     },
     {
       "ecosystem": "npm",
@@ -3528,6 +3756,42 @@
       "name": "@rolldown/pluginutils",
       "version": "1.0.1",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/core",
+      "version": "3.35.2",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/credential-provider-imds",
+      "version": "4.5.2",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/fetch-http-handler",
+      "version": "5.8.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/node-http-handler",
+      "version": "4.12.1",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/signature-v4",
+      "version": "5.7.4",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/types",
+      "version": "4.19.0",
+      "license": "Apache-2.0"
     },
     {
       "ecosystem": "npm",
@@ -3708,6 +3972,12 @@
       "name": "bare-url",
       "version": "2.5.4",
       "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bowser",
+      "version": "2.14.1",
+      "license": "MIT"
     },
     {
       "ecosystem": "npm",
@@ -4308,6 +4578,12 @@
       "name": "toad-cache",
       "version": "3.7.4",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tslib",
+      "version": "2.8.1",
+      "license": "0BSD"
     },
     {
       "ecosystem": "npm",

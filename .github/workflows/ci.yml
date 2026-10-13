@@ -70,6 +70,10 @@ jobs:
           curl -sf http://127.0.0.1:8081/realms/master >/dev/null || { docker logs keycloak | tail -50; exit 1; }
           echo "PB_KEYCLOAK_URL=http://127.0.0.1:8081" >> "$GITHUB_ENV"
           echo "PB_KEYCLOAK_RESULT=$RUNNER_TEMP/keycloak-result.txt" >> "$GITHUB_ENV"
+      # Snapshot storage (milestone 07): SeaweedFS, the S3-compatible server the test-server script installs.
+      # services/api/test/sync-s3.test.ts must run here (it fails in CI when the storage is missing).
+      - name: Start SeaweedFS
+        run: scripts/ci/annotate.sh "seaweedfs" scripts/ci/seaweedfs.sh
       - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
       - name: Keycloak sign-in evidence
         run: |

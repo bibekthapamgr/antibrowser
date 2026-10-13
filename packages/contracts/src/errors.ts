@@ -26,6 +26,13 @@ export const ERROR_CODES = {
   INVITATION_USED: { status: 410, retryable: false },
   INVITATION_WRONG_ACCOUNT: { status: 403, retryable: false },
   RATE_LIMITED: { status: 429, retryable: true },
+  // Milestone 07
+  QUOTA_EXCEEDED: { status: 409, retryable: false },
+  SNAPSHOT_TOO_LARGE: { status: 413, retryable: false },
+  UPLOAD_INCOMPLETE: { status: 409, retryable: false },
+  SYNC_STATE_CONFLICT: { status: 409, retryable: false },
+  SNAPSHOT_UNAVAILABLE: { status: 410, retryable: false },
+  STORAGE_UNAVAILABLE: { status: 503, retryable: true },
   INTERNAL: { status: 500, retryable: true },
   UNAVAILABLE: { status: 503, retryable: true },
 } as const;

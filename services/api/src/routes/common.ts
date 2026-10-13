@@ -49,8 +49,9 @@ export const TokenParams = Type.Object(
 );
 
 /** Profile columns; every query aliases the table as `p`. */
-export const PROFILE_COLUMNS = `p.id, p.org_id, p.name, p.client_id, p.notes, p.version,
-  ${ts('p.created_at')} as created_at, ${ts('p.updated_at')} as updated_at`;
+export const PROFILE_COLUMNS = `p.id, p.org_id, p.name, p.client_id, p.notes, p.version, p.snapshot_version,
+  ${ts('p.last_snapshot_at')} as last_snapshot_at, ${ts('p.created_at')} as created_at,
+  ${ts('p.updated_at')} as updated_at`;
 export type ProfileRow = Profile;
 
 /** Client columns; every query aliases the table as `c`. */

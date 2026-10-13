@@ -29,6 +29,9 @@ export const ID_PREFIXES = {
   // Milestone 05: proxies and connectivity-check records.
   proxy: 'prx',
   networkCheck: 'nck',
+  // Milestone 07: encrypted snapshots and synchronization.
+  orgKeyVersion: 'okv',
+  syncOperation: 'syn',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

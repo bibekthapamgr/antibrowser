@@ -25,6 +25,12 @@ export const EVENT_TYPES = [
   'membership.removed',
   'grant.created',
   'grant.removed',
+  // Milestone 07
+  'profile.restored',
+  'profile.purged',
+  'snapshot.commit_failed',
+  'snapshot.expired',
+  'org_key.rotated',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -54,6 +60,9 @@ export const FORBIDDEN_PAYLOAD_KEYS = [
   'key_material',
   'private_key',
   'proxy_password',
+  'data_key',
+  'wrapped_key',
+  'wrapped_dek',
 ] as const;
 
 /** Recursively drops forbidden keys. Applied by the outbox writer before persistence. */

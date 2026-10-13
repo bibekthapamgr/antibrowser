@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FIXTURES, fx } from '../src/fixtures.ts';
 import { type Harness, harness, idemKey } from './helpers.ts';
+import { backup } from './sync-helpers.ts';
 
 const { acme, beta } = FIXTURES.orgs;
 const ACME = {
@@ -24,6 +25,7 @@ const MISSING = {
   invitation: fx('inv', 'ZZZZ'),
   grant: fx('grt', 'ZZZZ'),
   snapshot: fx('snp', 'ZZZZ'),
+  operation: fx('syn', 'ZZZZ'),
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -34,12 +36,14 @@ const FOREIGN: Ids = {
   invitation: '',
   grant: '',
   snapshot: '',
+  operation: '',
 };
 
 let h: Harness;
 let attacker: Record<string, string>;
 let betaOwner: Record<string, string>;
 let acmeSnapshot = '';
+let acmeOperation = '';
 
 /** Everything the beta tenant owns, as one digest (any change anywhere changes it). */
 async function betaState(): Promise<string> {
@@ -52,6 +56,8 @@ async function betaState(): Promise<string> {
     'permission_grants o where o.org_id = $1',
     'profile_leases o where o.org_id = $1',
     'snapshot_manifests o where o.org_id = $1',
+    'sync_operations o where o.org_id = $1',
+    'organization_key_versions o where o.org_id = $1',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -87,46 +93,23 @@ beforeAll(async () => {
       payload: { user_id: FIXTURES.users.betaOwner.id, client_id: FIXTURES.clients.betaInternal.id },
     })
   ).json().id;
-  FOREIGN.snapshot = await snapshotOf(
-    beta.id,
-    FOREIGN.profile,
-    FIXTURES.devices.betaOwnerLaptop.id,
-    betaOwner,
-  );
-  acmeSnapshot = await snapshotOf(acme.id, ACME.profile, FIXTURES.devices.acmeOwnerLaptop.id, attacker);
+  const foreign = await snapshotOf(beta.id, FOREIGN.profile, FIXTURES.devices.betaOwnerLaptop.id, betaOwner);
+  FOREIGN.snapshot = foreign.snapshot;
+  FOREIGN.operation = foreign.operation;
+  const own = await snapshotOf(acme.id, ACME.profile, FIXTURES.devices.acmeOwnerLaptop.id, attacker);
+  acmeSnapshot = own.snapshot;
+  acmeOperation = own.operation;
 });
 afterAll(async () => {
   await h.close();
 });
 
+/** A committed snapshot (the whole device flow, see sync-helpers.ts). */
 async function snapshotOf(org: string, profile: string, device: string, headers: Record<string, string>) {
-  const lease = await h.app.inject({
-    method: 'POST',
-    url: `/v1/orgs/${org}/profiles/${profile}/lease`,
-    headers: { ...headers, 'idempotency-key': idemKey() },
-    payload: { device_id: device },
-  });
-  const token = lease.json().fencing_token;
-  const snap = await h.app.inject({
-    method: 'POST',
-    url: `/v1/orgs/${org}/profiles/${profile}/snapshots`,
-    headers: { ...headers, 'idempotency-key': idemKey() },
-    payload: {
-      fencing_token: token,
-      sha256: 'c'.repeat(64),
-      size_bytes: 10,
-      platform: 'windows-x64',
-      browser_revision: 'r1',
-      encryption: { scheme: 'aes-256-gcm-chunked-v1', key_id: 'k' },
-    },
-  });
-  await h.app.inject({
-    method: 'POST',
-    url: `/v1/orgs/${org}/profiles/${profile}/lease/release`,
-    headers,
-    payload: { fencing_token: token },
-  });
-  return snap.json().id as string;
+  const current = await h.app.inject({ method: 'GET', url: `/v1/orgs/${org}/profiles/${profile}`, headers });
+  const done = await backup(h, { headers, org, profile, device, base: current.json().snapshot_version });
+  expect(done.operation.state).toBe('committed');
+  return { snapshot: done.init.key.snapshot_id, operation: done.init.operation.id };
 }
 
 interface Req {
@@ -137,13 +120,12 @@ interface Req {
   headers?: Record<string, string>;
 }
 
-const snapshotBody = {
+const commitBody = {
   fencing_token: '1',
-  sha256: 'd'.repeat(64),
-  size_bytes: 1,
-  platform: 'linux-x64',
-  browser_revision: 'r',
-  encryption: { scheme: 'aes-256-gcm-chunked-v1', key_id: 'k' },
+  digest: 'd'.repeat(64),
+  ciphertext_size: 10,
+  plaintext_size: 10,
+  parts: [{ part_number: 1, etag: 'x' }],
 };
 
 /** Every organization-scoped endpoint, addressed at organization `o` (resource ids from that organization). */
@@ -222,13 +204,44 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
     { name: 'release lease', method: 'POST', url: `${p}/lease/release`, payload: { fencing_token: '1' } },
     { name: 'list snapshots', method: 'GET', url: `${p}/snapshots` },
     {
+      name: 'start snapshot upload',
+      method: 'POST',
+      url: `${p}/snapshots/init`,
+      headers: { 'idempotency-key': idemKey() },
+      payload: { base_version: 0, fencing_token: '1', platform: 'linux-x64', browser_version: '1' },
+    },
+    {
+      name: 'part upload urls',
+      method: 'POST',
+      url: `${p}/snapshots/${ids.snapshot}/parts`,
+      payload: { part_numbers: [1] },
+    },
+    { name: 'uploaded parts', method: 'GET', url: `${p}/snapshots/${ids.snapshot}/parts` },
+    {
       name: 'commit snapshot',
       method: 'POST',
-      url: `${p}/snapshots`,
-      headers: { 'idempotency-key': idemKey() },
-      payload: snapshotBody,
+      url: `${p}/snapshots/${ids.snapshot}/commit`,
+      payload: commitBody,
     },
-    { name: 'download snapshot', method: 'POST', url: `${p}/snapshots/${ids.snapshot}/download` },
+    { name: 'cancel upload', method: 'POST', url: `${p}/snapshots/${ids.snapshot}/cancel` },
+    { name: 'sync operation', method: 'GET', url: `${base}/sync-operations/${ids.operation}` },
+    {
+      name: 'restore plan',
+      method: 'POST',
+      url: `${p}/restore-plans`,
+      payload: { snapshot_id: ids.snapshot },
+    },
+    { name: 'undelete profile', method: 'POST', url: `${p}/undelete` },
+    { name: 'backup policy', method: 'GET', url: `${base}/backup-policy` },
+    {
+      name: 'change backup policy',
+      method: 'PATCH',
+      url: `${base}/backup-policy`,
+      payload: { retention_days: 7 },
+    },
+    { name: 'trash', method: 'GET', url: `${base}/trash` },
+    { name: 'key versions', method: 'GET', url: `${base}/keys` },
+    { name: 'rotate key', method: 'POST', url: `${base}/keys/rotate` },
     { name: 'audit log', method: 'GET', url: `${base}/audit-events` },
     {
       name: 'import local workspace',
@@ -261,6 +274,7 @@ describe('coverage', () => {
       invitation: '{invitationId}',
       grant: '{grantId}',
       snapshot: '{snapshotId}',
+      operation: '{operationId}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),
@@ -298,10 +312,11 @@ describe('another organization’s ids inside our own organization', () => {
       invitation: MISSING.invitation,
       grant: MISSING.grant,
       snapshot: acmeSnapshot,
+      operation: acmeOperation,
       [kind]: value,
     } as Ids);
 
-  for (const kind of ['client', 'profile', 'user', 'invitation', 'grant', 'snapshot'] as const) {
+  for (const kind of ['client', 'profile', 'user', 'invitation', 'grant', 'snapshot', 'operation'] as const) {
     it(`${kind} ids answer like nonexistent ids on every endpoint that takes one`, async () => {
       const before = await betaState();
       const f = variants(kind, FOREIGN[kind]);

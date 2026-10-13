@@ -4,6 +4,9 @@ import type { Session } from '@pb/contracts';
 import pg from 'pg';
 import { devToken } from '../scripts/dev-token.ts';
 import { type App, buildApp } from '../src/app.ts';
+import type { JobDeps } from '../src/backup/jobs.ts';
+import { localKeyProvider, type RootKeyProvider } from '../src/backup/keys.ts';
+import { MemoryObjectStore, type ObjectStore, s3ObjectStore } from '../src/backup/objects.ts';
 import { createPool } from '../src/db.ts';
 import { FIXTURES, type FixtureUserKey } from '../src/fixtures.ts';
 import { nonce, TEST_CLIENT_ID, TEST_ISSUER, type TestIdp, testIdp } from './idp.ts';
@@ -19,6 +22,13 @@ export interface Harness {
   auth: (user: FixtureUserKey) => Promise<Record<string, string>>;
   /** Signs a person in through the test identity provider and enrolls a device. */
   signIn: (person?: Partial<Person>) => Promise<SignedIn>;
+  /** Snapshot storage used by the app (in-memory unless the harness was built with storage: 's3'). */
+  objects: ObjectStore;
+  memory: MemoryObjectStore | null;
+  kms: RootKeyProvider;
+  /** The worker's database role and job dependencies (verification, retention, keys...). */
+  worker: pg.Pool;
+  jobs: JobDeps;
   close: () => Promise<void>;
 }
 
@@ -39,6 +49,8 @@ export interface HarnessOptions {
   poolMax?: number;
   /** Captures every log line (the app logs at the configured level). */
   logLines?: string[];
+  /** 'memory' (default): an in-memory object store; 's3': the configured S3-compatible store. */
+  storage?: 'memory' | 's3';
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -51,14 +63,27 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   });
   const idp = await testIdp();
   const lines = opts.logLines;
+  if (!config.kms) throw new Error('the test environment needs KMS_LOCAL_KEYS (infra/env/test.env.example)');
+  const kms = localKeyProvider(config.kms);
+  const memory = opts.storage === 's3' ? null : new MemoryObjectStore();
+  let objects: ObjectStore;
+  if (memory) objects = memory;
+  else if (config.objectStore) objects = s3ObjectStore(config.objectStore);
+  else throw new Error('storage: s3 needs OBJECT_STORE_* in the test environment');
   const app = await buildApp(
     lines ? { ...config, logLevel: 'info' } : config,
     pool,
     lines
-      ? { idTokens: idp.verifier, logStream: { write: (line) => void lines.push(line) } }
-      : { logger: false, idTokens: idp.verifier },
+      ? { idTokens: idp.verifier, logStream: { write: (line) => void lines.push(line) }, objects, kms }
+      : { logger: false, idTokens: idp.verifier, objects, kms },
   );
   await app.ready();
+  const worker = new pg.Pool({
+    connectionString: config.workerDatabaseUrl,
+    options: '-c search_path=app',
+    max: 4,
+  });
+  const jobs: JobDeps = { pool: worker, objects, kms };
   const secret = config.devAuth.enabled ? config.devAuth.secret : '';
   const token = (user: FixtureUserKey) => devToken(secret, FIXTURES.users[user].id);
 
@@ -99,10 +124,16 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
     token,
     auth: async (user) => ({ authorization: `Bearer ${await token(user)}` }),
     signIn,
+    objects,
+    memory,
+    kms,
+    worker,
+    jobs,
     close: async () => {
       await app.close();
       await pool.end();
       await owner.end();
+      await worker.end();
     },
   };
 }

@@ -1,12 +1,15 @@
 {
   "name": "@pb/api",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "exports": {
     "./fixtures": "./src/fixtures.ts",
     "./migrate": "./scripts/migrate.ts",
-    "./seed": "./scripts/seed.ts"
+    "./seed": "./scripts/seed.ts",
+    "./backup/jobs": "./src/backup/jobs.ts",
+    "./backup/keys": "./src/backup/keys.ts",
+    "./backup/objects": "./src/backup/objects.ts"
   },
   "description": "Control-plane API (Fastify modular monolith): identity, organizations, authorization, leases and snapshots.",
   "scripts": {
@@ -21,6 +24,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1142.0",
+    "@aws-sdk/s3-request-presigner": "3.1142.0",
     "@fastify/swagger": "9.9.2",
     "@fastify/type-provider-typebox": "6.2.0",
     "@pb/config": "workspace:*",

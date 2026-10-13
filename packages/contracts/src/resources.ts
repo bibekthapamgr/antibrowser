@@ -31,6 +31,9 @@ export const PERMISSIONS = [
   'profile.launch',
   'snapshot.read',
   'snapshot.commit',
+  'snapshot.restore',
+  'backups.manage',
+  'keys.manage',
   'lease.force_release',
   'grants.manage',
   'audit.read',
@@ -41,7 +44,8 @@ export type Permission = (typeof PERMISSIONS)[number];
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   owner: PERMISSIONS,
   admin: PERMISSIONS.filter(
-    (p) => p !== 'org.transfer_ownership' && p !== 'billing.read' && p !== 'billing.manage',
+    (p) =>
+      p !== 'org.transfer_ownership' && p !== 'billing.read' && p !== 'billing.manage' && p !== 'keys.manage',
   ),
   operator: [
     'org.read',
@@ -50,6 +54,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'profile.launch',
     'snapshot.read',
     'snapshot.commit',
+    'snapshot.restore',
   ],
   viewer: ['org.read', 'clients.read', 'profile.read'],
   billing: ['org.read', 'billing.read'],
@@ -378,12 +383,26 @@ export const Profile = Type.Object(
     client_id: Type.Union([Id('cli'), Type.Null()]),
     notes: Type.String({ maxLength: 2000 }),
     version: Version,
+    /** Version of the newest committed snapshot (0: never backed up). Milestone 07. */
+    snapshot_version: Type.Integer({ minimum: 0 }),
+    last_snapshot_at: Type.Union([Timestamp, Type.Null()]),
     created_at: Timestamp,
     updated_at: Timestamp,
   },
   { additionalProperties: false },
 );
 export type Profile = Static<typeof Profile>;
+
+/** A deleted profile in the organization's trash (restorable until `purge_after`). */
+export const TrashedProfile = Type.Object(
+  {
+    profile: Profile,
+    deleted_at: Timestamp,
+    purge_after: Timestamp,
+  },
+  { additionalProperties: false },
+);
+export type TrashedProfile = Static<typeof TrashedProfile>;
 
 export const ProfileCreate = Type.Object(
   {
@@ -563,48 +582,225 @@ export const Lease = Type.Object(
 );
 export type Lease = Static<typeof Lease>;
 
-// ---------------------------------------------------------------- Snapshots
-export const SnapshotCommit = Type.Object(
+// ---------------------------------------------------------------- Snapshots and synchronization (milestone 07)
+/** Snapshot container scheme (pb-seal): tar + zstd + chunked AES-256-GCM (STREAM). */
+export const SNAPSHOT_SCHEME = 'aes-256-gcm-chunked-v1' as const;
+/** Archive layout version inside the container. */
+export const SNAPSHOT_SCHEMA_VERSION = 1;
+const Digest = Type.String({ pattern: '^[0-9a-f]{64}$' });
+const FencingToken = Type.String({ pattern: '^[1-9][0-9]{0,18}$' });
+const PartNumber = Type.Integer({ minimum: 1, maximum: 10000 });
+
+export const SYNC_STATES = ['uploading', 'verifying', 'committed', 'failed', 'canceled', 'expired'] as const;
+export type SyncState = (typeof SYNC_STATES)[number];
+
+export const SNAPSHOT_STATUSES = [
+  'pending',
+  'verifying',
+  'committed',
+  'failed',
+  'canceled',
+  'expired',
+  'deleted',
+] as const;
+
+/** A committed (or in-progress) snapshot manifest. Object locations and wrapped keys are never returned. */
+export const Snapshot = Type.Object(
   {
-    fencing_token: Type.String({ pattern: '^[1-9][0-9]{0,18}$' }),
-    sha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
-    size_bytes: Type.Integer({ minimum: 1 }),
+    id: Id('snp'),
+    profile_id: Id('prf'),
+    status: Type.Enum(SNAPSHOT_STATUSES),
+    version: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    parent_version: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    digest: Type.Union([Digest, Type.Null()]),
+    ciphertext_size: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    plaintext_size: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    platform: Type.String(),
+    browser_version: Type.String(),
+    schema_version: Type.Integer(),
+    encryption_scheme: Type.String(),
+    key_version: Type.String(),
+    created_by: Id('usr'),
+    device_id: Type.Union([Id('dev'), Type.Null()]),
+    created_at: Timestamp,
+    committed_at: Type.Union([Timestamp, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+export type Snapshot = Static<typeof Snapshot>;
+
+export const SyncOperation = Type.Object(
+  {
+    id: Id('syn'),
+    profile_id: Id('prf'),
+    snapshot_id: Id('snp'),
+    state: Type.Enum(SYNC_STATES),
+    base_version: Type.Integer({ minimum: 0 }),
+    /** The version this snapshot became (committed only). */
+    version: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    error_code: Type.Union([Type.String(), Type.Null()]),
+    expires_at: Timestamp,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+  },
+  { additionalProperties: false },
+);
+export type SyncOperation = Static<typeof SyncOperation>;
+
+/** The data key and binding a device uses to seal (init) or open (restore plan) one snapshot. Never logged. */
+export const SnapshotKey = Type.Object(
+  {
+    scheme: Type.Literal(SNAPSHOT_SCHEME),
+    schema_version: Type.Integer(),
+    key_version: Id('okv'),
+    /** 32 bytes, base64. Shown only to the authorized device in this response. */
+    data_key: Type.String({ pattern: '^[A-Za-z0-9+/]{43}=$' }),
+    org_id: Id('org'),
+    profile_id: Id('prf'),
+    snapshot_id: Id('snp'),
+  },
+  { additionalProperties: false },
+);
+export type SnapshotKey = Static<typeof SnapshotKey>;
+
+/** POST /orgs/{org}/profiles/{prf}/snapshots/init (Idempotency-Key required). */
+export const SnapshotInit = Type.Object(
+  {
+    /** The snapshot version this device's copy is based on (0 for the first backup). */
+    base_version: Type.Integer({ minimum: 0 }),
+    fencing_token: FencingToken,
     platform: Type.Enum(PLATFORMS),
-    browser_revision: Type.String({ minLength: 1, maxLength: 64 }),
-    encryption: Type.Object(
+    browser_version: Type.String({ minLength: 1, maxLength: 64, pattern: '^[0-9A-Za-z._+-]+$' }),
+    /** Optional estimate (bytes of profile data) for an early quota check. */
+    estimated_size: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+export type SnapshotInit = Static<typeof SnapshotInit>;
+
+export const SnapshotInitResult = Type.Object(
+  {
+    operation: SyncOperation,
+    key: SnapshotKey,
+    upload: Type.Object(
       {
-        scheme: Type.Literal('aes-256-gcm-chunked-v1'),
-        key_id: Type.String({ minLength: 1, maxLength: 128 }),
+        part_size: Type.Integer({ minimum: 1 }),
+        max_parts: Type.Integer({ minimum: 1 }),
+        max_bytes: Type.Integer({ minimum: 1 }),
       },
       { additionalProperties: false },
     ),
   },
   { additionalProperties: false },
 );
-export type SnapshotCommit = Static<typeof SnapshotCommit>;
+export type SnapshotInitResult = Static<typeof SnapshotInitResult>;
 
-export const Snapshot = Type.Object(
+export const PartUrlsRequest = Type.Object(
+  { part_numbers: Type.Array(PartNumber, { minItems: 1, maxItems: 50, uniqueItems: true }) },
+  { additionalProperties: false },
+);
+export const PartUrls = Type.Object(
   {
-    id: Id('snp'),
-    profile_id: Id('prf'),
-    object_key: Type.String(),
-    sha256: Type.String(),
-    size_bytes: Type.Integer(),
-    platform: Type.String(),
-    browser_revision: Type.String(),
-    fencing_token: Type.String(),
-    created_at: Timestamp,
+    parts: Type.Array(
+      Type.Object(
+        { part_number: PartNumber, url: Type.String(), expires_at: Timestamp },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
-export type Snapshot = Static<typeof Snapshot>;
+export const UploadedParts = Type.Object(
+  {
+    parts: Type.Array(
+      Type.Object(
+        { part_number: PartNumber, size: Type.Integer({ minimum: 0 }), etag: Type.String() },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-/** A time-limited permission to download one snapshot (the signed storage URL itself arrives with 07). */
-export const SnapshotDownload = Type.Object(
+/** POST .../snapshots/{snp}/commit: the device declares what it uploaded; the server verifies before committing. */
+export const SnapshotCommit = Type.Object(
+  {
+    fencing_token: FencingToken,
+    digest: Digest,
+    ciphertext_size: Type.Integer({ minimum: 1 }),
+    plaintext_size: Type.Integer({ minimum: 0 }),
+    parts: Type.Array(
+      Type.Object(
+        { part_number: PartNumber, etag: Type.String({ minLength: 1, maxLength: 200 }) },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 10000 },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type SnapshotCommit = Static<typeof SnapshotCommit>;
+
+/** POST .../restore-plans: download link + data key for one committed snapshot (default: the newest). */
+export const RestorePlanRequest = Type.Object(
+  { snapshot_id: Type.Optional(Id('snp')) },
+  { additionalProperties: false },
+);
+export const RestorePlan = Type.Object(
   {
     snapshot: Snapshot,
-    object_key: Type.String(),
-    expires_at: Timestamp,
+    /** The profile's newest committed version at planning time (a restored copy is based on it). */
+    head_version: Type.Integer({ minimum: 0 }),
+    download: Type.Object(
+      { url: Type.String(), expires_at: Timestamp },
+      { additionalProperties: false },
+    ),
+    key: SnapshotKey,
   },
+  { additionalProperties: false },
+);
+export type RestorePlan = Static<typeof RestorePlan>;
+
+// ---------------------------------------------------------------- Backup policy, trash and keys (milestone 07)
+export const BackupPolicy = Type.Object(
+  {
+    /** Newest snapshot of each of this many days is kept (plus everything from the last 24 hours and the newest). */
+    retention_days: Type.Integer({ minimum: 1, maximum: 90 }),
+    /** Deleted profiles stay restorable this long, then their snapshots are erased. */
+    trash_days: Type.Integer({ minimum: 1, maximum: 90 }),
+    /** Set by the service operator (cost limit); not editable by the organization. */
+    quota_bytes: Type.Integer({ minimum: 1 }),
+    max_snapshot_bytes: Type.Integer({ minimum: 1 }),
+    used_bytes: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type BackupPolicy = Static<typeof BackupPolicy>;
+export const BackupPolicyUpdate = Type.Object(
+  {
+    retention_days: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })),
+    trash_days: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
+export const ORG_KEY_STATUSES = ['active', 'retired', 'destroyed'] as const;
+export const OrgKeyVersion = Type.Object(
+  {
+    id: Id('okv'),
+    version: Type.Integer({ minimum: 1 }),
+    status: Type.Enum(ORG_KEY_STATUSES),
+    /** Snapshots whose data keys are still wrapped by this version. */
+    snapshots: Type.Integer({ minimum: 0 }),
+    created_at: Timestamp,
+    retired_at: Type.Union([Timestamp, Type.Null()]),
+    destroy_after: Type.Union([Timestamp, Type.Null()]),
+    destroyed_at: Type.Union([Timestamp, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+export type OrgKeyVersion = Static<typeof OrgKeyVersion>;
+export const OrgKeys = Type.Object(
+  { keys: Type.Array(OrgKeyVersion), kms_provider: Type.String() },
   { additionalProperties: false },
 );
