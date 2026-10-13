@@ -54,6 +54,13 @@ struct Mock {
 const DEVICE: &str = "dev_01J9ZSEED0D1D1000000000000";
 const USER: &str = "usr_01J9ZSEED0U100000000000000";
 
+/// A JWT-shaped placeholder (the mock API does not verify it), built at run time so no token-like literal is committed.
+fn fake_id_token() -> String {
+    ["header", "payload", "signature"]
+        .map(|p| b64url(p.as_bytes()))
+        .join(".")
+}
+
 fn b64url(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -225,7 +232,7 @@ fn route(req: &Req, base: &str, w: &mut World) -> (u16, Value) {
                     w.nonce = Some(nonce);
                     (
                         200,
-                        json!({ "id_token": "aGVhZGVy.cGF5bG9hZA.c2ln", "access_token": "idp-access",
+                        json!({ "id_token": fake_id_token(), "access_token": "idp-access",
                                 "refresh_token": "idp-refresh", "token_type": "Bearer" }),
                     )
                 }
@@ -439,12 +446,13 @@ fn signs_in_with_pkce_and_keeps_only_the_refresh_token_in_the_keychain() {
         Some(refresh.clone())
     );
     let files = local_files(&f);
+    let id_token = fake_id_token();
     for secret in [
         refresh.as_str(),
         "access-1",
         "idp-refresh",
         "idp-access",
-        "aGVhZGVy.cGF5bG9hZA.c2ln",
+        &id_token,
         &q["code_challenge"],
     ] {
         assert!(

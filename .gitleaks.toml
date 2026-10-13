@@ -18,6 +18,8 @@ regexes = [
   # Forged token from the milestone 01 API test (history only; payload {"sub":"usr_x"}, signature is the text
   # "invalidsignature"). Full-history scans (manual runs) still see it.
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c3JfeCJ9\.aW52YWxpZHNpZ25hdHVyZQ''',
+  # Placeholder ID token from the milestone 06 desktop test (history only; base64 of "header.payload.sig").
+  '''aGVhZGVy\.cGF5bG9hZA\.c2ln''',
 ]
 paths = [
   '''docs/openapi\.json''',
