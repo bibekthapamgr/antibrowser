@@ -366,6 +366,8 @@ pub trait SessionApi: Send + Sync {
     ) -> Result<(), ApiError>;
     /// Who has the profile open now (`None`: nobody).
     fn current_lease(&self, org: &str, profile: &str) -> Result<Option<LeaseInfo>, ApiError>;
+    /// What the signed-in person may do with the profile (`launch`, `edit`, `backup_download`).
+    fn capabilities(&self, org: &str, profile: &str) -> Result<Vec<String>, ApiError>;
 }
 
 pub trait Objects: Send + Sync {

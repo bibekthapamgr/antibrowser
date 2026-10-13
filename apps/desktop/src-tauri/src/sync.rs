@@ -27,8 +27,8 @@ use pb_sync::api::SnapshotInfo;
 use pb_sync::portability::{self, Here, Portability};
 use pb_sync::rest::{RestApi, Transport, id_ok};
 use pb_sync::{
-    ApiError, Engine, Job, JobStore, Objects, Opened, Poll, RestoreChecks, RestoreJob,
-    RestoreState, RestoreTarget, Source, SyncApi, SyncError, UploadJob, UploadState,
+    ApiError, Engine, Job, JobStore, MemoryJobs, Objects, Opened, Poll, RestoreChecks, RestoreJob,
+    RestoreState, RestoreTarget, SessionApi, Source, SyncApi, SyncError, UploadJob, UploadState,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -44,9 +44,10 @@ pub const DEVICE_KEY_ACCOUNT: &str = "backup-key-v1";
 /// Unfinished jobs are retried this often (and immediately when woken).
 const WORKER_TICK: Duration = Duration::from_secs(60);
 
-/// The control plane and object storage, as one object (tests use [`pb_sync::fake::FakeClient`]).
-pub trait Backend: SyncApi + Objects {}
-impl<T: SyncApi + Objects + ?Sized> Backend for T {}
+/// The control plane (snapshots and session leases) and object storage, as one object (tests use
+/// [`pb_sync::fake::FakeClient`]).
+pub trait Backend: SyncApi + SessionApi + Objects {}
+impl<T: SyncApi + SessionApi + Objects + ?Sized> Backend for T {}
 
 pub struct SyncRuntime {
     transfer: Transfer,
@@ -162,6 +163,11 @@ impl JobStore for Jobs<'_> {
         );
         Ok(())
     }
+}
+
+/// The job store the engine saves into (every save is a `sync` event).
+pub(crate) fn jobs_for<'a>(store: &'a LocalStore, events: &'a dyn EventSink) -> impl JobStore + 'a {
+    Jobs { store, events }
 }
 
 fn load_job(stored: &pb_storage::sync::StoredJob) -> Option<Job> {
@@ -342,6 +348,31 @@ impl AppState {
         }
     }
 
+    /// The session lease protocol (milestone 08) through the same backend.
+    pub(crate) fn with_session<T>(
+        &self,
+        f: impl FnOnce(&dyn SessionApi) -> T,
+    ) -> Result<T, SyncError> {
+        let injected = self.sync.backend.read().ok().and_then(|b| b.clone());
+        if let Some(b) = injected {
+            return Ok(f(&*b));
+        }
+        let store = self
+            .store()
+            .map_err(|_| SyncError::Local("LOCAL_STORE_ERROR".into()))?;
+        let device = store
+            .cloud_state(cs::DEVICE_ID)
+            .ok()
+            .flatten()
+            .filter(|d| id_ok("dev", d))
+            .ok_or(SyncError::Api(ApiError::SignedOut))?;
+        let api = RestApi {
+            transport: Shell(self),
+            device,
+        };
+        Ok(f(&api))
+    }
+
     fn with_backend<T>(
         &self,
         f: impl FnOnce(&dyn SyncApi, &dyn Objects) -> T,
@@ -366,7 +397,7 @@ impl AppState {
         Ok(f(&api, &self.sync.transfer))
     }
 
-    fn installed_browser(&self, store: &LocalStore) -> Option<String> {
+    pub(crate) fn installed_browser(&self, store: &LocalStore) -> Option<String> {
         self.resolve_runtime(store).ok().and_then(|r| r.version)
     }
 
@@ -545,6 +576,10 @@ impl AppState {
             p.waiting_for = waiting.filter(|_| !job.state.is_terminal());
         });
         self.after_upload(store, &local, &job);
+        // Milestone 08: a session's closing backup (or a recovery copy) moves the session on.
+        if job.lease_mode != pb_sync::LeaseMode::Job {
+            self.team_after_upload(store, &job);
+        }
     }
 
     /// Seals the closed profile while holding it like a backup does (a launch cancels this step).
@@ -561,6 +596,28 @@ impl AppState {
             .ok()
             .flatten()
             .ok_or_else(|| SyncError::Local("UNKNOWN_PROFILE".into()))?;
+        if job.is_recovery() {
+            // A recovery copy (milestone 08) seals the copy kept aside when the lease was lost, not the profile.
+            let dir = self
+                .team_quarantine_dir(store, local)
+                .filter(|d| d.is_dir())
+                .ok_or_else(|| SyncError::Local("RECOVERY_COPY_MISSING".into()))?;
+            let settings = settings_json(&profile);
+            let browser = profile
+                .runtime_version
+                .clone()
+                .or_else(|| self.installed_browser(store))
+                .filter(|v| pb_sync::portability::major(v).is_some())
+                .unwrap_or_else(|| "0.0.0.0".into());
+            let source = Source {
+                user_data: &dir,
+                settings_json: Some(&settings),
+                platform: platform(),
+                browser_version: &browser,
+                app_version: APP_VERSION,
+            };
+            return engine.seal(job, &source);
+        }
         if profile.trashed_at.is_some() {
             return Err(SyncError::Local("PROFILE_IN_TRASH".into()));
         }
@@ -976,11 +1033,16 @@ impl AppState {
             .any(|j| &j.local_profile_id == local && j.kind == "restore")
     }
 
-    /// After a clean close: back up linked profiles with automatic backup on.
+    /// After a clean close: back up linked profiles with automatic backup on. A shared session's closing backup
+    /// is the session's (milestone 08, `team_after_exit`).
     pub(crate) fn sync_after_clean_exit(&self, local: &ProfileId) {
         let Ok(store) = self.store() else {
             return;
         };
+        if store.team_session(local).ok().flatten().is_some() {
+            self.sync_wake();
+            return;
+        }
         let Ok(Some(link)) = store.sync_link(local) else {
             return;
         };
@@ -1039,6 +1101,14 @@ impl AppState {
         if link.conflict_head.is_some() {
             return Err(ipc::SYNC_CONFLICT_OPEN);
         }
+        // A shared session's backup is its closing backup (milestone 08): hand off, retry or give it up there.
+        if let Some(s) = store.team_session(local)? {
+            return Err(if crate::team::leased(&s.phase) {
+                ipc::TEAM_SESSION_ACTIVE
+            } else {
+                ipc::SESSION_ENDED
+            });
+        }
         if profile.state != RunState::Stopped {
             return Err(ipc::SYNC_PROFILE_NOT_CLOSED);
         }
@@ -1049,7 +1119,7 @@ impl AppState {
     }
 
     /// Cancels this profile's unfinished upload or restore (the last committed version stays the newest).
-    pub fn sync_cancel(&self, local: &ProfileId) -> Result<SyncStatus, IpcError> {
+    pub fn sync_cancel(self: &Arc<Self>, local: &ProfileId) -> Result<SyncStatus, IpcError> {
         let store = self.store()?;
         let running = self
             .sync
@@ -1107,6 +1177,15 @@ impl AppState {
                     let _ = jobs.save(&j);
                 }
             }
+        }
+        // A shared session's closing backup canceled by the person: the session waits for their decision.
+        if let Ok(Some(s)) = store.team_session(local)
+            && let Some(job_id) = s.upload_job_id.as_deref()
+            && let Ok(Some(stored)) = store.sync_job(job_id)
+            && let Some(Job::Upload(u)) = load_job(&stored)
+            && u.state == UploadState::Canceled
+        {
+            self.team_after_upload(&store, &u);
         }
         self.sync_status(local)
     }
@@ -1276,6 +1355,158 @@ impl AppState {
             RestoreTarget::Copy,
             None,
             true,
+        )?;
+        Ok(self.view(p))
+    }
+}
+
+impl AppState {
+    /// Cancels one unfinished job (best effort; the server expires what it does not hear about).
+    pub(crate) fn cancel_job_quietly(&self, store: &LocalStore, local: &ProfileId, job_id: &str) {
+        let running = self
+            .sync
+            .current
+            .lock()
+            .ok()
+            .and_then(|c| c.as_ref().filter(|r| &r.profile == local).cloned());
+        if let Some(r) = running {
+            r.by_user.store(true, Ordering::SeqCst);
+            r.cancel.store(true, Ordering::SeqCst);
+        }
+        let Ok(Some(stored)) = store.sync_job(job_id) else {
+            return;
+        };
+        let jobs = Jobs {
+            store,
+            events: &*self.events,
+        };
+        let work = self.paths.data.join("sync");
+        let never = AtomicBool::new(false);
+        let poll = self.engine_poll();
+        let quiet = |_: &str, _: &'static str, _: u64, _: u64| {};
+        let done = self.with_backend(|api, objects| {
+            let engine = Engine {
+                api,
+                objects,
+                jobs: &jobs,
+                work_dir: &work,
+                cancel: &never,
+                progress: &quiet,
+                poll,
+            };
+            match load_job(&stored) {
+                Some(Job::Upload(mut u)) => engine.cancel_upload(&mut u),
+                Some(Job::Restore(mut r)) => {
+                    let dest = self.root.dirs(local).root.join("user-data.incoming");
+                    engine.cancel_restore(&mut r, &dest)
+                }
+                None => Ok(()),
+            }
+        });
+        if !matches!(done, Ok(Ok(())))
+            && let Some(mut j) = load_job(&stored)
+        {
+            match &mut j {
+                Job::Upload(u) => u.state = UploadState::Canceled,
+                Job::Restore(r) => r.state = RestoreState::Canceled,
+            }
+            let _ = jobs.save(&j);
+        }
+    }
+
+    /// Puts the newest backup on this computer before a shared session opens (milestone 08): downloaded, verified
+    /// and unpacked into a fresh folder, then switched in (the previous folder is kept as evidence). Runs in the
+    /// open's own thread with its own job record, so the background worker never picks it up twice.
+    pub(crate) fn restore_for_session(
+        self: &Arc<Self>,
+        store: &Arc<LocalStore>,
+        local: &ProfileId,
+        link: &pb_storage::sync::SyncLink,
+        _session: &pb_storage::team::TeamSession,
+    ) -> Result<(), String> {
+        let id = pb_sync::job::random_id("sj_").map_err(|_| "RNG".to_owned())?;
+        let mut job = RestoreJob::new(
+            id,
+            &link.org_id,
+            &link.org_profile_id,
+            local.as_str(),
+            RestoreTarget::Replace,
+            None,
+        );
+        let memory = MemoryJobs::default();
+        let work = self.paths.data.join("sync");
+        let dest = self.root.dirs(local).root.join("user-data.incoming");
+        let never = AtomicBool::new(false);
+        let quiet = |_: &str, _: &'static str, _: u64, _: u64| {};
+        let (mut d, mut b) = (None, None);
+        let here = self.here(store, &mut d, &mut b);
+        let checks = Checks {
+            here,
+            data: &self.paths.data,
+        };
+        let poll = self.engine_poll();
+        let out = self.with_backend(|api, objects| {
+            let engine = Engine {
+                api,
+                objects,
+                jobs: &memory,
+                work_dir: &work,
+                cancel: &never,
+                progress: &quiet,
+                poll,
+            };
+            for _ in 0..3 {
+                match engine.restore(&mut job, &dest, &checks)? {
+                    Some(opened) => {
+                        self.switch_restored(store, local, &job, &opened, &dest)?;
+                        return engine.finish_restore(&mut job);
+                    }
+                    None if job.state.is_terminal() => break,
+                    None => {}
+                }
+            }
+            Err(SyncError::Local(
+                job.error_code
+                    .clone()
+                    .unwrap_or_else(|| "RESTORE_FAILED".into()),
+            ))
+        });
+        match out {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) | Err(e) => {
+                let _ = std::fs::remove_dir_all(&dest);
+                Err(e.code())
+            }
+        }
+    }
+}
+
+impl AppState {
+    /// Restores a recovery copy (milestone 08) into a new local profile that stays unlinked: it is a copy to look
+    /// at, never the organization's profile. The server allows it to owners and admins only.
+    pub fn restore_recovery_copy(
+        &self,
+        org_id: &str,
+        org_profile_id: &str,
+        snapshot_id: &str,
+        name: &str,
+    ) -> Result<ProfileView, IpcError> {
+        if !id_ok("org", org_id) || !id_ok("prf", org_profile_id) || !id_ok("snp", snapshot_id) {
+            return Err(ipc::INVALID_ARGUMENT);
+        }
+        let name = ipc::clean_text(name, ipc::limits::LABEL_CHARS, ipc::INVALID_LABEL)?;
+        let store = self.store()?;
+        let ws = self.active_workspace(&store)?.ok_or(ipc::NO_WORKSPACE)?;
+        let id = ProfileId::generate().map_err(|_| ipc::INTERNAL)?;
+        let p = store.insert_profile(pb_storage::NewProfile::basic(id, Some(ws), &name, None))?;
+        let _ = store.audit(Some(&p.id), "create", "recovery_copy", None, None);
+        self.new_restore(
+            &store,
+            (org_id, org_profile_id),
+            &p.id,
+            RestoreTarget::Copy,
+            Some(snapshot_id),
+            false,
         )?;
         Ok(self.view(p))
     }

@@ -69,6 +69,12 @@ const COMMANDS: &[&str] = &[
     "sync_resolve_conflict",
     "sync_restore",
     "sync_restore_here",
+    "get_team_status",
+    "team_close",
+    "team_abort",
+    "team_retry",
+    "team_dismiss",
+    "team_restore_recovery_copy",
 ];
 
 fn main() {

@@ -80,20 +80,52 @@ impl AppState {
             return Err(pb_runtime::LaunchError::BadStartUrl.into());
         }
         let store = self.store()?;
-        let _guard = self.launch_lock.lock().map_err(|_| ipc::INTERNAL)?;
+        {
+            let _guard = self.launch_lock.lock().map_err(|_| ipc::INTERNAL)?;
+            if let Some(started) = self.joined_start(profile_id)? {
+                return Ok(started);
+            }
+        }
+        // Milestone 08: an organization profile opens through a session lease (one writer per profile).
+        if store.sync_link(profile_id)?.is_some() {
+            return self.launch_shared(&store, profile_id, start_url);
+        }
+        self.launch_local(profile_id, start_url, None)
+    }
 
-        // 1. Idempotent: a repeated click while starting/running creates no second run.
+    /// A repeated click while starting/running creates no second run: the running start's operation.
+    fn joined_start(&self, profile_id: &ProfileId) -> Result<Option<Started>, IpcError> {
         match self.supervisor.active_start(profile_id) {
-            Some(Ok(Some(op))) => return Ok(Started { operation_id: op }),
+            Some(Ok(Some(op))) => Ok(Some(Started { operation_id: op })),
             Some(Ok(None)) => {
                 let op = self
                     .ops
                     .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
                 self.ops.succeed(&op);
-                return Ok(Started { operation_id: op });
+                Ok(Some(Started { operation_id: op }))
             }
-            Some(Err(_)) => return Err(ipc::PROFILE_STOPPING),
-            None => {}
+            Some(Err(_)) => Err(ipc::PROFILE_STOPPING),
+            None => Ok(None),
+        }
+    }
+
+    /// Launches the browser for a profile on this computer. `op`: the operation of a shared open that reached this
+    /// step (its lease is held), so the person sees one operation from click to window.
+    pub(crate) fn launch_local(
+        self: &Arc<Self>,
+        profile_id: &ProfileId,
+        start_url: Option<&str>,
+        existing_op: Option<String>,
+    ) -> Result<Started, IpcError> {
+        let store = self.store()?;
+        let _guard = self.launch_lock.lock().map_err(|_| ipc::INTERNAL)?;
+
+        // 1. Idempotent: a repeated click while starting/running creates no second run.
+        if let Some(started) = self.joined_start(profile_id)? {
+            if let Some(op) = &existing_op {
+                self.ops.succeed(op);
+            }
+            return Ok(started);
         }
         // A restore from an organization backup replaces the folder: the profile opens when it is finished.
         if self.sync_restoring(&store, profile_id) {
@@ -179,9 +211,10 @@ impl AppState {
             drop(gateway);
             self.sync_profile_started(&store, profile_id);
             self.restore_network(&store, profile_id);
-            let op = self
-                .ops
-                .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
+            let op = existing_op.clone().unwrap_or_else(|| {
+                self.ops
+                    .start(OpKind::LaunchProfile, Some(profile_id.to_string()))
+            });
             self.ops.succeed(&op);
             self.notify_running_changed();
             return Ok(Started { operation_id: op });
@@ -215,9 +248,10 @@ impl AppState {
         }
         let upgrade_backup = matches!((last_major, new_major), (Some(l), Some(n)) if l < n);
 
-        let op = self
-            .ops
-            .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
+        let op = existing_op.unwrap_or_else(|| {
+            self.ops
+                .start(OpKind::LaunchProfile, Some(profile_id.to_string()))
+        });
         self.supervisor
             .begin_start(
                 profile_id,
@@ -396,6 +430,8 @@ impl AppState {
                         self.maybe_backup(&f.profile, f.runtime_version.clone(), false);
                         self.sync_after_clean_exit(&f.profile);
                     }
+                    // Milestone 08: a shared session hands off (or waits for a decision after an unclean exit).
+                    self.team_after_exit(&f.profile, f.outcome);
                 }
             }
         }

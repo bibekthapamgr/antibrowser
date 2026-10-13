@@ -49,13 +49,16 @@ fn connect(f: &Fixture, server: &Arc<FakeServer>, dev: &str) {
     });
 }
 
-fn run(f: &Fixture, id: &str, cookies: &[u8]) {
+fn open(f: &Fixture, id: &str) {
     let op =
         invoke(f, "launch_profile", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         wait_op(f, &op),
         pb_desktop_lib::operations::OpStatus::Succeeded
     );
+}
+
+fn close(f: &Fixture, id: &str, cookies: &[u8]) {
     let ud = user_data(f, id);
     std::fs::create_dir_all(ud.join("Default/Local Storage")).unwrap_or_else(|e| panic!("{e}"));
     std::fs::write(ud.join("Default/Cookies"), cookies).unwrap_or_else(|e| panic!("{e}"));
@@ -88,11 +91,24 @@ fn run(f: &Fixture, id: &str, cookies: &[u8]) {
         let copied = invoke(f, "get_profile_status", json!({ "profileId": id }))
             .map(|s| !s["backup"].is_null())
             .unwrap_or(false);
-        if (copied && !copying) || std::time::Instant::now() > deadline {
+        // A shared session's closing backup is queued once the browser's exit was seen.
+        let settled = invoke(f, "get_team_status", json!({ "profileId": id }))
+            .map(|t| t["phase"] != json!("running") && t["phase"] != json!("closing"))
+            .unwrap_or(true);
+        if (copied && !copying && settled) || std::time::Instant::now() > deadline {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn run(f: &Fixture, id: &str, cookies: &[u8]) {
+    open(f, id);
+    close(f, id, cookies);
+}
+
+fn team(f: &Fixture, id: &str) -> Value {
+    invoke(f, "get_team_status", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// A local profile that ran once and is linked to the organization profile.
@@ -206,7 +222,8 @@ fn backups_after_a_clean_close_and_restore_with_evidence_kept() {
 }
 
 #[test]
-fn another_computer_restores_and_a_stale_computer_gets_a_conflict_not_an_overwrite() {
+fn another_computer_restores_and_a_stale_computer_gets_the_newest_or_a_conflict_never_an_overwrite()
+{
     let server = FakeServer::new(64 * 1024);
     server.add_profile(ORG, PRF);
     let a = fixture();
@@ -272,25 +289,66 @@ fn another_computer_restores_and_a_stale_computer_gets_a_conflict_not_an_overwri
     );
     assert_eq!(cookies(&b, &id_b), b"cookies-v1");
 
-    // B works and backs up version 2.
+    // B works and hands off version 2.
     run(&b, &id_b, b"cookies-from-b");
     b.state.run_sync_jobs();
     assert_eq!(sync_status(&b, &id_b)["synced_version"], json!(2));
+    assert_eq!(team(&b, &id_b)["phase"], Value::Null, "handed off");
 
-    // A, still based on version 1, works too: its backup conflicts and nothing is overwritten.
-    run(&a, &id_a, b"cookies-from-a");
+    // A, still based on version 1, opens it (milestone 08): the newest backup is put on A before the browser
+    // starts, so A works on B's version. Nothing is overwritten and nothing is merged.
+    open(&a, &id_a);
+    assert_eq!(cookies(&a, &id_a), b"cookies-from-b");
+    assert_eq!(sync_status(&a, &id_a)["synced_version"], json!(2));
+    close(&a, &id_a, b"cookies-from-a");
+    a.state.run_sync_jobs();
+    let s = sync_status(&a, &id_a);
+    assert_eq!(
+        (s["synced_version"].clone(), s["dirty"].clone()),
+        (json!(3), json!(false)),
+        "{s}"
+    );
+
+    // A works again and gives the handoff up while its backup cannot upload: A keeps its copy, unsynced, and the
+    // profile is free for B.
+    run(&a, &id_a, b"cookies-a-unsynced");
+    server.fail("put_part", When::Before);
+    a.state.run_sync_jobs();
+    assert_eq!(team(&a, &id_a)["phase"], json!("handing_off"));
+    assert_eq!(
+        code(&invoke(&a, "sync_backup_now", json!({ "profileId": id_a }))).as_deref(),
+        Some("TEAM_SESSION_ACTIVE")
+    );
+    invoke(&a, "team_abort", json!({ "profileId": id_a })).unwrap_or_else(|e| panic!("{e}"));
+    let s = sync_status(&a, &id_a);
+    assert_eq!(
+        (s["synced_version"].clone(), s["dirty"].clone()),
+        (json!(3), json!(true)),
+        "{s}"
+    );
+    assert_eq!(server.lease(PRF).map(|l| l.state), Some("released"));
+    run(&b, &id_b, b"cookies-from-b-again");
+    b.state.run_sync_jobs();
+    assert_eq!(sync_status(&b, &id_b)["synced_version"], json!(4));
+
+    // A backs its copy up: based on version 3, it conflicts and nothing is overwritten.
+    invoke(&a, "sync_backup_now", json!({ "profileId": id_a })).unwrap_or_else(|e| panic!("{e}"));
     a.state.run_sync_jobs();
     let s = sync_status(&a, &id_a);
     assert_eq!(s["job"]["state"], json!("conflict"), "{s}");
-    assert_eq!(s["conflict_head"], json!(2));
-    assert_eq!(server.head(PRF).0, 2);
+    assert_eq!(s["conflict_head"], json!(4));
+    assert_eq!(server.head(PRF).0, 4);
     assert_eq!(
         cookies(&a, &id_a),
-        b"cookies-from-a",
+        b"cookies-a-unsynced",
         "A's data is untouched"
     );
     assert_eq!(
         code(&invoke(&a, "sync_backup_now", json!({ "profileId": id_a }))).as_deref(),
+        Some("SYNC_CONFLICT_OPEN")
+    );
+    assert_eq!(
+        code(&invoke(&a, "launch_profile", json!({ "profileId": id_a }))).as_deref(),
         Some("SYNC_CONFLICT_OPEN")
     );
 
@@ -315,14 +373,14 @@ fn another_computer_restores_and_a_stale_computer_gets_a_conflict_not_an_overwri
         .and_then(|p| p["id"].as_str())
         .unwrap_or_default()
         .to_owned();
-    assert_eq!(cookies(&a, &copy), b"cookies-from-b");
+    assert_eq!(cookies(&a, &copy), b"cookies-from-b-again");
     assert_eq!(
         sync_status(&a, &copy)["linked"],
         json!(false),
         "a copy is not linked"
     );
 
-    // Then keeps its own as the newest: version 3, based on 2.
+    // Then keeps its own as the newest: version 5, based on 4.
     invoke(
         &a,
         "sync_resolve_conflict",
@@ -333,53 +391,42 @@ fn another_computer_restores_and_a_stale_computer_gets_a_conflict_not_an_overwri
     let s = sync_status(&a, &id_a);
     assert_eq!(
         (s["synced_version"].clone(), s["conflict_head"].clone()),
-        (json!(3), Value::Null),
+        (json!(5), Value::Null),
         "{s}"
     );
-    assert_eq!(server.committed(PRF).len(), 3);
+    assert_eq!(server.committed(PRF).len(), 5);
 }
 
 #[test]
-fn an_open_profile_or_a_lost_connection_leaves_the_backup_waiting() {
+fn opening_replaces_a_waiting_backup_and_a_lost_connection_leaves_the_closing_backup_waiting() {
     let server = FakeServer::new(64 * 1024);
     server.add_profile(ORG, PRF);
     let f = fixture();
     connect(&f, &server, DEV_A);
     let id = linked_profile(&f);
     invoke(&f, "sync_backup_now", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
-    // Opened before the backup ran: it waits for a clean close.
-    let op =
-        invoke(&f, "launch_profile", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(
-        wait_op(&f, &op),
-        pb_desktop_lib::operations::OpStatus::Succeeded
-    );
+    // Opened before the backup ran (milestone 08): the session's own closing backup replaces it.
+    open(&f, &id);
+    assert_eq!(sync_status(&f, &id)["job"]["state"], json!("canceled"));
+    assert_eq!(team(&f, &id)["phase"], json!("running"));
+    assert_eq!(server.lease(PRF).map(|l| l.purpose), Some("session"));
     assert_eq!(
         code(&invoke(&f, "sync_backup_now", json!({ "profileId": id }))).as_deref(),
-        Some("SYNC_PROFILE_NOT_CLOSED")
+        Some("TEAM_SESSION_ACTIVE")
     );
     f.state.run_sync_jobs();
-    let s = sync_status(&f, &id);
-    assert_eq!(
-        s["progress"]["waiting_for"],
-        json!("PROFILE_NOT_CLOSED"),
-        "{s}"
-    );
     assert_eq!(server.committed(PRF).len(), 0);
-    let stop =
-        invoke(&f, "stop_profile", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(
-        wait_op(&f, &stop),
-        pb_desktop_lib::operations::OpStatus::Succeeded
-    );
-    std::thread::sleep(Duration::from_millis(100));
 
-    // The connection drops while parts are uploading: the job waits and resumes later.
+    // The connection drops while parts are uploading: the closing backup waits and resumes later; the profile
+    // stays held until it commits.
     server.fail("put_part", When::Before);
+    close(&f, &id, b"cookies-v1");
     f.state.run_sync_jobs();
     let s = sync_status(&f, &id);
     assert_eq!(s["job"]["state"], json!("uploading"), "{s}");
     assert_eq!(s["progress"]["waiting_for"], json!("STORAGE_OFFLINE"));
+    assert_eq!(team(&f, &id)["phase"], json!("handing_off"));
+    assert_eq!(server.lease(PRF).map(|l| l.state), Some("active"));
     f.state.run_sync_jobs();
     let s = sync_status(&f, &id);
     assert_eq!(
@@ -388,8 +435,11 @@ fn an_open_profile_or_a_lost_connection_leaves_the_backup_waiting() {
         "{s}"
     );
     assert_eq!(s["progress"]["waiting_for"], Value::Null);
+    assert_eq!(team(&f, &id)["phase"], Value::Null, "handoff ready");
+    assert_eq!(server.lease(PRF).map(|l| l.state), Some("released"));
 
-    // The user cancels a later backup: the last version stays the newest.
+    // The person cancels a later closing backup: the last version stays the newest and the session waits for
+    // their decision (retry, or give the handoff up keeping this copy).
     run(&f, &id, b"cookies-v2");
     server.fail("put_part", When::Before);
     f.state.run_sync_jobs();
@@ -400,7 +450,17 @@ fn an_open_profile_or_a_lost_connection_leaves_the_backup_waiting() {
         (json!("canceled"), json!(true)),
         "{s}"
     );
+    let t = team(&f, &id);
+    assert_eq!(
+        (t["phase"].clone(), t["error_code"].clone()),
+        (json!("pending"), json!("UPLOAD_CANCELED")),
+        "{t}"
+    );
     assert_eq!(server.head(PRF).0, 1);
+    invoke(&f, "team_retry", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
+    f.state.run_sync_jobs();
+    assert_eq!(sync_status(&f, &id)["synced_version"], json!(2));
+    assert_eq!(team(&f, &id)["phase"], Value::Null);
 }
 
 #[test]

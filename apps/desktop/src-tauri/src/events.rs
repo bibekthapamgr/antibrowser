@@ -9,6 +9,7 @@
 //! | `warning`           | `{ "code": "LOW_DISK_SPACE", "free_bytes": … }` |
 //! | `account`           | `{ "status": "signed_in" \| "signed_out" \| "expired" \| "failed", … }` |
 //! | `sync`              | `{ "profile_id", "job_id", "kind": "upload" \| "restore", "state", "version"?, "portability"? }` |
+//! | `team`              | `{ "profile_id", "kind": "phase" \| "requests" \| "handoff_ready" \| "kept_aside" \| "recovery_kept" \| "reconnected", … }` |
 
 use serde_json::Value;
 use std::sync::Mutex;
@@ -20,6 +21,7 @@ pub const DEEP_LINK: &str = "deep-link";
 pub const WARNING: &str = "warning";
 pub const ACCOUNT: &str = "account";
 pub const SYNC: &str = "sync";
+pub const TEAM: &str = "team";
 
 pub trait EventSink: Send + Sync {
     fn emit_json(&self, event: &str, payload: Value);

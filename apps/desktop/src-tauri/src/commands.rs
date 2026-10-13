@@ -116,6 +116,14 @@ pub fn update_profile<Rt: Runtime>(
     privacy: Option<PrivacyConfig>,
 ) -> R<ProfileView> {
     caller(&webview)?;
+    // Milestone 08: settings that travel with an organization profile's backups need the edit capability, and no
+    // change is made while this computer cannot confirm it still holds the profile.
+    let synced_settings = start_urls.is_some()
+        || camera.is_some()
+        || microphone.is_some()
+        || location.is_some()
+        || privacy.is_some();
+    state.team_guard_edit(&profile_id, synced_settings)?;
     state.update_profile(
         &profile_id,
         expected_version,
@@ -977,4 +985,80 @@ pub fn sync_restore_here<Rt: Runtime>(
 ) -> R<ProfileView> {
     caller(&webview)?;
     state.sync_restore_here(&org_id, &org_profile_id, &name)
+}
+
+// ------------------------------------------------------------------------------- shared sessions (milestone 08)
+
+/// The shared session of an organization profile on this computer: phase, requests from teammates, the note left by
+/// the previous person, a copy kept aside, and why the last open was refused.
+#[tauri::command]
+pub fn get_team_status<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<crate::team::TeamStatus> {
+    caller(&webview)?;
+    state.team_status(&profile_id)
+}
+
+/// Close and hand off: the browser closes, the closing backup uploads, the lease is released with the note.
+#[tauri::command]
+pub fn team_close<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    note: Option<String>,
+) -> R<crate::team::TeamStatus> {
+    caller(&webview)?;
+    if note.as_ref().is_some_and(|n| n.len() > 2000) {
+        return Err(ipc::HANDOFF_NOTE_INVALID);
+    }
+    state.team_close(&profile_id, note.as_deref())
+}
+
+/// Gives up a handoff: the newest backup stays as it was and this computer keeps its copy.
+#[tauri::command]
+pub fn team_abort<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<crate::team::TeamStatus> {
+    caller(&webview)?;
+    state.team_abort(&profile_id)
+}
+
+/// Tries a stalled or failed handoff again.
+#[tauri::command]
+pub fn team_retry<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<crate::team::TeamStatus> {
+    caller(&webview)?;
+    state.team_retry(&profile_id)
+}
+
+/// Clears the notice of a session that ended (taken over, or access removed).
+#[tauri::command]
+pub fn team_dismiss<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+) -> R<crate::team::TeamStatus> {
+    caller(&webview)?;
+    state.team_dismiss(&profile_id)
+}
+
+/// Restores a recovery copy (kept from a device that lost its session) as a new local profile. Owners and admins.
+#[tauri::command]
+pub fn team_restore_recovery_copy<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    org_id: String,
+    org_profile_id: String,
+    snapshot_id: String,
+    name: String,
+) -> R<ProfileView> {
+    caller(&webview)?;
+    state.restore_recovery_copy(&org_id, &org_profile_id, &snapshot_id, &name)
 }

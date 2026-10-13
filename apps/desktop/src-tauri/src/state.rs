@@ -110,6 +110,8 @@ pub struct AppState {
     pub(crate) cloud: crate::account::Cloud,
     /// Encrypted backups and restores of organization profiles (milestone 07).
     pub(crate) sync: crate::sync::SyncRuntime,
+    /// Shared sessions of organization profiles (milestone 08).
+    pub(crate) team: crate::team::TeamRuntime,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -293,6 +295,7 @@ impl AppState {
             expiry_warned: Mutex::new(Vec::new()),
             cloud: crate::account::Cloud::new(signed_in),
             sync: crate::sync::SyncRuntime::new(),
+            team: crate::team::TeamRuntime::new(),
         }))
     }
 

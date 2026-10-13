@@ -73,6 +73,12 @@
     "allow-sync-set-auto-backup",
     "allow-sync-resolve-conflict",
     "allow-sync-restore",
-    "allow-sync-restore-here"
+    "allow-sync-restore-here",
+    "allow-get-team-status",
+    "allow-team-close",
+    "allow-team-abort",
+    "allow-team-retry",
+    "allow-team-dismiss",
+    "allow-team-restore-recovery-copy"
   ]
 }

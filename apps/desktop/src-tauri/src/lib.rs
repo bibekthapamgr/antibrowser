@@ -22,6 +22,7 @@ pub mod secrets;
 pub mod state;
 pub mod supervisor;
 pub mod sync;
+pub mod team;
 pub mod transfer;
 
 use crate::events::{DEEP_LINK, QUIT_REQUESTED};
@@ -115,6 +116,12 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::sync_resolve_conflict,
         commands::sync_restore,
         commands::sync_restore_here,
+        commands::get_team_status,
+        commands::team_close,
+        commands::team_abort,
+        commands::team_retry,
+        commands::team_dismiss,
+        commands::team_restore_recovery_copy,
     ]
 }
 
@@ -285,6 +292,9 @@ pub fn run() {
             });
             // Unfinished organization backups and restores resume in the background (milestone 07).
             state.start_sync_worker();
+            // Shared sessions this computer held resume: heartbeats, handoffs, lost connections (milestone 08).
+            state.resume_team_sessions();
+            state.start_team_worker();
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.
             let monitor = state.clone();

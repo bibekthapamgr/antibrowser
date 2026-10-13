@@ -2,7 +2,8 @@
  * Desktop IPC contract (milestone 02 deliverable "IPC schemas"; milestone 03 adds the runtime lifecycle; milestone 04
  * adds profile/client management, bulk actions, the trash, templates, and configuration import/export; milestone 05
  * adds proxies, routing, connectivity checks and privacy/environment settings; milestone 06 adds the account, sign-in
- * and organization requests relayed by the shell).
+ * and organization requests relayed by the shell; milestone 07 adds encrypted backups; milestone 08 adds shared
+ * sessions: one writer per organization profile, handoff notes, requests, and what happens when access ends).
  *
  * The manager webview talks to the Rust shell only through these commands and events. Rust validates every input
  * again (apps/desktop/src-tauri); these schemas document the shapes and let the UI type-check its calls.
@@ -758,6 +759,79 @@ export const CONFLICT_CHOICES = ['upload_mine', 'use_newer', 'open_newer_as_copy
 export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
 const ProfileArg = Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }) });
 
+// ------------------------------------------------------------------------------------------------ milestone 08
+/**
+ * Phases of a shared session on this computer: opening (lease taken; restoring the newest backup, starting the
+ * browser), running (heartbeats every 15 s), closing, handing_off (the closing backup uploads under the session's
+ * lease; released after the commit), pending (waiting for a decision: upload failed or canceled, or the browser did
+ * not close normally), lost (the connection dropped and the browser was closed before the lease could run out),
+ * taken_over (an admin took it; this copy was kept aside and offered as a recovery copy), revoked (access removed;
+ * this copy was kept aside on this computer).
+ */
+export const TEAM_PHASES = [
+  'opening',
+  'running',
+  'closing',
+  'handing_off',
+  'pending',
+  'lost',
+  'taken_over',
+  'revoked',
+] as const;
+export type TeamPhase = (typeof TEAM_PHASES)[number];
+export const TeamRequest = Type.Object({
+  id: Type.String({ pattern: '^hrq_[0-9A-HJKMNP-TV-Z]{26}$' }),
+  profile_id: Type.String(),
+  requested_by: Type.String(),
+  requested_by_name: Type.String(),
+  holder_user_id: Nullable(Type.String()),
+  note: Type.String({ maxLength: 500 }),
+  status: Type.Enum(['open', 'declined', 'canceled', 'fulfilled', 'expired']),
+  created_at: Type.String(),
+  responded_at: Nullable(Type.String()),
+  expires_at: Type.String(),
+  mine: Type.Boolean(),
+});
+export type TeamRequest = Static<typeof TeamRequest>;
+export const TeamNote = Type.Object({
+  text: Type.String({ maxLength: 500 }),
+  by_user_id: Type.String(),
+  by_name: Type.String(),
+  at: Type.String(),
+});
+export type TeamNote = Static<typeof TeamNote>;
+export const TeamStatus = Type.Object({
+  profile_id: Type.String({ pattern: ProfileIdPattern }),
+  /** Linked to an organization profile (opens through a session lease). */
+  shared: Type.Boolean(),
+  /** null: no session on this computer. */
+  phase: Nullable(Type.Enum(TEAM_PHASES)),
+  /** CONNECTION_LOST, PROFILE_CLOSED_UNCLEANLY, UPLOAD_CANCELED, HANDOFF_STALLED, RELEASE_PENDING, TAKEN_OVER,
+   *  ACCESS_REMOVED, RECOVERY_COPY_KEPT, VERSION_CONFLICT, … */
+  error_code: Nullable(Type.String()),
+  /** Open requests from teammates (the holder's view); they never close the session by themselves. */
+  requests: Type.Array(TeamRequest, { maxItems: 50 }),
+  /** The note the previous person left (shown when the profile opened here). */
+  received_note: Nullable(TeamNote),
+  /** The note this person will leave. */
+  handoff_note: Nullable(Type.String({ maxLength: 500 })),
+  /** A copy kept aside on this computer (taken over, access removed, or unsynced changes before a restore). */
+  kept_aside: Nullable(Type.String()),
+  /** Why the last open was refused (who has it). */
+  refusal: Nullable(
+    Type.Object({
+      code: Type.Enum(['PROFILE_IN_USE_ELSEWHERE', 'PROFILE_SESSION_UNCERTAIN']),
+      holder_name: Type.String(),
+      device_name: Type.String(),
+      since: Nullable(Type.String()),
+    }),
+  ),
+  /** What this person may do with it (launch, edit, backup_download); null until known. */
+  capabilities: Nullable(Type.Array(Type.Enum(['launch', 'edit', 'backup_download']))),
+  heartbeat_age_seconds: Nullable(Type.Integer({ minimum: 0 })),
+});
+export type TeamStatus = Static<typeof TeamStatus>;
+
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
@@ -1082,6 +1156,33 @@ export const COMMANDS = {
     }),
     result: ProfileView,
   },
+  // Milestone 08: shared sessions. Opening goes through launch_profile (a linked profile takes the session lease
+  // first; errors SHARED_OFFLINE, PROFILE_IN_USE_ELSEWHERE, PROFILE_SESSION_UNCERTAIN, NO_ACCESS, RUNTIME_TOO_OLD,
+  // ENTITLEMENT_REQUIRED, SESSION_RESTORE_FAILED). The lease id and fencing token never reach the window.
+  get_team_status: { args: ProfileArg, result: TeamStatus },
+  /** Close and hand off: the browser closes, the closing backup uploads, the lease is released with the note. */
+  team_close: {
+    args: Type.Object({
+      profileId: Type.String({ pattern: ProfileIdPattern }),
+      note: Type.Optional(Nullable(Type.String({ maxLength: 500 }))),
+    }),
+    result: TeamStatus,
+  },
+  /** Give the handoff up: the newest backup stays as it was, this computer keeps its copy (unsynced). */
+  team_abort: { args: ProfileArg, result: TeamStatus },
+  team_retry: { args: ProfileArg, result: TeamStatus },
+  /** Clears the notice of a session that ended (taken over, access removed). */
+  team_dismiss: { args: ProfileArg, result: TeamStatus },
+  /** Owners and admins: a recovery copy restored as a new, unlinked local profile. */
+  team_restore_recovery_copy: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      orgProfileId: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+      snapshotId: Type.String({ pattern: '^snp_[0-9A-HJKMNP-TV-Z]{26}$' }),
+      name: Label,
+    }),
+    result: ProfileView,
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -1101,6 +1202,18 @@ export const EVENTS = {
     state: Type.String(),
     version: Type.Optional(Type.Integer()),
     portability: Type.Optional(Portability),
+  }),
+  /**
+   * A shared session moved on (milestone 08): `phase` (with `error_code`; phase null when it ended here),
+   * `requests` (new requests from teammates), `reconnected`, `handoff_ready` (the closing backup committed and the
+   * lease was released), `kept_aside` and `recovery_kept`.
+   */
+  team: Type.Object({
+    profile_id: Type.String({ pattern: ProfileIdPattern }),
+    kind: Type.Enum(['phase', 'requests', 'reconnected', 'handoff_ready', 'kept_aside', 'recovery_kept']),
+    phase: Type.Optional(Nullable(Type.String())),
+    error_code: Type.Optional(Nullable(Type.String())),
+    requests: Type.Optional(Type.Array(TeamRequest, { maxItems: 50 })),
   }),
   account: Type.Object({
     status: Type.Enum(['signed_in', 'signed_out', 'expired', 'failed']),

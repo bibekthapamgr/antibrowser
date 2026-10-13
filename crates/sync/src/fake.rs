@@ -15,7 +15,8 @@ use pb_seal::{Kind, SealKey};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum When {
@@ -120,6 +121,8 @@ struct State {
     requests: Vec<Req>,
     /// Devices whose access was removed (membership, grant or the device itself): everything is "not found".
     revoked: HashSet<String>,
+    /// Capabilities per device (default: all three).
+    capabilities: HashMap<String, Vec<String>>,
     /// The server's clock (ms); tests move it with [`FakeServer::advance`].
     clock: u64,
     next_fencing: u64,
@@ -138,6 +141,9 @@ pub struct FakeServer {
     pub key_version: String,
     /// When false, operations stay `verifying` until [`FakeServer::verify_all`] runs (a slow worker).
     pub auto_verify: AtomicBool,
+    /// Calls that wait until [`FakeServer::release_held`] (a slow network; at most 10 s).
+    held: Mutex<HashSet<&'static str>>,
+    held_cv: Condvar,
 }
 
 fn ulid_like(prefix: &str, n: u64) -> String {
@@ -158,7 +164,38 @@ impl FakeServer {
             part_size,
             key_version: ulid_like("okv", 1),
             auto_verify: AtomicBool::new(true),
+            held: Mutex::new(HashSet::new()),
+            held_cv: Condvar::new(),
         })
+    }
+
+    /// Calls named `call` wait (up to 10 s) until [`FakeServer::release_held`].
+    pub fn hold(&self, call: &'static str) {
+        if let Ok(mut h) = self.held.lock() {
+            h.insert(call);
+        }
+    }
+
+    pub fn release_held(&self) {
+        if let Ok(mut h) = self.held.lock() {
+            h.clear();
+            self.held_cv.notify_all();
+        }
+    }
+
+    fn wait_if_held(&self, call: &'static str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let Ok(mut h) = self.held.lock() else { return };
+        while h.contains(call) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            h = match self.held_cv.wait_timeout(h, left) {
+                Ok((g, _)) => g,
+                Err(_) => return,
+            };
+        }
     }
 
     fn st(&self) -> MutexGuard<'_, State> {
@@ -271,6 +308,14 @@ impl FakeServer {
         for p in profiles {
             end_lease(&mut st, &p, "revoked");
         }
+    }
+
+    /// What the person on `device` may do (launch, edit, backup_download); default: everything.
+    pub fn set_capabilities(&self, device: &str, capabilities: &[&str]) {
+        self.st().capabilities.insert(
+            device.to_owned(),
+            capabilities.iter().map(|c| (*c).to_owned()).collect(),
+        );
     }
 
     /// A teammate on `from` asks the holder for the profile; returns the request id.
@@ -479,6 +524,7 @@ pub struct FakeClient {
 
 impl FakeClient {
     fn enter(&self, call: &'static str) -> Result<MutexGuard<'_, State>, ApiError> {
+        self.server.wait_if_held(call);
         let mut st = self.server.st();
         st.calls.push(call);
         if let Some(i) = st
@@ -1039,6 +1085,14 @@ impl SessionApi for FakeClient {
         if req.device_id != self.device {
             return Err(code(403, "FORBIDDEN"));
         }
+        // Viewers (and operators whose grant lacks `launch`) cannot open a profile.
+        if st
+            .capabilities
+            .get(&self.device)
+            .is_some_and(|c| !c.iter().any(|c| c == "launch"))
+        {
+            return Err(code(403, "FORBIDDEN"));
+        }
         let purpose = if req.purpose == "upload" {
             "upload"
         } else {
@@ -1151,6 +1205,18 @@ impl SessionApi for FakeClient {
             }
         }
         Self::leave(&mut st, "release_session")
+    }
+
+    fn capabilities(&self, org: &str, profile: &str) -> Result<Vec<String>, ApiError> {
+        let mut st = self.enter("capabilities")?;
+        self.profile(&st, org, profile)?;
+        let caps = st
+            .capabilities
+            .get(&self.device)
+            .cloned()
+            .unwrap_or_else(|| vec!["launch".into(), "edit".into(), "backup_download".into()]);
+        Self::leave(&mut st, "capabilities")?;
+        Ok(caps)
     }
 
     fn current_lease(&self, org: &str, profile: &str) -> Result<Option<LeaseInfo>, ApiError> {

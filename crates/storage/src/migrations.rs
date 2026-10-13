@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -25,6 +25,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (5, "proxies_and_privacy", v5),
     (6, "cloud_account", v6),
     (7, "encrypted_sync", v7),
+    (8, "team_sessions", v8),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,6 +607,54 @@ fn v7(tx: &Transaction<'_>) -> rusqlite::Result<()> {
            select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
          drop table audit_log;
          alter table audit_log_v7 rename to audit_log;
+         create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
+}
+
+/// Milestone 08: shared sessions of organization profiles on this computer (the lease this device holds, the phase
+/// of the session, the handoff note being left and the one received, where a lost session's copy was kept aside),
+/// the caller's capabilities on each linked profile, and the `team` audit action.
+fn v8(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table team_sessions (
+           local_profile_id text primary key references profiles(id) on delete cascade,
+           org_id           text not null check (org_id glob 'org_*' and length(org_id) = 30),
+           org_profile_id   text not null check (org_profile_id glob 'prf_*' and length(org_profile_id) = 30),
+           lease_id         text check (lease_id is null or (lease_id glob 'lse_*' and length(lease_id) = 30)),
+           fencing_token    text check (fencing_token is null
+                                        or (length(fencing_token) between 1 and 20 and fencing_token not glob '*[^0-9]*')),
+           open_key         text not null check (length(open_key) between 8 and 128),
+           phase            text not null check (phase in ('opening', 'running', 'closing', 'handing_off', 'pending',
+                                                            'lost', 'taken_over', 'revoked')),
+           operation_id     text check (operation_id is null or length(operation_id) <= 64),
+           upload_job_id    text check (upload_job_id is null or (upload_job_id glob 'sj_*' and length(upload_job_id) <= 40)),
+           handoff_note     text check (handoff_note is null or length(handoff_note) <= 500),
+           received_note    text check (received_note is null or (json_valid(received_note) and length(received_note) <= 2000)),
+           error_code       text check (error_code is null or length(error_code) <= 64),
+           quarantine       text check (quarantine is null or length(quarantine) <= 200),
+           started_at       text not null default {NOW},
+           updated_at       text not null default {NOW}
+         ) strict;
+
+         alter table org_profile_links add column capabilities text
+           check (capabilities is null or (json_valid(capabilities) and length(capabilities) <= 200));
+
+         create table audit_log_v8 (
+           seq         integer primary key autoincrement,
+           at          text not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           profile_id  text,
+           action      text not null check (action in ('start', 'stop', 'force_stop', 'exit', 'crash', 'adopt',
+                         'interrupted', 'recover', 'backup', 'runtime_install', 'runtime_remove',
+                         'create', 'trash', 'restore', 'delete', 'purge', 'bulk', 'import', 'export',
+                         'proxy', 'network', 'sync', 'cloud_restore', 'team')),
+           outcome     text not null check (length(outcome) <= 40),
+           run_id      text,
+           detail      text check (detail is null or length(detail) <= 200)
+         ) strict;
+         insert into audit_log_v8 (seq, at, profile_id, action, outcome, run_id, detail)
+           select seq, at, profile_id, action, outcome, run_id, detail from audit_log;
+         drop table audit_log;
+         alter table audit_log_v8 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);"
     ))
 }

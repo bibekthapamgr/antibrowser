@@ -2,11 +2,13 @@
 //! never sees). Everything else is refused before any network access: sign-in, token, lease, snapshot upload,
 //! restore-plan and import endpoints are only called by the shell's own code (a data key or signed URL never reaches
 //! the window). Milestone 07 adds read-only backup history and the backup policy, trash and key administration.
+//! Milestone 08 adds who has a profile open, access requests, forced takeover, grant capabilities and recovery copies;
+//! opening, heartbeats and release stay with the shell (it holds the session's lease and fencing token).
 
 use crate::http::Method;
 
-/// One allowed request shape. Path templates use `{org}`, `{usr}`, `{dev}`, `{inv}`, `{cli}`, `{grt}`, `{prf}` for
-/// opaque ids and `{token}` for an invitation token.
+/// One allowed request shape. Path templates use `{org}`, `{usr}`, `{dev}`, `{inv}`, `{cli}`, `{grt}`, `{prf}`, `{hrq}`
+/// for opaque ids and `{token}` for an invitation token.
 struct Rule {
     method: Method,
     template: &'static str,
@@ -19,6 +21,15 @@ const fn rule(method: Method, template: &'static str) -> Rule {
         method,
         template,
         cache: true,
+    }
+}
+
+/// Live state (who has a profile open, open requests): never shown from the offline cache.
+const fn live(method: Method, template: &'static str) -> Rule {
+    Rule {
+        method,
+        template,
+        cache: false,
     }
 }
 
@@ -49,6 +60,7 @@ const RULES: &[Rule] = &[
     rule(Method::Patch, "/v1/orgs/{org}/clients/{cli}"),
     rule(Method::Get, "/v1/orgs/{org}/grants"),
     rule(Method::Post, "/v1/orgs/{org}/grants"),
+    rule(Method::Patch, "/v1/orgs/{org}/grants/{grt}"),
     rule(Method::Delete, "/v1/orgs/{org}/grants/{grt}"),
     rule(Method::Get, "/v1/orgs/{org}/profiles"),
     rule(Method::Post, "/v1/orgs/{org}/profiles"),
@@ -66,6 +78,27 @@ const RULES: &[Rule] = &[
     rule(Method::Post, "/v1/orgs/{org}/profiles/{prf}/undelete"),
     rule(Method::Get, "/v1/orgs/{org}/keys"),
     rule(Method::Post, "/v1/orgs/{org}/keys/rotate"),
+    // Milestone 08: who has a profile open, access requests, forced takeover and recovery copies.
+    live(Method::Get, "/v1/orgs/{org}/profiles/{prf}/leases/current"),
+    live(
+        Method::Get,
+        "/v1/orgs/{org}/profiles/{prf}/handoff-requests",
+    ),
+    rule(
+        Method::Post,
+        "/v1/orgs/{org}/profiles/{prf}/handoff-requests",
+    ),
+    rule(
+        Method::Post,
+        "/v1/orgs/{org}/profiles/{prf}/handoff-requests/{hrq}/decline",
+    ),
+    rule(
+        Method::Post,
+        "/v1/orgs/{org}/profiles/{prf}/handoff-requests/{hrq}/cancel",
+    ),
+    live(Method::Get, "/v1/orgs/{org}/handoff-requests"),
+    rule(Method::Post, "/v1/orgs/{org}/profiles/{prf}/force-takeover"),
+    rule(Method::Get, "/v1/orgs/{org}/recovery-copies"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -94,6 +127,7 @@ fn segment_matches(template: &str, segment: &str) -> bool {
         "{cli}" => is_id("cli", segment),
         "{grt}" => is_id("grt", segment),
         "{prf}" => is_id("prf", segment),
+        "{hrq}" => is_id("hrq", segment),
         "{token}" => is_token(segment),
         literal => literal == segment,
     }
@@ -152,6 +186,7 @@ pub fn check(
             "q" => !v.is_empty() && v.chars().count() <= 120 && !v.chars().any(char::is_control),
             "client_id" => is_id("cli", v),
             "user_id" => is_id("usr", v),
+            "mine" => v == "true" || v == "false",
             _ => false,
         };
         if !ok || method != Method::Get || pairs.iter().any(|(pk, _): &(&str, &str)| *pk == k) {
@@ -199,6 +234,8 @@ mod tests {
 
     const ORG: &str = "org_01J9ZSEED0ACME000000000000";
     const PRF: &str = "prf_01J9ZSEED0A010000000000000";
+    const HRQ: &str = "hrq_01J9ZSEED0A010000000000000";
+    const LSE: &str = "lse_01J9ZSEED0A010000000000000";
 
     fn q(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -229,6 +266,42 @@ mod tests {
         );
         assert!(history.is_ok());
         assert!(check("POST", &format!("/v1/orgs/{ORG}/keys/rotate"), &[], None).is_ok());
+        // Milestone 08: requests, takeover and recovery copies; live state is never cached.
+        let current = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/profiles/{PRF}/leases/current"),
+            &[],
+            None,
+        );
+        assert_eq!(current.map(|a| a.cache_key), Ok(None));
+        let mine = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/handoff-requests"),
+            &q(&[("mine", "true")]),
+            None,
+        );
+        assert_eq!(mine.map(|a| a.cache_key), Ok(None));
+        for (method, path) in [
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/handoff-requests"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/handoff-requests/{HRQ}/decline"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/handoff-requests/{HRQ}/cancel"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/force-takeover"),
+            ),
+            ("GET", format!("/v1/orgs/{ORG}/recovery-copies")),
+        ] {
+            assert!(check(method, &path, &[], None).is_ok(), "{method} {path}");
+        }
 
         let patch = check(
             "PATCH",
@@ -243,6 +316,20 @@ mod tests {
 
         for (method, path) in [
             ("POST", format!("/v1/orgs/{ORG}/profiles/{PRF}/lease")),
+            // The session's lease belongs to the shell: opening, heartbeats and release are never the window's.
+            ("POST", format!("/v1/orgs/{ORG}/profiles/{PRF}/leases")),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/leases/{LSE}/heartbeat"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/leases/{LSE}/release"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/handoff-requests/{PRF}/decline"),
+            ),
             ("POST", format!("/v1/orgs/{ORG}/profiles/{PRF}/snapshots")),
             (
                 "POST",
@@ -284,6 +371,7 @@ mod tests {
             q(&[("cursor", "a b")]),
             q(&[("q", "a"), ("q", "b")]),
             q(&[("q", "line\nbreak")]),
+            q(&[("mine", "yes")]),
         ] {
             assert_eq!(
                 check("GET", &list, &bad, None).err(),

@@ -364,7 +364,15 @@ impl Backups {
     ) -> io::Result<PathBuf> {
         let dir = self.evidence.join(profile);
         fs::create_dir_all(&dir)?;
-        let target = dir.join(format!("{}-{reason}", now_unix()));
+        // Two copies kept aside within one second get distinct folders (`<s>-<reason>`, `<s>.2-<reason>`, ...),
+        // which still sort oldest first.
+        let now = now_unix();
+        let mut target = dir.join(format!("{now}-{reason}"));
+        let mut n = 2;
+        while target.exists() {
+            target = dir.join(format!("{now}.{n}-{reason}"));
+            n += 1;
+        }
         fs::create_dir_all(&target)?;
         if user_data.exists() {
             fs::rename(user_data, target.join("user-data"))?;

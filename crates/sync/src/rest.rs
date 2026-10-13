@@ -140,7 +140,11 @@ fn n(v: &Value, ptr: &str) -> Result<u64, ApiError> {
 pub fn snapshot_info(v: &Value) -> Result<SnapshotInfo, ApiError> {
     Ok(SnapshotInfo {
         id: s(v, "/id")?,
-        version: v.get("version").and_then(Value::as_i64).ok_or_else(bad)?,
+        // A recovery copy (milestone 08) has no version: 0.
+        version: match v.get("version") {
+            Some(Value::Null) => 0,
+            other => other.and_then(Value::as_i64).ok_or_else(bad)?,
+        },
         digest: s(v, "/digest")?,
         ciphertext_size: n(v, "/ciphertext_size")?,
         plaintext_size: n(v, "/plaintext_size")?,
@@ -442,6 +446,21 @@ impl<T: Transport> SessionApi for RestApi<T> {
                 .map(Some)
                 .map_err(|_| bad()),
         }
+    }
+    fn capabilities(&self, org: &str, profile: &str) -> Result<Vec<String>, ApiError> {
+        let v = self
+            .transport
+            .call(Method::Get, &self.path(org, profile, "")?, None, None)?;
+        Ok(v.get("capabilities")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .filter(|c| matches!(*c, "launch" | "edit" | "backup_download"))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 }
 

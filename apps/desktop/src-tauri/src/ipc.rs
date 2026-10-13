@@ -382,6 +382,51 @@ pub const PROFILE_RESTORING: IpcError = IpcError::new(
     "This profile is being restored from a backup. It opens when the restore is finished.",
 );
 
+// Milestone 08: shared sessions.
+pub const SESSION_ENDED: IpcError = IpcError::new(
+    "SESSION_ENDED",
+    "This profile's session here ended (taken over, or access removed). Dismiss the notice first.",
+);
+pub const TEAM_NO_SESSION: IpcError = IpcError::new(
+    "TEAM_NO_SESSION",
+    "This profile is not open as a shared session on this computer.",
+);
+pub const TEAM_SESSION_ACTIVE: IpcError = IpcError::new(
+    "TEAM_SESSION_ACTIVE",
+    "The session is still active. Close and hand off the profile, or give the handoff up.",
+);
+pub const SESSION_NEEDS_REOPEN: IpcError = IpcError::new(
+    "SESSION_NEEDS_REOPEN",
+    "The profile did not close normally. Open it again, or give the handoff up and keep this copy.",
+);
+pub const SESSION_PAUSED: IpcError = IpcError::new(
+    "SESSION_PAUSED",
+    "Changes are paused while this computer cannot confirm it still holds the profile.",
+);
+pub const NO_EDIT_CAPABILITY: IpcError = IpcError::new(
+    "NO_EDIT_CAPABILITY",
+    "Your access to this organization profile does not include changing its settings.",
+);
+pub const HANDOFF_NOTE_INVALID: IpcError = IpcError::new(
+    "HANDOFF_NOTE_INVALID",
+    "Handoff notes are plain text of up to 500 characters.",
+);
+
+/// A handoff note: plain text, at most 500 characters, never anything that looks like a password or key.
+pub fn clean_handoff_note(value: &str) -> Result<String, IpcError> {
+    if value.len() > 500 * 4 {
+        return Err(HANDOFF_NOTE_INVALID);
+    }
+    let cleaned = pb_import::notes::sanitize(value);
+    if cleaned.chars().count() > 500 {
+        return Err(HANDOFF_NOTE_INVALID);
+    }
+    if pb_import::notes::secret_hint(&cleaned).is_some() {
+        return Err(NOTES_LOOK_SECRET);
+    }
+    Ok(cleaned)
+}
+
 impl From<pb_netproxy::ConfigError> for IpcError {
     fn from(e: pb_netproxy::ConfigError) -> Self {
         use pb_netproxy::ConfigError as C;

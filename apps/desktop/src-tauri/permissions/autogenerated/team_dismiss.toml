@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-team-dismiss"
+description = "Enables the team_dismiss command without any pre-configured scope."
+commands.allow = ["team_dismiss"]
+
+[[permission]]
+identifier = "deny-team-dismiss"
+description = "Denies the team_dismiss command without any pre-configured scope."
+commands.deny = ["team_dismiss"]

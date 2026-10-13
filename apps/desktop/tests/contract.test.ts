@@ -55,6 +55,7 @@ describe('IPC surface', () => {
       'profiles-changed',
       'quit-requested',
       'sync',
+      'team',
       'warning',
     ]);
   });
