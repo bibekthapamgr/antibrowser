@@ -14566,16 +14566,172 @@
       "args": {
         "type": "object",
         "required": [
-          "profileIds"
+          "selection"
         ],
         "properties": {
-          "profileIds": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
-            },
-            "maxItems": 10000
+          "selection": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "ids"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "ids"
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "maxItems": 10000
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "filter",
+                  "expected_total"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "filter"
+                  },
+                  "filter": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "view": {
+                        "enum": [
+                          "active",
+                          "archived",
+                          "trash"
+                        ]
+                      },
+                      "client": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "any"
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "none"
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "ids"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "ids"
+                              },
+                              "ids": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                                },
+                                "minItems": 1,
+                                "maxItems": 50
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^tag_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        "maxItems": 20,
+                        "description": "The profile must carry every tag."
+                      },
+                      "states": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "stopped",
+                            "starting",
+                            "running",
+                            "stopping",
+                            "crashed",
+                            "recovering"
+                          ]
+                        }
+                      },
+                      "favourites_only": {
+                        "type": "boolean"
+                      },
+                      "template": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "proxy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "expected_total": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
           }
         }
       },

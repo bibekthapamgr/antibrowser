@@ -2357,10 +2357,10 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.8.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: { version: '0.9.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
-            schema_version: 6,
+            schema_version: 9,
             journal_mode: 'wal',
             foreign_keys: true,
             integrity_ok: true,

@@ -112,6 +112,29 @@ This document states what the product protects, what it does not, and the disclo
 - Fencing tokens and lease ids are not secrets on their own (they need the holder's session), but they are kept out of
   the window and logs anyway.
 
+## Milestone 09 boundary tests
+- API (`services/api/test/agency.test.ts`; role matrix and cross-tenant swaps for every new route): dashboard counts
+  and names never include profiles outside the caller's reach; people and activity only for `grants.manage` /
+  `audit.read`; task visibility follows profile and client reach; operators assign only themselves and cannot take
+  others' tasks; secret-looking task titles and notes are refused; bookmarks refuse `javascript:`, `data:`, `file:`,
+  `chrome:`, scheme-relative addresses, user names and passwords in the address, whitespace and control characters
+  (also a database `CHECK`); extension policy edits need `extensions.manage` and the current version; reports only
+  from the caller's own active device for a profile they can see.
+- Desktop (`apps/desktop/src-tauri/tests/agency.rs`, `crates/runtime/src/launch.rs`): enforce mode adds only
+  `--disable-extensions`; `--load-extension` and `--disable-extensions-except` are never accepted; extension files are
+  read, never written; relative extension paths cannot leave the profile's `Extensions` folder; per-client download
+  folders cannot leave the base folder (`..`, separators, device names); the diagnostics preview contains none of the
+  fixture secrets (proxy login, page address, e-mail address, token, server address); resource counts exclude other
+  browsers. Window allow-list: dashboards, tasks, bookmarks and the policy are reachable; extension reports are sent
+  by the shell only.
+- Health never states anything about website accounts (tested for the words).
+
+## Known gaps after milestone 09
+- Enforce mode cannot block an install during a session; it takes effect at the next open (all extensions off).
+- The memory estimate is this computer's median, not a prediction for a given website; RSS overcounts shared pages.
+- Diagnostics redaction is pattern-based on top of sections that exclude personal data by construction; a four-part
+  version number can be shown as `<ip>` (errs on the side of removal).
+
 ## Milestone 04 boundary tests
 - Storage (`crates/storage/src/tests_m04.rs`): folded-name uniqueness, filter validation, bulk across workspaces counts as not found, undo only where the version is unchanged, trash retention, `import_ref` uniqueness.
 - Import engine (`crates/import/src/tests.rs`, `tests/examples.rs`): traversal (`../`, absolute, backslash, drive letter), symlink, encrypted and unexpected entries, decompression bomb by ratio and by size, executable magic and permission bits, session-data manifests, CSV formula round trip, Unicode, long notes, missing fields, wrong types.
