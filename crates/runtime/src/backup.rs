@@ -304,6 +304,16 @@ impl Backups {
         Ok(())
     }
 
+    /// Deletes a profile's last-good copy and evidence (permanent profile deletion).
+    pub fn remove_profile(&self, profile: &str) -> io::Result<()> {
+        for dir in [self.profile_dir(profile), self.evidence.join(profile)] {
+            if dir.exists() {
+                fs::remove_dir_all(dir)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn evidence_count(&self, profile: &str) -> usize {
         fs::read_dir(self.evidence.join(profile))
             .map(|r| r.filter_map(Result::ok).count())

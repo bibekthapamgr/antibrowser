@@ -22,27 +22,26 @@ fn wal_foreign_keys_search_and_process_tracking() -> Result<(), StoreError> {
     let ws = store.create_workspace("Agency")?;
     let other = store.create_workspace("Other")?;
     let a = id(1);
-    store.insert_profile(NewProfile {
-        id: &a,
-        workspace_id: Some(&ws.id),
-        name: "Shop admin",
-        client_label: Some("North"),
-        folder_label: None,
-    })?;
-    store.insert_profile(NewProfile {
-        id: &id(2),
-        workspace_id: Some(&ws.id),
-        name: "Ads",
-        client_label: Some("South_1"),
-        folder_label: None,
-    })?;
-    store.insert_profile(NewProfile {
-        id: &id(3),
-        workspace_id: Some(&other.id),
-        name: "Elsewhere north",
-        client_label: None,
-        folder_label: None,
-    })?;
+    let north = store.ensure_client(&ws.id, "North")?;
+    let south = store.ensure_client(&ws.id, "South_1")?;
+    store.insert_profile(NewProfile::basic(
+        a.clone(),
+        Some(ws.id.clone()),
+        "Shop admin",
+        Some(north),
+    ))?;
+    store.insert_profile(NewProfile::basic(
+        id(2),
+        Some(ws.id.clone()),
+        "Ads",
+        Some(south),
+    ))?;
+    store.insert_profile(NewProfile::basic(
+        id(3),
+        Some(other.id.clone()),
+        "Elsewhere north",
+        None,
+    ))?;
     assert_eq!(
         store
             .search_profiles(Some(&ws.id), Some("north"), 10)?
@@ -93,13 +92,7 @@ fn foreign_keys_are_enforced() -> Result<(), StoreError> {
     let dir = tmp();
     let store = LocalStore::open(&dir.path().join("local.db"))?;
     let bogus = WorkspaceId::generate().map_err(|_| StoreError::Corrupt)?;
-    let result = store.insert_profile(NewProfile {
-        id: &id(9),
-        workspace_id: Some(&bogus),
-        name: "x",
-        client_label: None,
-        folder_label: None,
-    });
+    let result = store.insert_profile(NewProfile::basic(id(9), Some(bogus), "x", None));
     assert!(
         matches!(result, Err(StoreError::Sql(_))),
         "profile in a missing workspace must be rejected"
@@ -112,25 +105,25 @@ fn profile_update_uses_versions() -> Result<(), StoreError> {
     let dir = tmp();
     let store = LocalStore::open(&dir.path().join("local.db"))?;
     let ws = store.create_workspace("W")?;
-    let p = store.insert_profile(NewProfile {
-        id: &id(1),
-        workspace_id: Some(&ws.id),
-        name: "Old",
-        client_label: Some("C"),
-        folder_label: None,
-    })?;
+    let c = store.ensure_client(&ws.id, "C")?;
+    let p = store.insert_profile(NewProfile::basic(
+        id(1),
+        Some(ws.id.clone()),
+        "Old",
+        Some(c),
+    ))?;
     let updated = store.update_profile(
         &p.id,
         ProfileUpdate {
             name: Some("New"),
-            client_label: Some(None),
+            client_id: Some(None),
             notes: Some("hello"),
             ..ProfileUpdate::default()
         },
         1,
     )?;
     assert_eq!(
-        (updated.name.as_str(), updated.client_label, updated.version),
+        (updated.name.as_str(), updated.client_id, updated.version),
         ("New", None, 2)
     );
     assert_eq!(
@@ -157,16 +150,8 @@ fn profile_update_uses_versions() -> Result<(), StoreError> {
 fn limits_are_clamped() -> Result<(), StoreError> {
     let dir = tmp();
     let store = LocalStore::open(&dir.path().join("local.db"))?;
-    let ids: Vec<ProfileId> = (0..150).map(id).collect();
-    let rows: Vec<NewProfile<'_>> = ids
-        .iter()
-        .map(|i| NewProfile {
-            id: i,
-            workspace_id: None,
-            name: "p",
-            client_label: None,
-            folder_label: None,
-        })
+    let rows: Vec<NewProfile> = (0..150)
+        .map(|n| NewProfile::basic(id(n), None, "p", None))
         .collect();
     store.insert_profiles(&rows)?;
     assert_eq!(store.search_profiles(None, None, 100)?.len(), 100);
@@ -403,13 +388,7 @@ fn store_with_profile() -> Result<(tempfile::TempDir, LocalStore, ProfileId), St
     let store = LocalStore::open(&dir.path().join("local.db"))?;
     let ws = store.create_workspace("W")?;
     let p = id(5);
-    store.insert_profile(NewProfile {
-        id: &p,
-        workspace_id: Some(&ws.id),
-        name: "P",
-        client_label: None,
-        folder_label: None,
-    })?;
+    store.insert_profile(NewProfile::basic(p.clone(), Some(ws.id.clone()), "P", None))?;
     Ok((dir, store, p))
 }
 
@@ -423,7 +402,7 @@ fn profile_settings_are_typed_and_versioned() -> Result<(), StoreError> {
     let updated = store.update_profile(
         &p,
         ProfileUpdate {
-            client_colour: Some(Some("#7c3aed")),
+            favourite: Some(true),
             start_urls: Some(&urls),
             download_dir: Some(Some("/downloads/a")),
             camera: Some(PermissionDefault::Block),
@@ -432,34 +411,21 @@ fn profile_settings_are_typed_and_versioned() -> Result<(), StoreError> {
         },
         1,
     )?;
-    assert_eq!(updated.client_colour.as_deref(), Some("#7c3aed"));
+    assert!(updated.favourite);
     assert_eq!(updated.start_urls, urls);
     assert_eq!(updated.camera, PermissionDefault::Block);
     assert_eq!(updated.microphone, PermissionDefault::Ask);
     assert_eq!(updated.version, 2);
-    // The database itself rejects malformed colours.
-    assert!(
-        store
-            .update_profile(
-                &p,
-                ProfileUpdate {
-                    client_colour: Some(Some("red")),
-                    ..ProfileUpdate::default()
-                },
-                2,
-            )
-            .is_err()
-    );
     let cleared = store.update_profile(
         &p,
         ProfileUpdate {
-            client_colour: Some(None),
+            favourite: Some(false),
             download_dir: Some(None),
             ..ProfileUpdate::default()
         },
         2,
     )?;
-    assert_eq!((cleared.client_colour, cleared.download_dir), (None, None));
+    assert_eq!((cleared.favourite, cleared.download_dir), (false, None));
     Ok(())
 }
 

@@ -111,6 +111,26 @@ opaque_id!(
     /// This device's id, generated once per installation.
     DeviceId, InvalidDeviceId, "dev_", "device"
 );
+opaque_id!(
+    /// Local client (a customer/account group that profiles belong to; shown as a folder). Milestone 04.
+    ClientId, InvalidClientId, "cli_", "client"
+);
+opaque_id!(
+    /// Profile tag within a workspace. Milestone 04.
+    TagId, InvalidTagId, "tag_", "tag"
+);
+opaque_id!(
+    /// Reusable profile configuration template. Milestone 04.
+    TemplateId, InvalidTemplateId, "tpl_", "template"
+);
+opaque_id!(
+    /// Configuration import job. Milestone 04.
+    ImportJobId, InvalidImportJobId, "imp_", "import job"
+);
+opaque_id!(
+    /// Saved profile-table filter. Milestone 04.
+    FilterId, InvalidFilterId, "flt_", "saved filter"
+);
 
 #[cfg(test)]
 mod tests {

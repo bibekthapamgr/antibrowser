@@ -30,6 +30,8 @@ pub const CLOSE_BEHAVIOR: &str = "manager.close_behavior";
 pub const CRASH_REPORTS: &str = "privacy.crash_reports";
 pub const DOWNLOAD_DIR: &str = "downloads.directory";
 pub const ACTIVE_WORKSPACE: &str = "workspace.active";
+/// Days a profile stays in the trash before it is deleted permanently (milestone 04).
+pub const TRASH_RETENTION: &str = "profiles.trash_retention_days";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -61,6 +63,12 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::WorkspaceRef,
         ui_settable: true,
         default: || Value::Null,
+    },
+    SettingSpec {
+        key: TRASH_RETENTION,
+        kind: SettingKind::Enum(&["7", "30", "90"]),
+        ui_settable: true,
+        default: || Value::from("30"),
     },
 ];
 

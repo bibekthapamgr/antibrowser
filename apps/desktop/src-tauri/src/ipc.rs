@@ -48,6 +48,10 @@ pub const INVALID_WORKSPACE_NAME: IpcError = IpcError::new(
 );
 pub const NOTES_TOO_LONG: IpcError =
     IpcError::new("NOTES_TOO_LONG", "Notes can be at most 2,000 characters.");
+pub const NOTES_LOOK_SECRET: IpcError = IpcError::new(
+    "NOTES_LOOK_SECRET",
+    "These notes look like they contain a password, key or card number. Notes are not encrypted: keep secrets in a password manager.",
+);
 pub const QUERY_TOO_LONG: IpcError = IpcError::new("QUERY_TOO_LONG", "Search text is too long.");
 pub const NO_WORKSPACE: IpcError = IpcError::new("NO_WORKSPACE", "Create a workspace first.");
 pub const UNKNOWN_WORKSPACE: IpcError = IpcError::new(
@@ -141,6 +145,74 @@ pub const INVALID_PERMISSION: IpcError = IpcError::new(
 pub const NO_BACKUP: IpcError =
     IpcError::new("NO_BACKUP", "There is no backup of this profile yet.");
 
+// ---------------------------------------------------------------------------------------- milestone 04
+pub const INVALID_TAG: IpcError = IpcError::new(
+    "INVALID_TAG",
+    "Tags must be 1-40 visible characters (at most 20 per profile).",
+);
+pub const PROFILE_IN_TRASH: IpcError = IpcError::new(
+    "PROFILE_IN_TRASH",
+    "This profile is in the trash. Restore it first.",
+);
+pub const PROFILE_RUNNING: IpcError =
+    IpcError::new("PROFILE_RUNNING", "This profile is open. Close it first.");
+pub const NOT_IN_TRASH: IpcError = IpcError::new(
+    "NOT_IN_TRASH",
+    "Only profiles in the trash can be deleted permanently.",
+);
+pub const UNKNOWN_CLIENT: IpcError = IpcError::new(
+    "UNKNOWN_CLIENT",
+    "That client does not exist in this workspace.",
+);
+pub const UNKNOWN_TAG: IpcError =
+    IpcError::new("UNKNOWN_TAG", "That tag does not exist in this workspace.");
+pub const UNKNOWN_TEMPLATE: IpcError = IpcError::new(
+    "UNKNOWN_TEMPLATE",
+    "That template does not exist in this workspace.",
+);
+pub const DUPLICATE_NAME: IpcError = IpcError::new(
+    "DUPLICATE_NAME",
+    "That name is already used in this workspace.",
+);
+pub const INVALID_FILTER: IpcError = IpcError::new("INVALID_FILTER", "That filter is not valid.");
+pub const CURSOR_STALE: IpcError = IpcError::new(
+    "CURSOR_STALE",
+    "The list changed its filter; load it again from the start.",
+);
+pub const SELECTION_TOO_LARGE: IpcError = IpcError::new(
+    "SELECTION_TOO_LARGE",
+    "Select at most 10,000 profiles at a time.",
+);
+pub const SELECTION_CHANGED: IpcError = IpcError::new(
+    "SELECTION_CHANGED",
+    "The matching profiles changed since you selected them. Check the selection and try again.",
+);
+pub const UNDO_EXPIRED: IpcError =
+    IpcError::new("UNDO_EXPIRED", "This action can no longer be undone.");
+pub const DELETE_CONFIRMATION: IpcError = IpcError::new(
+    "CONFIRMATION_REQUIRED",
+    "Confirm the permanent deletion of exactly the selected profiles.",
+);
+pub const UNKNOWN_FILE: IpcError = IpcError::new("UNKNOWN_FILE", "Choose the file again.");
+pub const UNKNOWN_IMPORT: IpcError = IpcError::new(
+    "UNKNOWN_IMPORT",
+    "That import does not exist or has expired. Preview the file again.",
+);
+pub const SOURCE_CHANGED: IpcError = IpcError::new(
+    "SOURCE_CHANGED",
+    "The file changed after the preview. Preview it again before importing.",
+);
+pub const IMPORT_IN_PROGRESS: IpcError =
+    IpcError::new("IMPORT_IN_PROGRESS", "An import is already running.");
+pub const NOTHING_TO_IMPORT: IpcError = IpcError::new(
+    "NOTHING_TO_IMPORT",
+    "The preview found no valid rows to import.",
+);
+pub const EXPORT_FAILED: IpcError =
+    IpcError::new("EXPORT_FAILED", "The export file could not be written.");
+pub const NOTHING_SELECTED: IpcError =
+    IpcError::new("NOTHING_SELECTED", "Select at least one profile.");
+
 impl From<LaunchError> for IpcError {
     fn from(e: LaunchError) -> Self {
         let message = match e {
@@ -165,6 +237,8 @@ impl From<StoreError> for IpcError {
                 message: "This was changed elsewhere. Reload and try again.",
                 current_version: Some(current),
             },
+            StoreError::Duplicate => DUPLICATE_NAME,
+            StoreError::Invalid(_) => INVALID_ARGUMENT,
             StoreError::Setting(SettingError::UnknownKey) => {
                 Self::new("UNKNOWN_SETTING", "That setting does not exist.")
             }
@@ -198,14 +272,18 @@ pub fn clean_text(value: &str, max_chars: usize, err: IpcError) -> Result<String
 }
 
 /// Like `clean_text` but allows newlines/tabs and empty values (free-form notes).
+/// Notes are plain text: hidden control and bidirectional characters are removed, and text that looks like a
+/// password, key or card number is refused (notes are not encrypted; secrets belong in a password manager).
 pub fn clean_notes(value: &str) -> Result<String, IpcError> {
-    if value.len() > limits::NOTES_CHARS * 4
-        || value.chars().count() > limits::NOTES_CHARS
-        || value
-            .chars()
-            .any(|c| c.is_control() && c != '\n' && c != '\t')
-    {
+    if value.len() > limits::NOTES_CHARS * 4 {
         return Err(NOTES_TOO_LONG);
     }
-    Ok(value.to_owned())
+    let cleaned = pb_import::notes::sanitize(value);
+    if cleaned.chars().count() > limits::NOTES_CHARS {
+        return Err(NOTES_TOO_LONG);
+    }
+    if pb_import::notes::secret_hint(&cleaned).is_some() {
+        return Err(NOTES_LOOK_SECRET);
+    }
+    Ok(cleaned)
 }

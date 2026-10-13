@@ -17,6 +17,13 @@ export const ID_PREFIXES = {
   event: 'evt',
   request: 'req',
   audit: 'aud',
+  // Local manager entities (milestone 04); mapped to organization-owned data in milestone 06.
+  workspace: 'wsp',
+  client: 'cli',
+  tag: 'tag',
+  template: 'tpl',
+  importJob: 'imp',
+  savedFilter: 'flt',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

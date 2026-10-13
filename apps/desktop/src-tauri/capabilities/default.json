@@ -28,6 +28,27 @@
     "allow-get-profile-status",
     "allow-recover-profile",
     "allow-install-runtime",
-    "allow-select-profile-download-directory"
+    "allow-select-profile-download-directory",
+    "allow-query-profiles",
+    "allow-get-library",
+    "allow-create-client",
+    "allow-update-client",
+    "allow-create-tag",
+    "allow-rename-tag",
+    "allow-delete-tag",
+    "allow-save-filter",
+    "allow-delete-filter",
+    "allow-save-template",
+    "allow-delete-template",
+    "allow-duplicate-profile",
+    "allow-bulk-profiles",
+    "allow-undo-action",
+    "allow-delete-profiles",
+    "allow-choose-import-file",
+    "allow-preview-import",
+    "allow-commit-import",
+    "allow-cancel-import",
+    "allow-list-imports",
+    "allow-export-profiles"
   ]
 }

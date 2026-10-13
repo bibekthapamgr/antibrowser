@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bibekthapamgr/antibrowser/docs/import/profiles.v1.schema.json",
+  "title": "Project Browser profile configuration, schema version 1",
+  "description": "Configuration only. Cookies, sign-ins, passwords, history and other browser storage are never part of this format. The importer validates every row on its own and reports errors by row and field; this schema documents the shape.",
+  "type": "object",
+  "required": ["format", "schema_version", "profiles"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "project-browser.profiles" },
+    "schema_version": { "const": 1 },
+    "exported_at": { "type": "string", "description": "UTC time, YYYY-MM-DDTHH:MM:SSZ (informational)." },
+    "generator": { "type": "string", "description": "Program that wrote the file (informational)." },
+    "profiles": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/profile" }
+    }
+  },
+  "$defs": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "permission": { "enum": ["ask", "block", "allow"], "default": "ask" },
+    "profile": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/label",
+          "description": "Need not be unique. Control and bidirectional-override characters are refused."
+        },
+        "client": {
+          "anyOf": [{ "$ref": "#/$defs/label" }, { "type": "null" }],
+          "description": "Client name; matched to existing clients ignoring case and accents, created if new."
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "description": "Duplicates (ignoring case) are merged; new tags are created."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Plain text. Notes that look like passwords, keys or card numbers are left out with a warning."
+        },
+        "start_urls": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "pattern": "^https?://", "maxLength": 2048 }
+        },
+        "camera": { "$ref": "#/$defs/permission" },
+        "microphone": { "$ref": "#/$defs/permission" },
+        "location": { "$ref": "#/$defs/permission" },
+        "favourite": { "type": "boolean", "default": false },
+        "template": {
+          "anyOf": [{ "$ref": "#/$defs/label" }, { "type": "null" }],
+          "description": "Name of an existing template in the workspace; its settings apply first, then the row's."
+        }
+      }
+    }
+  }
+}

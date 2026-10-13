@@ -59,6 +59,7 @@ flowchart LR
 | `crates/runtime` | `ProfileId`, directory layout, launch validation, process launcher |
 | `crates/storage` | SQLite WAL store |
 | `crates/update` | pinned runtime manifest and artifact hash verification |
+| `crates/import` | profile configuration import/export: CSV/JSON/bundle parsing, row validation, archive safety, notes hygiene (milestone 04) |
 | `apps/desktop` | Tauri shell + React manager UI |
 | `apps/web-admin` | admin console shell |
 | `infra` | migrations, local bootstrap, env examples, docker-compose |

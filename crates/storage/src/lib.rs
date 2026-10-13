@@ -8,12 +8,19 @@
 //! Concurrency: one writer connection behind a mutex plus a separate reader connection; WAL lets reads proceed
 //! during writes. Every list query is bounded.
 
+pub mod bulk;
+pub mod catalog;
+pub mod imports;
 pub mod migrations;
+pub mod query;
 pub mod runs;
 pub mod settings;
 
 use migrations::{MigrationFailure, SCHEMA_VERSION};
-use pb_runtime::{DeviceId, PermissionDefault, ProfileId, RunState, WorkspaceId, random_hex};
+use pb_runtime::{
+    ClientId, DeviceId, PermissionDefault, ProfileId, RunState, TagId, TemplateId, WorkspaceId,
+    random_hex,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
@@ -42,6 +49,10 @@ pub enum StoreError {
     NotFound,
     #[error("version conflict (current {current})")]
     VersionConflict { current: i64 },
+    #[error("an entry with this name or reference already exists")]
+    Duplicate,
+    #[error("invalid value: {0}")]
+    Invalid(&'static str),
     #[error("setting rejected: {0:?}")]
     Setting(SettingError),
     #[error("filesystem error: {0}")]
@@ -56,21 +67,36 @@ pub struct Workspace {
     pub created_at: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct TagRef {
+    pub id: TagId,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct LocalProfile {
     pub id: ProfileId,
     pub workspace_id: Option<WorkspaceId>,
     pub name: String,
-    pub client_label: Option<String>,
-    pub folder_label: Option<String>,
+    pub client_id: Option<ClientId>,
+    pub client_name: Option<String>,
+    /// The client's colour, `#rrggbb`.
+    pub client_colour: Option<String>,
+    pub tags: Vec<TagRef>,
     pub notes: String,
+    pub favourite: bool,
+    pub archived_at: Option<String>,
+    /// Set while the profile is in the trash.
+    pub trashed_at: Option<String>,
+    pub purge_after: Option<String>,
+    pub template_id: Option<TemplateId>,
+    /// Placeholder until milestone 05 assigns proxies.
+    pub proxy_label: Option<String>,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
     pub running_pid: Option<u32>,
     pub active_run_id: Option<String>,
-    /// `#rrggbb`
-    pub client_colour: Option<String>,
     pub start_urls: Vec<String>,
     pub download_dir: Option<String>,
     pub camera: PermissionDefault,
@@ -90,26 +116,64 @@ pub struct LocalProfile {
     pub backup_runtime_version: Option<String>,
 }
 
-pub struct NewProfile<'a> {
-    pub id: &'a ProfileId,
-    pub workspace_id: Option<&'a WorkspaceId>,
-    pub name: &'a str,
-    pub client_label: Option<&'a str>,
-    pub folder_label: Option<&'a str>,
+/// A profile to create. Browser storage always starts empty: only configuration is ever copied.
+#[derive(Clone, Debug)]
+pub struct NewProfile {
+    pub id: ProfileId,
+    pub workspace_id: Option<WorkspaceId>,
+    pub name: String,
+    pub client_id: Option<ClientId>,
+    pub notes: String,
+    pub start_urls: Vec<String>,
+    pub camera: PermissionDefault,
+    pub microphone: PermissionDefault,
+    pub location: PermissionDefault,
+    pub tags: Vec<TagId>,
+    pub favourite: bool,
+    pub template_id: Option<TemplateId>,
+    /// Stable reference of the import row that created this profile (makes an import retry idempotent).
+    pub import_ref: Option<String>,
 }
 
-/// Fields to change; `None` leaves a field unchanged. `client_label: Some(None)` clears it.
+impl NewProfile {
+    pub fn basic(
+        id: ProfileId,
+        workspace_id: Option<WorkspaceId>,
+        name: &str,
+        client_id: Option<ClientId>,
+    ) -> Self {
+        Self {
+            id,
+            workspace_id,
+            name: name.to_owned(),
+            client_id,
+            notes: String::new(),
+            start_urls: vec![],
+            camera: PermissionDefault::Ask,
+            microphone: PermissionDefault::Ask,
+            location: PermissionDefault::Ask,
+            tags: vec![],
+            favourite: false,
+            template_id: None,
+            import_ref: None,
+        }
+    }
+}
+
+/// Fields to change; `None` leaves a field unchanged. `client_id: Some(None)` removes the client.
 #[derive(Default)]
 pub struct ProfileUpdate<'a> {
     pub name: Option<&'a str>,
-    pub client_label: Option<Option<&'a str>>,
+    pub client_id: Option<Option<&'a ClientId>>,
     pub notes: Option<&'a str>,
-    pub client_colour: Option<Option<&'a str>>,
     pub start_urls: Option<&'a [String]>,
     pub download_dir: Option<Option<&'a str>>,
     pub camera: Option<PermissionDefault>,
     pub microphone: Option<PermissionDefault>,
     pub location: Option<PermissionDefault>,
+    pub favourite: Option<bool>,
+    /// Replaces the profile's tags.
+    pub tags: Option<&'a [TagId]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -287,36 +351,58 @@ impl LocalStore {
     }
 
     // ------------------------------------------------------------------ profiles
-    pub fn insert_profile(&self, p: NewProfile<'_>) -> Result<LocalProfile, StoreError> {
-        self.w()?.execute(
-            "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text, data_dir_ref)
-             values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')), ?1)",
-            params![p.id.as_str(), p.workspace_id.map(WorkspaceId::as_str), p.name, p.client_label, p.folder_label],
-        )?;
-        self.get_profile(p.id)?.ok_or(StoreError::Corrupt)
+    pub fn insert_profile(&self, p: NewProfile) -> Result<LocalProfile, StoreError> {
+        let id = p.id.clone();
+        let inserted = self.insert_profiles(std::slice::from_ref(&p))?;
+        if inserted.first() != Some(&true) {
+            return Err(StoreError::Duplicate);
+        }
+        self.get_profile(&id)?.ok_or(StoreError::Corrupt)
     }
 
-    /// Batch insert in one transaction (imports, fixtures, benchmarks).
-    pub fn insert_profiles(&self, rows: &[NewProfile<'_>]) -> Result<(), StoreError> {
+    /// Inserts profiles in one transaction. Returns, per row, whether it was inserted: a row whose `import_ref`
+    /// already exists is skipped (an import retry never duplicates completed rows).
+    pub fn insert_profiles(&self, rows: &[NewProfile]) -> Result<Vec<bool>, StoreError> {
         let mut conn = self.w()?;
         let tx = conn.transaction()?;
+        let mut out = Vec::with_capacity(rows.len());
         {
-            let mut stmt = tx.prepare(
-                "insert into profiles (id, workspace_id, name, client_label, folder_label, search_text, data_dir_ref)
-                 values (?1, ?2, ?3, ?4, ?5, lower(?3 || ' ' || coalesce(?4, '') || ' ' || coalesce(?5, '')), ?1)",
+            let mut insert = tx.prepare_cached(
+                "insert into profiles (id, workspace_id, name, search_text, data_dir_ref, client_id, notes, start_urls,
+                                       perm_camera, perm_microphone, perm_location, favourite, template_id, import_ref)
+                 values (?1, ?2, ?3, ?4, ?1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 on conflict (import_ref) where import_ref is not null do nothing",
+            )?;
+            let mut tag = tx.prepare_cached(
+                "insert or ignore into profile_tags (profile_id, tag_id) values (?1, ?2)",
             )?;
             for p in rows {
-                stmt.execute(params![
+                let urls = serde_json::to_string(&p.start_urls).map_err(|_| StoreError::Corrupt)?;
+                let n = insert.execute(params![
                     p.id.as_str(),
-                    p.workspace_id.map(WorkspaceId::as_str),
+                    p.workspace_id.as_ref().map(WorkspaceId::as_str),
                     p.name,
-                    p.client_label,
-                    p.folder_label
+                    migrations::name_key(&p.name),
+                    p.client_id.as_ref().map(ClientId::as_str),
+                    p.notes,
+                    urls,
+                    p.camera.as_str(),
+                    p.microphone.as_str(),
+                    p.location.as_str(),
+                    p.favourite,
+                    p.template_id.as_ref().map(TemplateId::as_str),
+                    p.import_ref,
                 ])?;
+                if n == 1 {
+                    for t in &p.tags {
+                        tag.execute(params![p.id.as_str(), t.as_str()])?;
+                    }
+                }
+                out.push(n == 1);
             }
         }
         tx.commit()?;
-        Ok(())
+        Ok(out)
     }
 
     pub fn get_profile(&self, id: &ProfileId) -> Result<Option<LocalProfile>, StoreError> {
@@ -327,31 +413,22 @@ impl LocalStore {
             .transpose()
     }
 
-    /// Bounded, ordered search over name/client/folder labels within a workspace. `limit` is clamped to 1..=[`MAX_LIST`].
+    /// Bounded search over active (not archived, not trashed) profiles by name, client and tag. `limit` is clamped
+    /// to 1..=[`MAX_LIST`]. The profile table uses [`LocalStore::query_profiles`].
     pub fn search_profiles(
         &self,
         workspace: Option<&WorkspaceId>,
         query: Option<&str>,
         limit: u32,
     ) -> Result<Vec<LocalProfile>, StoreError> {
-        let limit = limit.clamp(1, MAX_LIST);
-        let conn = self.r()?;
-        let needle = query
-            .map(str::trim)
-            .filter(|q| !q.is_empty())
-            .map(|q| format!("%{}%", escape_like(&q.to_lowercase())));
-        let mut stmt = conn.prepare_cached(&format!(
-            "{SELECT_PROFILE}
-             where (?1 is null or p.workspace_id = ?1)
-               and (?2 is null or p.search_text like ?2 escape '\\')
-             order by p.name, p.id limit ?3"
-        ))?;
-        let rows = stmt.query_map(
-            params![workspace.map(WorkspaceId::as_str), needle, limit],
-            row_to_profile,
-        )?;
-        rows.map(|r| r.map_err(StoreError::from).and_then(|x| x))
-            .collect()
+        let filter = query::ProfileFilter {
+            workspace: workspace.cloned(),
+            text: query.map(str::to_owned),
+            ..Default::default()
+        };
+        Ok(self
+            .query_profiles(&filter, query::Sort::default(), 0, limit.clamp(1, MAX_LIST))?
+            .rows)
     }
 
     pub fn update_profile(
@@ -365,19 +442,20 @@ impl LocalStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|_| StoreError::Corrupt)?;
-        let updated = self.w()?.execute(
+        let mut conn = self.w()?;
+        let tx = conn.transaction()?;
+        let updated = tx.execute(
             "update profiles set
                name = coalesce(?3, name),
-               client_label = case when ?4 then ?5 else client_label end,
-               notes = coalesce(?6, notes),
-               client_colour = case when ?7 then ?8 else client_colour end,
-               start_urls = coalesce(?9, start_urls),
-               download_dir = case when ?10 then ?11 else download_dir end,
-               perm_camera = coalesce(?12, perm_camera),
-               perm_microphone = coalesce(?13, perm_microphone),
-               perm_location = coalesce(?14, perm_location),
-               search_text = lower(coalesce(?3, name) || ' ' || coalesce(case when ?4 then ?5 else client_label end, '')
-                                   || ' ' || coalesce(folder_label, '')),
+               search_text = coalesce(?4, search_text),
+               client_id = case when ?5 then ?6 else client_id end,
+               notes = coalesce(?7, notes),
+               start_urls = coalesce(?8, start_urls),
+               download_dir = case when ?9 then ?10 else download_dir end,
+               perm_camera = coalesce(?11, perm_camera),
+               perm_microphone = coalesce(?12, perm_microphone),
+               perm_location = coalesce(?13, perm_location),
+               favourite = coalesce(?14, favourite),
                version = version + 1,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
              where id = ?1 and version = ?2",
@@ -385,34 +463,62 @@ impl LocalStore {
                 id.as_str(),
                 expected_version,
                 changes.name,
-                changes.client_label.is_some(),
-                changes.client_label.flatten(),
+                changes.name.map(migrations::name_key),
+                changes.client_id.is_some(),
+                changes.client_id.flatten().map(ClientId::as_str),
                 changes.notes,
-                changes.client_colour.is_some(),
-                changes.client_colour.flatten(),
                 start_urls,
                 changes.download_dir.is_some(),
                 changes.download_dir.flatten(),
                 changes.camera.map(PermissionDefault::as_str),
                 changes.microphone.map(PermissionDefault::as_str),
                 changes.location.map(PermissionDefault::as_str),
+                changes.favourite,
             ],
         )?;
         if updated == 0 {
+            drop(tx);
+            drop(conn);
             return match self.get_profile(id)? {
                 Some(p) => Err(StoreError::VersionConflict { current: p.version }),
                 None => Err(StoreError::NotFound),
             };
         }
+        if let Some(tags) = changes.tags {
+            tx.execute(
+                "delete from profile_tags where profile_id = ?1",
+                params![id.as_str()],
+            )?;
+            let mut stmt = tx.prepare_cached(
+                "insert or ignore into profile_tags (profile_id, tag_id) values (?1, ?2)",
+            )?;
+            for t in tags {
+                stmt.execute(params![id.as_str(), t.as_str()])?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
         self.get_profile(id)?.ok_or(StoreError::Corrupt)
     }
 
+    /// Profiles that are not in the trash (`workspace` = None: all workspaces).
     pub fn profile_count(&self, workspace: Option<&WorkspaceId>) -> Result<u64, StoreError> {
         Ok(self.r()?.query_row(
-            "select count(*) from profiles where (?1 is null or workspace_id = ?1)",
+            "select count(*) from profiles p
+              where (?1 is null or p.workspace_id = ?1)
+                and not exists (select 1 from trash_entries te where te.profile_id = p.id)",
             params![workspace.map(WorkspaceId::as_str)],
             |r| r.get::<_, i64>(0),
         )? as u64)
+    }
+
+    /// Removes a profile's metadata (runs, tags and trash entry cascade). The caller has already made sure no
+    /// process uses the profile directory and has moved the directory aside.
+    pub fn delete_profile_metadata(&self, id: &ProfileId) -> Result<bool, StoreError> {
+        Ok(self
+            .w()?
+            .execute("delete from profiles where id = ?1", params![id.as_str()])?
+            == 1)
     }
 
     // ------------------------------------------------------------------ device
@@ -645,15 +751,23 @@ fn sha256_hex(s: &str) -> String {
         .collect()
 }
 
-const SELECT_PROFILE: &str =
-    "select p.id, p.workspace_id, p.name, p.client_label, p.folder_label, p.notes, p.version,
+pub(crate) const SELECT_PROFILE: &str =
+    "select p.id, p.workspace_id, p.name, p.client_id, c.name, c.colour, p.notes, p.version,
        p.created_at, p.updated_at, r.pid, r.run_id,
-       p.client_colour, p.start_urls, p.download_dir, p.perm_camera, p.perm_microphone, p.perm_location,
+       p.start_urls, p.download_dir, p.perm_camera, p.perm_microphone, p.perm_location,
        p.runtime_version, p.data_dir_ref, p.state, p.last_started_at, p.last_clean_shutdown_at, p.schema_version,
-       p.crash_count, p.last_error, p.last_backup_at, p.backup_runtime_version
-     from profiles p left join process_runs r on r.profile_id = p.id and r.ended_at is null";
+       p.crash_count, p.last_error, p.last_backup_at, p.backup_runtime_version,
+       p.favourite, p.archived_at, te.trashed_at, te.purge_after, p.template_id, p.proxy_label,
+       (select json_group_array(json_array(t.id, t.name)) from profile_tags pt join tags t on t.id = pt.tag_id
+          where pt.profile_id = p.id) as tags
+     from profiles p
+     left join clients_local c on c.id = p.client_id
+     left join trash_entries te on te.profile_id = p.id
+     left join process_runs r on r.profile_id = p.id and r.ended_at is null";
 
-fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfile, StoreError>> {
+pub(crate) fn row_to_profile(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Result<LocalProfile, StoreError>> {
     let id: String = row.get(0)?;
     let ws: Option<String> = row.get(1)?;
     let Ok(id) = ProfileId::parse(&id) else {
@@ -662,6 +776,22 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfi
     let workspace_id = match ws.map(|w| WorkspaceId::parse(&w)) {
         None => None,
         Some(Ok(w)) => Some(w),
+        Some(Err(_)) => return Ok(Err(StoreError::Corrupt)),
+    };
+    let client_id = match row
+        .get::<_, Option<String>>(3)?
+        .map(|c| ClientId::parse(&c))
+    {
+        None => None,
+        Some(Ok(c)) => Some(c),
+        Some(Err(_)) => return Ok(Err(StoreError::Corrupt)),
+    };
+    let template_id = match row
+        .get::<_, Option<String>>(31)?
+        .map(|t| TemplateId::parse(&t))
+    {
+        None => None,
+        Some(Ok(t)) => Some(t),
         Some(Err(_)) => return Ok(Err(StoreError::Corrupt)),
     };
     let perm = |i: usize| -> rusqlite::Result<Option<PermissionDefault>> {
@@ -676,21 +806,42 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<LocalProfi
     let Ok(start_urls) = serde_json::from_str::<Vec<String>>(&row.get::<_, String>(12)?) else {
         return Ok(Err(StoreError::Corrupt));
     };
+    let tags_json: Option<String> = row.get(33)?;
+    let Ok(raw_tags) =
+        serde_json::from_str::<Vec<(String, String)>>(tags_json.as_deref().unwrap_or("[]"))
+    else {
+        return Ok(Err(StoreError::Corrupt));
+    };
+    let mut tags = Vec::with_capacity(raw_tags.len());
+    for (tid, name) in raw_tags {
+        let Ok(tid) = TagId::parse(&tid) else {
+            return Ok(Err(StoreError::Corrupt));
+        };
+        tags.push(TagRef { id: tid, name });
+    }
+    tags.sort_by_key(|t| migrations::name_key(&t.name));
     let data_dir_ref: Option<String> = row.get(18)?;
     Ok(Ok(LocalProfile {
         data_dir_ref: data_dir_ref.unwrap_or_else(|| id.to_string()),
         id,
         workspace_id,
         name: row.get(2)?,
-        client_label: row.get(3)?,
-        folder_label: row.get(4)?,
-        notes: row.get(5)?,
-        version: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        running_pid: row.get(9)?,
-        active_run_id: row.get(10)?,
-        client_colour: row.get(11)?,
+        client_id,
+        client_name: row.get(4)?,
+        client_colour: row.get(5)?,
+        tags,
+        notes: row.get(6)?,
+        favourite: row.get::<_, i64>(27)? == 1,
+        archived_at: row.get(28)?,
+        trashed_at: row.get(29)?,
+        purge_after: row.get(30)?,
+        template_id,
+        proxy_label: row.get(32)?,
+        version: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        running_pid: row.get(10)?,
+        active_run_id: row.get(11)?,
         start_urls,
         download_dir: row.get(13)?,
         camera,
@@ -721,7 +872,7 @@ fn row_to_workspace(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Workspac
     }))
 }
 
-fn escape_like(s: &str) -> String {
+pub(crate) fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
@@ -729,3 +880,5 @@ fn escape_like(s: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_m04;

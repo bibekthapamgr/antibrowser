@@ -90,6 +90,38 @@ impl ProfilesRoot {
         Ok(())
     }
 
+    /// First step of a permanent deletion: moves `<root>/<id>` to `<root>/.deleting-<id>` (same volume, atomic),
+    /// so no launch can find the directory any more. Returns the new path, or `None` if there was no directory.
+    /// The caller has verified that no process uses the profile and does not hold its lock (Windows cannot rename a
+    /// directory containing an open file).
+    pub fn retire(&self, id: &ProfileId) -> Result<Option<PathBuf>, LayoutError> {
+        let dirs = self.dirs(id);
+        if !dirs.root.exists() {
+            return Ok(None);
+        }
+        self.verify(&dirs)?;
+        let target = self.canonical.join(format!(".deleting-{}", id.as_str()));
+        if target.exists() {
+            std::fs::remove_dir_all(&target)?;
+        }
+        std::fs::rename(&dirs.root, &target)?;
+        Ok(Some(target))
+    }
+
+    /// Removes directories left by deletions that were interrupted (run at start-up and after each deletion).
+    pub fn purge_retired(&self) -> std::io::Result<usize> {
+        let mut removed = 0;
+        for entry in std::fs::read_dir(&self.canonical)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".deleting-prf_") && entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     fn check_not_symlink(&self, p: &Path) -> Result<(), LayoutError> {
         match std::fs::symlink_metadata(p) {
             Ok(meta) if meta.file_type().is_symlink() => Err(LayoutError::Symlink),
@@ -199,6 +231,20 @@ mod tests {
             ProfilesRoot::open(Path::new("relative/root")),
             Err(LayoutError::BadRoot)
         ));
+    }
+
+    #[test]
+    fn retire_moves_the_directory_aside_and_purge_removes_it() -> Result<(), LayoutError> {
+        let tmp = tempfile::tempdir()?;
+        let root = ProfilesRoot::open(tmp.path())?;
+        let dirs = root.ensure(&id())?;
+        std::fs::write(dirs.user_data.join("Cookies"), b"x")?;
+        let retired = root.retire(&id())?.ok_or(LayoutError::Escape)?;
+        assert!(!dirs.root.exists() && retired.join("user-data/Cookies").is_file());
+        assert_eq!(root.retire(&id())?, None, "nothing left to retire");
+        assert_eq!(root.purge_retired()?, 1);
+        assert!(!retired.exists());
+        Ok(())
     }
 
     #[cfg(unix)]

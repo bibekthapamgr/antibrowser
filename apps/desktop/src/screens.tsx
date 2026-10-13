@@ -1,18 +1,11 @@
-import { ClientBadge } from '@pb/ui';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import type {
-  AppView,
-  Backend,
-  Permission,
-  ProfileStatus,
-  ProfileView,
-  RuntimeStatus,
-  SettingValue,
-} from './backend/types.ts';
+import type { AppView, Backend, RuntimeStatus, SettingValue } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
-import { Cell, Dialog, formatBytes, useDebounced, useElementHeight, VirtualList } from './components.tsx';
+import { Dialog, formatBytes } from './components.tsx';
+import { ImportHistory } from './importer.tsx';
+import { LibraryManager } from './library.tsx';
+import type { Notify } from './status.tsx';
 
-type Notify = (text: string, tone?: 'info' | 'error') => void;
 const HELP_URL = 'https://github.com/bibekthapamgr/antibrowser';
 
 // ------------------------------------------------------------------------------------------------ welcome
@@ -105,649 +98,6 @@ export function Welcome({
   );
 }
 
-// ------------------------------------------------------------------------------------------------ profiles
-
-const ROW_HEIGHT = 52;
-
-export function ProfilesScreen(props: {
-  backend: Backend;
-  refreshKey: number;
-  notify: Notify;
-  runningCount: number;
-}) {
-  const { backend, notify } = props;
-  const [query, setQuery] = useState('');
-  const debounced = useDebounced(query, 150);
-  const [profiles, setProfiles] = useState<ProfileView[] | null>(null);
-  const [active, setActive] = useState(0);
-  const [selected, setSelected] = useState<ProfileView | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [listRef, listHeight] = useElementHeight<HTMLDivElement>(420);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey re-runs the query on profile events
-  useEffect(() => {
-    let live = true;
-    backend.profiles
-      .list(debounced)
-      .then((rows) => {
-        if (!live) return;
-        setProfiles(rows);
-        setActive((i) => Math.min(i, Math.max(0, rows.length - 1)));
-        setSelected((s) => (s ? (rows.find((r) => r.id === s.id) ?? s) : s));
-      })
-      .catch((e) => notify(errorMessage(e, 'Could not load profiles.'), 'error'));
-    return () => {
-      live = false;
-    };
-  }, [backend, debounced, props.refreshKey, notify]);
-
-  const toggle = async (p: ProfileView) => {
-    const action = primaryAction(p);
-    try {
-      if (action === 'open') {
-        await backend.profiles.launch(p.id);
-        notify(`Opening ${p.name}…`);
-      } else if (action === 'close') {
-        await backend.profiles.stop(p.id);
-        notify(`Closing ${p.name}…`);
-      } else if (action === 'force') {
-        await backend.profiles.stop(p.id, true);
-        notify(`Force closing ${p.name}…`);
-      }
-    } catch (e) {
-      notify(errorMessage(e), 'error');
-    }
-  };
-
-  const empty = profiles !== null && profiles.length === 0 && !query;
-  return (
-    <section className="screen" aria-labelledby="profiles-title">
-      <header className="toolbar">
-        <h1 id="profiles-title">Profiles</h1>
-        <label className="search">
-          <span className="pb-sr-only">Search profiles</span>
-          <input
-            type="search"
-            placeholder="Search name or client"
-            value={query}
-            maxLength={200}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        {props.runningCount > 0 && (
-          <button
-            type="button"
-            className="pb-button"
-            onClick={() => backend.profiles.closeAll().catch((e) => notify(errorMessage(e), 'error'))}
-          >
-            Close all ({props.runningCount})
-          </button>
-        )}
-        <button type="button" className="pb-button" data-variant="primary" onClick={() => setCreating(true)}>
-          New profile
-        </button>
-      </header>
-
-      {profiles === null ? (
-        <p role="status">Loading profiles…</p>
-      ) : empty ? (
-        <div className="empty-state">
-          <h2>No profiles yet</h2>
-          <p className="muted">
-            Create a profile for each account you manage. Each one keeps its own sign-ins.
-          </p>
-          <button
-            type="button"
-            className="pb-button"
-            data-variant="primary"
-            onClick={() => setCreating(true)}
-          >
-            Create your first profile
-          </button>
-        </div>
-      ) : (
-        <div className="table" ref={listRef}>
-          <div className="table__head" aria-hidden="true">
-            <span>Name</span>
-            <span>Client</span>
-            <span>Status</span>
-            <span />
-          </div>
-          {profiles.length === 0 ? (
-            <p className="empty">No profiles match “{query}”.</p>
-          ) : (
-            <VirtualList
-              items={profiles}
-              rowHeight={ROW_HEIGHT}
-              height={Math.max(160, listHeight - 40)}
-              label={`Profiles, ${profiles.length} shown. Use arrow keys to move, Enter for profile settings.`}
-              getKey={(p) => p.id}
-              activeIndex={active}
-              onActiveIndexChange={setActive}
-              onActivate={(p) => setSelected(p)}
-              renderRow={(p, i, isActive) => (
-                // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users press Enter on the grid (VirtualList)
-                // biome-ignore lint/a11y/noStaticElementInteractions: mouse convenience; the keyboard path is the grid itself
-                <div
-                  className={`trow${isActive ? ' trow--active' : ''}`}
-                  onClick={() => {
-                    setActive(i);
-                    setSelected(p);
-                  }}
-                >
-                  <Cell className="trow__name">{p.name}</Cell>
-                  <Cell>
-                    {p.client_label ? (
-                      <ClientBadge label={p.client_label} colour={p.client_colour} />
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </Cell>
-                  <Cell>
-                    <StatusText p={p} />
-                  </Cell>
-                  <Cell className="trow__actions">
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      className="pb-button"
-                      data-variant={primaryAction(p) === 'force' ? 'danger' : undefined}
-                      disabled={primaryAction(p) === 'wait'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void toggle(p);
-                      }}
-                    >
-                      {ACTION_LABEL[primaryAction(p)]}
-                      <span className="pb-sr-only"> {p.name}</span>
-                    </button>
-                  </Cell>
-                </div>
-              )}
-            />
-          )}
-        </div>
-      )}
-
-      {selected && (
-        <ProfileSettings
-          key={selected.id}
-          backend={backend}
-          profile={selected}
-          refreshKey={props.refreshKey}
-          notify={notify}
-          onToggle={toggle}
-          onSaved={(p) => {
-            setSelected(p);
-            setProfiles((rows) => rows?.map((r) => (r.id === p.id ? p : r)) ?? rows);
-          }}
-          onClose={() => setSelected(null)}
-        />
-      )}
-      {creating && (
-        <CreateProfileDialog
-          backend={backend}
-          onCancel={() => setCreating(false)}
-          onCreated={(p) => {
-            setCreating(false);
-            setProfiles((rows) => [...(rows ?? []), p].sort((a, b) => a.name.localeCompare(b.name)));
-            notify(`Profile “${p.name}” created.`);
-          }}
-        />
-      )}
-    </section>
-  );
-}
-
-type Action = 'open' | 'close' | 'force' | 'wait';
-const ACTION_LABEL: Record<Action, string> = {
-  open: 'Open',
-  close: 'Close',
-  force: 'Force close',
-  wait: 'Wait…',
-};
-
-function primaryAction(p: ProfileView): Action {
-  switch (p.state) {
-    case 'stopped':
-    case 'crashed':
-      return 'open';
-    case 'starting':
-    case 'running':
-      return 'close';
-    case 'stopping':
-      return p.force_available ? 'force' : 'wait';
-    default:
-      return 'wait';
-  }
-}
-
-/** Plain-language text for the machine codes stored in `last_error` (never shown raw). */
-export const LAST_ERROR: Record<string, string> = {
-  CRASHED: 'The browser closed unexpectedly.',
-  EXITED_EARLY: 'The browser closed right after starting.',
-  START_INTERRUPTED: 'The last start was interrupted because the manager closed. Open it again.',
-  CRASHED_WHILE_MANAGER_CLOSED: 'The browser closed unexpectedly while the manager was closed.',
-  RECOVERY_INTERRUPTED: 'A recovery was interrupted. Run it again.',
-  PROFILE_DATA_UNREADABLE: 'This profile’s browser data looks damaged.',
-  SLOW_START: 'The browser took unusually long to start.',
-  LOW_DISK_SPACE: 'There was not enough free disk space.',
-  BACKUP_FAILED: 'A safety copy could not be made.',
-  SPAWN_FAILED: 'The browser program could not be started.',
-  NO_BACKUP: 'There is no backup to restore.',
-  BACKUP_IO_ERROR: 'The backup could not be read or written.',
-};
-
-function StatusText({ p }: { p: ProfileView }) {
-  switch (p.state) {
-    case 'stopped':
-      return <span className="muted">Closed</span>;
-    case 'starting':
-      return <span className="warn">Opening…</span>;
-    case 'stopping':
-      return <span className="warn">{p.force_available ? 'Not responding' : 'Closing…'}</span>;
-    case 'crashed':
-      return <span className="error">Closed unexpectedly</span>;
-    case 'recovering':
-      return <span className="warn">Recovering…</span>;
-    default:
-      return (
-        <span className="ok" title={p.adopted ? 'Opened before the manager restarted' : undefined}>
-          {p.window_open ? 'Open' : 'Running (no window)'}
-          {p.adopted ? ' · kept open while the manager was closed' : ''}
-        </span>
-      );
-  }
-}
-
-function CreateProfileDialog(props: {
-  backend: Backend;
-  onCancel: () => void;
-  onCreated: (p: ProfileView) => void;
-}) {
-  const [name, setName] = useState('');
-  const [client, setClient] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      props.onCreated(await props.backend.profiles.create(name, client || undefined));
-    } catch (err) {
-      setError(errorMessage(err, 'Could not create the profile.'));
-    }
-  };
-  return (
-    <Dialog title="New profile" onClose={props.onCancel} initialFocus="input">
-      <form className="stack" onSubmit={submit}>
-        <label>
-          Name
-          <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          Client (optional)
-          <input maxLength={120} value={client} onChange={(e) => setClient(e.target.value)} />
-        </label>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <div className="row row--end">
-          <button type="button" className="pb-button" onClick={props.onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="pb-button" data-variant="primary">
-            Create
-          </button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
-const PERMISSIONS: [keyof ProfileView['permissions'], string][] = [
-  ['camera', 'Camera'],
-  ['microphone', 'Microphone'],
-  ['location', 'Location'],
-];
-const PERMISSION_LABEL: Record<Permission, string> = {
-  ask: 'Ask each time',
-  block: 'Block',
-  allow: 'Allow',
-};
-
-function when(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
-
-function ProfileSettings(props: {
-  backend: Backend;
-  profile: ProfileView;
-  refreshKey: number;
-  notify: Notify;
-  onToggle: (p: ProfileView) => void;
-  onSaved: (p: ProfileView) => void;
-  onClose: () => void;
-}) {
-  const { backend, notify } = props;
-  const [status, setStatus] = useState<ProfileStatus | null>(null);
-  const p = status?.profile ?? props.profile;
-  const [name, setName] = useState(p.name);
-  const [client, setClient] = useState(p.client_label ?? '');
-  const [colour, setColour] = useState<string | null>(p.client_colour);
-  const [urls, setUrls] = useState(p.start_urls.join('\n'));
-  const [perms, setPerms] = useState(p.permissions);
-  const [notes, setNotes] = useState(p.notes);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmFresh, setConfirmFresh] = useState(false);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => headingRef.current?.focus(), []);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey reloads status on profile events
-  useEffect(() => {
-    let live = true;
-    backend.profiles
-      .status(props.profile.id)
-      .then((s) => live && setStatus(s))
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [backend, props.profile.id, props.refreshKey]);
-
-  const reload = async () => {
-    const s = await backend.profiles.status(p.id);
-    setStatus(s);
-    props.onSaved(s.profile);
-  };
-
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    const startUrls = urls
-      .split('\n')
-      .map((u) => u.trim())
-      .filter(Boolean);
-    try {
-      const saved = await backend.profiles.update(p.id, {
-        expectedVersion: p.version,
-        ...(name !== p.name ? { name } : {}),
-        ...(client.trim() === '' && p.client_label ? { clearClientLabel: true } : {}),
-        ...(client.trim() !== '' && client !== p.client_label ? { clientLabel: client } : {}),
-        ...(colour === null && p.client_colour ? { clearClientColour: true } : {}),
-        ...(colour !== null && colour !== p.client_colour ? { clientColour: colour } : {}),
-        ...(startUrls.join('\n') !== p.start_urls.join('\n') ? { startUrls } : {}),
-        ...(perms.camera !== p.permissions.camera ? { camera: perms.camera } : {}),
-        ...(perms.microphone !== p.permissions.microphone ? { microphone: perms.microphone } : {}),
-        ...(perms.location !== p.permissions.location ? { location: perms.location } : {}),
-        ...(notes !== p.notes ? { notes } : {}),
-      });
-      props.onSaved(saved);
-      setStatus((s) => (s ? { ...s, profile: saved } : s));
-      notify(
-        p.state === 'stopped' || p.state === 'crashed'
-          ? 'Profile settings saved.'
-          : 'Profile settings saved. They apply the next time the profile opens.',
-      );
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  };
-
-  const recover = async (action: 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now') => {
-    try {
-      await backend.profiles.recover(p.id, action);
-      notify(
-        {
-          reopen: `Opening ${p.name}…`,
-          restore_backup: 'Restoring the last good copy…',
-          start_fresh: 'Starting with empty browser data…',
-          backup_now: 'Making a backup…',
-        }[action],
-      );
-    } catch (err) {
-      notify(errorMessage(err), 'error');
-    }
-  };
-
-  const chooseDownloads = async () => {
-    try {
-      const r = await backend.profiles.selectDownloadDirectory(p.id);
-      if (r.path) {
-        await reload();
-        notify('Download folder saved.');
-      }
-    } catch (err) {
-      notify(errorMessage(err), 'error');
-    }
-  };
-
-  const useDefaultDownloads = async () => {
-    try {
-      const saved = await backend.profiles.update(p.id, {
-        expectedVersion: p.version,
-        clearDownloadDir: true,
-      });
-      props.onSaved(saved);
-      setStatus((s) => (s ? { ...s, profile: saved } : s));
-    } catch (err) {
-      notify(errorMessage(err), 'error');
-    }
-  };
-
-  const action = primaryAction(p);
-  const closed = p.state === 'stopped' || p.state === 'crashed';
-  const backup = status?.backup ?? null;
-  const problem = p.last_error ? (LAST_ERROR[p.last_error] ?? 'Something went wrong last time.') : null;
-
-  return (
-    <aside
-      className="drawer"
-      aria-labelledby="profile-settings-title"
-      onKeyDown={(e) => e.key === 'Escape' && props.onClose()}
-    >
-      <header>
-        <h2 id="profile-settings-title" ref={headingRef} tabIndex={-1}>
-          Profile settings
-        </h2>
-        <button
-          type="button"
-          className="pb-button"
-          onClick={props.onClose}
-          aria-label="Close profile settings"
-        >
-          ×
-        </button>
-      </header>
-      <dl className="facts">
-        <dt>Status</dt>
-        <dd>
-          <StatusText p={p} />
-        </dd>
-        <dt>Browser</dt>
-        <dd>{p.runtime_version ?? 'Not opened yet'}</dd>
-        <dt>Last opened</dt>
-        <dd>{when(p.last_started_at)}</dd>
-        <dt>Last closed normally</dt>
-        <dd>{when(p.last_clean_shutdown_at)}</dd>
-        <dt>Backup</dt>
-        <dd>{backup ? new Date(backup.created_at_unix * 1000).toLocaleString() : 'None yet'}</dd>
-      </dl>
-      {problem && (
-        <p className="warn" role="status">
-          {problem}
-          {p.crash_count > 1 ? ` (${p.crash_count} times in a row)` : ''}
-        </p>
-      )}
-      <button
-        type="button"
-        className="pb-button"
-        data-variant={action === 'open' ? 'primary' : action === 'force' ? 'danger' : undefined}
-        disabled={action === 'wait'}
-        onClick={() => props.onToggle(p)}
-      >
-        {{ open: 'Open profile', close: 'Close profile', force: 'Force close', wait: 'Please wait…' }[action]}
-      </button>
-      {action === 'force' && (
-        <p className="muted small">
-          The browser did not close when asked. Force closing ends it immediately; pages may lose unsaved
-          work.
-        </p>
-      )}
-
-      {closed && (
-        <fieldset>
-          <legend>Recover</legend>
-          {p.state === 'crashed' && (
-            <p className="small">
-              {status?.suggested_recovery === 'restore_backup'
-                ? 'This profile keeps closing unexpectedly. Restoring the last good copy is recommended.'
-                : status?.suggested_recovery === 'start_fresh'
-                  ? 'There is no backup. You can start this profile with empty browser data.'
-                  : 'You can open it again. If it keeps failing, restore the last good copy.'}
-            </p>
-          )}
-          <div className="row">
-            <button
-              type="button"
-              className="pb-button"
-              disabled={!backup}
-              onClick={() => recover('restore_backup')}
-            >
-              Restore last good copy
-            </button>
-            <button type="button" className="pb-button" onClick={() => setConfirmFresh(true)}>
-              Start with empty data…
-            </button>
-            <button type="button" className="pb-button" onClick={() => recover('backup_now')}>
-              Back up now
-            </button>
-          </div>
-          <p className="muted small">
-            Recovery never deletes the current data: it is moved aside first. Sign-ins may need to be
-            repeated.
-          </p>
-        </fieldset>
-      )}
-
-      <form className="stack" onSubmit={save} aria-label="Edit profile">
-        <label>
-          Name
-          <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          Client
-          <input maxLength={120} value={client} onChange={(e) => setClient(e.target.value)} />
-        </label>
-        <div className="row">
-          <label className="choice">
-            <input
-              type="color"
-              aria-label="Client colour"
-              value={colour ?? '#7c3aed'}
-              onChange={(e) => setColour(e.target.value.toLowerCase())}
-            />
-            Client colour {colour ? '' : '(automatic)'}
-          </label>
-          {colour && (
-            <button type="button" className="pb-button" onClick={() => setColour(null)}>
-              Use automatic colour
-            </button>
-          )}
-        </div>
-        <label>
-          Start pages (one address per line, up to 10)
-          <textarea
-            rows={3}
-            value={urls}
-            placeholder="https://"
-            spellCheck={false}
-            onChange={(e) => setUrls(e.target.value)}
-          />
-        </label>
-        <fieldset>
-          <legend>Website permissions</legend>
-          {PERMISSIONS.map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <select
-                value={perms[key]}
-                onChange={(e) => setPerms({ ...perms, [key]: e.target.value as Permission })}
-              >
-                {(Object.keys(PERMISSION_LABEL) as Permission[]).map((v) => (
-                  <option key={v} value={v}>
-                    {PERMISSION_LABEL[v]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          Notes
-          <textarea maxLength={2000} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </label>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="pb-button" data-variant="primary">
-          Save changes
-        </button>
-      </form>
-
-      <fieldset>
-        <legend>Downloads</legend>
-        <p className="mono small">{p.download_dir ?? 'Same as the app setting'}</p>
-        <div className="row">
-          <button type="button" className="pb-button" onClick={chooseDownloads}>
-            Choose folder…
-          </button>
-          {p.download_dir && (
-            <button type="button" className="pb-button" onClick={useDefaultDownloads}>
-              Use app setting
-            </button>
-          )}
-        </div>
-      </fieldset>
-
-      <p className="muted small">
-        Separate profiles keep stored website data apart. They do not make profiles look like different
-        devices or networks to websites.
-      </p>
-      {confirmFresh && (
-        <Dialog
-          role="alertdialog"
-          title="Start with empty browser data?"
-          description="The current browser data is moved aside (not deleted) and the profile opens like new. You will need to sign in to websites again."
-          onClose={() => setConfirmFresh(false)}
-          initialFocus="[data-cancel]"
-        >
-          <div className="row row--end">
-            <button type="button" className="pb-button" data-cancel onClick={() => setConfirmFresh(false)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="pb-button"
-              data-variant="danger"
-              onClick={() => {
-                setConfirmFresh(false);
-                void recover('start_fresh');
-              }}
-            >
-              Start with empty data
-            </button>
-          </div>
-        </Dialog>
-      )}
-    </aside>
-  );
-}
-
 // ------------------------------------------------------------------------------------------------ settings
 
 function setting(app: AppView, key: string): SettingValue | undefined {
@@ -757,6 +107,7 @@ function setting(app: AppView, key: string): SettingValue | undefined {
 export function SettingsScreen(props: {
   backend: Backend;
   app: AppView;
+  refreshKey: number;
   onChanged: () => void;
   notify: Notify;
 }) {
@@ -776,6 +127,7 @@ export function SettingsScreen(props: {
   const close = String(setting(app, 'manager.close_behavior')?.value ?? 'ask');
   const crash = setting(app, 'privacy.crash_reports')?.value === true;
   const downloads = setting(app, 'downloads.directory')?.value as string | null | undefined;
+  const retention = String(setting(app, 'profiles.trash_retention_days')?.value ?? '30');
 
   return (
     <section className="screen settings" aria-labelledby="settings-title">
@@ -839,6 +191,27 @@ export function SettingsScreen(props: {
           Choose folder…
         </button>
       </fieldset>
+
+      <fieldset>
+        <legend>Trash</legend>
+        <label>
+          Delete profiles in the trash permanently after
+          <select value={retention} onChange={(e) => update('profiles.trash_retention_days', e.target.value)}>
+            {['7', '30', '90'].map((d) => (
+              <option key={d} value={d}>
+                {d} days
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          Applies to profiles moved to the trash from now on. Permanent deletion removes a profile’s sign-ins
+          and site data from this device; open profiles are never deleted.
+        </p>
+      </fieldset>
+
+      <h2 className="section-title">Clients, tags and templates</h2>
+      <LibraryManager backend={backend} notify={notify} refreshKey={props.refreshKey} />
 
       <fieldset>
         <legend>Privacy</legend>
@@ -1053,6 +426,11 @@ export function DownloadsScreen(props: { backend: Backend; refreshKey: number; n
       </div>
 
       <div className="card">
+        <h2>Profile imports</h2>
+        <ImportHistory backend={backend} refreshKey={props.refreshKey} notify={notify} />
+      </div>
+
+      <div className="card">
         <h2>App updates</h2>
         <p className="muted">Internal build. Automatic updates are off. {status.manager_updates.note}</p>
       </div>
@@ -1068,6 +446,7 @@ const OP_LABELS: Record<string, string> = {
   install_runtime: 'Installing the browser',
   recover_profile: 'Recovering a profile',
   backup_profile: 'Backing up a profile',
+  import_profiles: 'Importing profiles',
 };
 
 function RuntimeSummary({

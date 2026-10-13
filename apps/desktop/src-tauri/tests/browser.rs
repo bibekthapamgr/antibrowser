@@ -262,7 +262,7 @@ impl Env {
     fn profile(&self, name: &str) -> ProfileId {
         let v = self
             .state
-            .create_profile(name, None)
+            .create_profile(name, None, None)
             .unwrap_or_else(|e| panic!("{e:?}"));
         ProfileId::parse(&v.id).unwrap_or_else(|e| panic!("{e}"))
     }

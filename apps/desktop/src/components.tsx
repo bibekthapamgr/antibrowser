@@ -16,11 +16,12 @@ export function useDebounced<T>(value: T, ms: number): T {
  */
 export function Dialog(props: {
   title: string;
-  description?: string;
+  description?: string | undefined;
   onClose: () => void;
   children: ReactNode;
   role?: 'dialog' | 'alertdialog';
   initialFocus?: string;
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -68,7 +69,7 @@ export function Dialog(props: {
       {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: both possible roles (dialog, alertdialog) support aria-modal */}
       <div
         ref={ref}
-        className="dialog"
+        className={props.wide ? 'dialog dialog--wide' : 'dialog'}
         role={props.role === 'alertdialog' ? 'alertdialog' : 'dialog'}
         aria-modal="true"
         aria-labelledby={titleId}
@@ -97,26 +98,38 @@ function focusables(root: HTMLElement | null): HTMLElement[] {
 }
 
 /**
- * Windowed list: renders only the rows in view (plus overscan), so 10,000 rows stay fast.
- * Rows have a fixed height. Keyboard: the list is a single tab stop; Up/Down/Home/End move the active row.
+ * Windowed grid: renders only the rows in view (plus overscan), so 10,000 rows stay fast. Rows may be loaded lazily:
+ * `getItem` returns `undefined` for a row whose page has not arrived yet, and `onRangeChange` reports which rows are
+ * on screen so the owner can load them. Rows have a fixed height.
+ *
+ * Keyboard: the grid is a single tab stop; Up/Down/PageUp/PageDown/Home/End move the active row, Enter activates it,
+ * Space toggles its selection (Shift+Space selects the range from the last toggled row).
  */
 export function VirtualList<T>(props: {
-  items: T[];
+  count: number;
+  getItem: (index: number) => T | undefined;
   rowHeight: number;
   height: number;
   label: string;
-  getKey: (item: T) => string;
-  renderRow: (item: T, index: number, active: boolean) => ReactNode;
+  getKey: (item: T | undefined, index: number) => string;
+  renderRow: (item: T | undefined, index: number, active: boolean) => ReactNode;
   activeIndex: number;
   onActiveIndexChange: (i: number) => void;
-  onActivate?: (item: T) => void;
+  onActivate?: (item: T, index: number) => void;
+  onToggle?: (item: T, index: number, range: boolean) => void;
+  isSelected?: (item: T | undefined, index: number) => boolean;
+  onRangeChange?: (start: number, end: number) => void;
 }) {
-  const { items, rowHeight, height, activeIndex, onActiveIndexChange } = props;
+  const { count, rowHeight, height, activeIndex, onActiveIndexChange, onRangeChange } = props;
   const ref = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const overscan = 6;
   const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-  const end = Math.min(items.length, Math.ceil((scrollTop + height) / rowHeight) + overscan);
+  const end = Math.min(count, Math.ceil((scrollTop + height) / rowHeight) + overscan);
+
+  useEffect(() => {
+    onRangeChange?.(start, end);
+  }, [start, end, onRangeChange]);
 
   const scrollIntoView = useCallback(
     (i: number) => {
@@ -125,36 +138,62 @@ export function VirtualList<T>(props: {
       const top = i * rowHeight;
       if (top < el.scrollTop) el.scrollTop = top;
       else if (top + rowHeight > el.scrollTop + height) el.scrollTop = top + rowHeight - height;
+      setScrollTop(el.scrollTop);
     },
     [rowHeight, height],
   );
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!items.length) return;
+    if (!count) return;
     const pageSize = Math.max(1, Math.floor(height / rowHeight));
     const moves: Record<string, number> = {
       ArrowDown: activeIndex + 1,
       ArrowUp: activeIndex - 1,
       Home: 0,
-      End: items.length - 1,
+      End: count - 1,
       PageDown: activeIndex + pageSize,
       PageUp: activeIndex - pageSize,
     };
     if (e.key in moves) {
       e.preventDefault();
-      const next = Math.min(items.length - 1, Math.max(0, moves[e.key] as number));
+      const next = Math.min(count - 1, Math.max(0, moves[e.key] as number));
       onActiveIndexChange(next);
       scrollIntoView(next);
-    } else if (e.key === 'Enter' && props.onActivate) {
-      const item = items[activeIndex];
-      if (item) {
-        e.preventDefault();
-        props.onActivate(item);
-      }
+      return;
+    }
+    const item = props.getItem(activeIndex);
+    if (e.key === 'Enter' && props.onActivate && item !== undefined) {
+      e.preventDefault();
+      props.onActivate(item, activeIndex);
+    } else if (e.key === ' ' && props.onToggle && item !== undefined) {
+      e.preventDefault();
+      props.onToggle(item, activeIndex, e.shiftKey);
     }
   };
 
-  const activeKey = items[activeIndex] ? props.getKey(items[activeIndex] as T) : undefined;
+  const active = props.getItem(activeIndex);
+  const activeKey = count > 0 ? props.getKey(active, activeIndex) : undefined;
+  const rows: ReactNode[] = [];
+  for (let index = start; index < end; index++) {
+    const item = props.getItem(index);
+    const key = props.getKey(item, index);
+    rows.push(
+      // biome-ignore lint/a11y/useFocusableInteractive: rows are reached via aria-activedescendant on the grid (single tab stop)
+      // biome-ignore lint/a11y/useSemanticElements: a windowed grid cannot use <tr> (rows are absolutely positioned)
+      <div
+        key={key}
+        id={`row-${key}`}
+        role="row"
+        aria-rowindex={index + 1}
+        aria-selected={props.isSelected ? props.isSelected(item, index) : index === activeIndex}
+        aria-busy={item === undefined ? true : undefined}
+        className="vlist__row"
+        style={{ position: 'absolute', top: index * rowHeight, height: rowHeight, left: 0, right: 0 }}
+      >
+        {props.renderRow(item, index, index === activeIndex)}
+      </div>,
+    );
+  }
   return (
     // biome-ignore lint/a11y/useSemanticElements: a windowed grid needs explicit ARIA (a <table> would render every row)
     <div
@@ -162,34 +201,15 @@ export function VirtualList<T>(props: {
       className="vlist"
       role="grid"
       aria-label={props.label}
-      aria-rowcount={items.length}
+      aria-rowcount={count}
+      aria-multiselectable={props.onToggle ? true : undefined}
       aria-activedescendant={activeKey ? `row-${activeKey}` : undefined}
       tabIndex={0}
       style={{ height }}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       onKeyDown={onKeyDown}
     >
-      <div style={{ height: items.length * rowHeight, position: 'relative' }}>
-        {items.slice(start, end).map((item, i) => {
-          const index = start + i;
-          const key = props.getKey(item);
-          return (
-            // biome-ignore lint/a11y/useFocusableInteractive: rows are reached via aria-activedescendant on the grid (single tab stop)
-            // biome-ignore lint/a11y/useSemanticElements: a windowed grid cannot use <tr> (rows are absolutely positioned)
-            <div
-              key={key}
-              id={`row-${key}`}
-              role="row"
-              aria-rowindex={index + 1}
-              aria-selected={index === activeIndex}
-              className="vlist__row"
-              style={{ position: 'absolute', top: index * rowHeight, height: rowHeight, left: 0, right: 0 }}
-            >
-              {props.renderRow(item, index, index === activeIndex)}
-            </div>
-          );
-        })}
-      </div>
+      <div style={{ height: count * rowHeight, position: 'relative' }}>{rows}</div>
     </div>
   );
 }

@@ -8,26 +8,56 @@
  */
 import type {
   AppView,
+  BulkAction,
+  BulkResult,
+  Client,
   EventName,
   EventPayload,
+  ImportJob,
+  ImportPreview,
+  ImportSettings,
   IpcError,
+  Library,
+  ProfileFilter,
+  ProfilePage,
   ProfileStatus,
   ProfileView,
   RuntimeStatus,
+  SavedFilter,
+  Selection,
   SettingValue,
+  Sort,
   Started,
+  TagRef,
+  Template,
   Workspace,
 } from '@pb/contracts/ipc';
 
 export type {
   AppView,
+  BulkAction,
+  BulkResult,
+  Client,
+  ClientView,
+  ImportJob,
+  ImportPreview,
+  ImportSettings,
   IpcError,
+  Library,
   Operation,
+  ProfileFilter,
+  ProfilePage,
   ProfileStatus,
   ProfileView,
   RunState,
   RuntimeStatus,
+  SavedFilter,
+  Selection,
   SettingValue,
+  Sort,
+  Tag,
+  TagRef,
+  Template,
   Workspace,
 } from '@pb/contracts/ipc';
 
@@ -37,11 +67,12 @@ export type RecoverAction = 'reopen' | 'restore_backup' | 'start_fresh' | 'backu
 export interface ProfileUpdate {
   expectedVersion: number;
   name?: string;
-  clientLabel?: string;
-  clearClientLabel?: boolean;
+  clientId?: string;
+  clearClient?: boolean;
   notes?: string;
-  clientColour?: string;
-  clearClientColour?: boolean;
+  favourite?: boolean;
+  /** Replaces the tags (names; new tags are created). */
+  tags?: string[];
   startUrls?: string[];
   clearDownloadDir?: boolean;
   camera?: Permission;
@@ -55,10 +86,29 @@ export interface WorkspaceRepository {
   setActiveWorkspace(id: string): Promise<void>;
 }
 
+export interface ProfileQuery {
+  filter?: ProfileFilter;
+  sort?: Sort;
+  cursor?: string;
+  /** Jump to a row; the virtualized table loads the page that scrolls into view. */
+  offset?: number;
+  limit?: number;
+}
+
+export type ExportFormat = 'csv' | 'json' | 'bundle';
+
 export interface ProfileRepository {
-  list(query?: string): Promise<ProfileView[]>;
-  create(name: string, clientLabel?: string): Promise<ProfileView>;
+  /** `profiles.query(cursor, filters)`: one page of the profile table. */
+  query(q: ProfileQuery): Promise<ProfilePage>;
+  /** Basic creation: a name and optionally a client (by name; created if new) and a template. */
+  create(name: string, client?: string, templateId?: string): Promise<ProfileView>;
   update(id: string, changes: ProfileUpdate): Promise<ProfileView>;
+  /** Same configuration, empty browser storage (sign-ins are never copied). */
+  duplicate(id: string, name: string): Promise<ProfileView>;
+  bulk(action: BulkAction, selection: Selection): Promise<BulkResult>;
+  undo(token: string): Promise<{ restored: number; skipped: number }>;
+  /** Permanent deletion from the trash; `count` is the number the user confirmed. */
+  deletePermanently(selection: Selection, count: number): Promise<BulkResult>;
   launch(id: string): Promise<Started>;
   /** Graceful close; `force` is the explicit force close offered after a timeout. */
   stop(id: string, force?: boolean): Promise<Started>;
@@ -66,6 +116,40 @@ export interface ProfileRepository {
   status(id: string): Promise<ProfileStatus>;
   recover(id: string, action: RecoverAction): Promise<Started>;
   selectDownloadDirectory(id: string): Promise<{ path: string | null }>;
+}
+
+export interface LibraryRepository {
+  library(): Promise<Library>;
+  createClient(name: string, colour?: string): Promise<Client>;
+  updateClient(
+    id: string,
+    expectedVersion: number,
+    changes: { name?: string; colour?: string; clearColour?: boolean; archived?: boolean },
+  ): Promise<Client>;
+  createTag(name: string): Promise<TagRef>;
+  renameTag(id: string, name: string): Promise<void>;
+  deleteTag(id: string): Promise<void>;
+  saveFilter(name: string, filter: ProfileFilter, sort: Sort): Promise<SavedFilter>;
+  deleteFilter(id: string): Promise<void>;
+  saveTemplate(profileId: string, name: string): Promise<Template>;
+  deleteTemplate(id: string): Promise<void>;
+}
+
+export interface TransferRepository {
+  /** Native file picker; the UI only ever holds the opaque reference. */
+  chooseFile(): Promise<{ file_ref: string | null; name: string | null; size: number | null }>;
+  /** `imports.preview(file_ref)`: dry run, nothing is written. */
+  preview(fileRef: string, settings: ImportSettings): Promise<ImportPreview>;
+  /** `imports.commit(preview_id)`: refused if the file changed since the preview. */
+  commit(previewId: string): Promise<Started>;
+  cancel(jobId: string): Promise<void>;
+  jobs(): Promise<ImportJob[]>;
+  /** `exports.configuration(ids)`: configuration only, saved through the native dialog. */
+  export(
+    selection: Selection,
+    format: ExportFormat,
+    includeNotes: boolean,
+  ): Promise<{ path: string | null; exported: number; notes_withheld: number }>;
 }
 
 export interface SystemRepository {
@@ -89,6 +173,8 @@ export interface Backend {
   kind: 'tauri' | 'demo';
   workspaces: WorkspaceRepository;
   profiles: ProfileRepository;
+  library: LibraryRepository;
+  transfer: TransferRepository;
   system: SystemRepository;
   on<E extends EventName>(event: E, handler: (payload: EventPayload<E>) => void): () => void;
 }

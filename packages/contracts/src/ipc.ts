@@ -1,5 +1,6 @@
 /**
- * Desktop IPC contract (milestone 02 deliverable "IPC schemas"; milestone 03 adds the runtime lifecycle).
+ * Desktop IPC contract (milestone 02 deliverable "IPC schemas"; milestone 03 adds the runtime lifecycle; milestone 04
+ * adds profile/client management, bulk actions, the trash, templates, and configuration import/export).
  *
  * The manager webview talks to the Rust shell only through these commands and events. Rust validates every input
  * again (apps/desktop/src-tauri); these schemas document the shapes and let the UI type-check its calls.
@@ -11,6 +12,11 @@ import Type, { type Static, type TSchema } from 'typebox';
 
 const ProfileIdPattern = '^prf_[0-9A-HJKMNP-TV-Z]{26}$';
 const WorkspaceIdPattern = '^wsp_[0-9A-HJKMNP-TV-Z]{26}$';
+const ClientIdPattern = '^cli_[0-9A-HJKMNP-TV-Z]{26}$';
+const TagIdPattern = '^tag_[0-9A-HJKMNP-TV-Z]{26}$';
+const TemplateIdPattern = '^tpl_[0-9A-HJKMNP-TV-Z]{26}$';
+const ImportJobIdPattern = '^imp_[0-9A-HJKMNP-TV-Z]{26}$';
+const FilterIdPattern = '^flt_[0-9A-HJKMNP-TV-Z]{26}$';
 
 export const IpcError = Type.Object({
   code: Type.String(),
@@ -34,13 +40,28 @@ export const RunState = Type.Enum(['stopped', 'starting', 'running', 'stopping',
 export type RunState = Static<typeof RunState>;
 const Nullable = <T extends TSchema>(t: T) => Type.Union([t, Type.Null()]);
 
+export const TagRef = Type.Object({
+  id: Type.String({ pattern: TagIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 40 }),
+});
+export type TagRef = Static<typeof TagRef>;
+
 export const ProfileView = Type.Object({
   id: Type.String({ pattern: ProfileIdPattern }),
   workspace_id: Nullable(Type.String({ pattern: WorkspaceIdPattern })),
   name: Type.String({ minLength: 1, maxLength: 120 }),
-  client_label: Nullable(Type.String({ maxLength: 120 })),
+  client_id: Nullable(Type.String({ pattern: ClientIdPattern })),
+  client_name: Nullable(Type.String({ maxLength: 120 })),
   client_colour: Nullable(Colour),
+  tags: Type.Array(TagRef, { maxItems: 20 }),
   notes: Type.String({ maxLength: 2000 }),
+  favourite: Type.Boolean(),
+  archived_at: Nullable(Type.String()),
+  trashed_at: Nullable(Type.String({ description: 'Set while the profile is in the trash.' })),
+  purge_after: Nullable(Type.String({ description: 'When a trashed profile is deleted permanently.' })),
+  template_id: Nullable(Type.String({ pattern: TemplateIdPattern })),
+  proxy_label: Nullable(Type.String({ description: 'Placeholder until milestone 05 assigns proxies.' })),
+  sync_status: Type.Literal('local_only', { description: 'Cloud sync arrives in milestone 07.' }),
   version: Type.Integer({ minimum: 1 }),
   created_at: Type.String(),
   updated_at: Type.String(),
@@ -76,6 +97,7 @@ export const SettingValue = Type.Object({
     'privacy.crash_reports',
     'downloads.directory',
     'workspace.active',
+    'profiles.trash_retention_days',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -125,6 +147,7 @@ export const Operation = Type.Object({
     'install_runtime',
     'recover_profile',
     'backup_profile',
+    'import_profiles',
   ]),
   status: Type.Enum(['running', 'succeeded', 'failed']),
   progress: Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Null()]),
@@ -229,6 +252,229 @@ export const ProfileStatus = Type.Object({
 });
 export type ProfileStatus = Static<typeof ProfileStatus>;
 
+// ------------------------------------------------------------------------------------------------ milestone 04
+export const ProfileFilter = Type.Object(
+  {
+    text: Type.Optional(Nullable(Type.String({ maxLength: 200 }))),
+    view: Type.Optional(Type.Enum(['active', 'archived', 'trash'])),
+    client: Type.Optional(
+      Type.Union([
+        Type.Object({ kind: Type.Literal('any') }),
+        Type.Object({ kind: Type.Literal('none') }),
+        Type.Object({
+          kind: Type.Literal('ids'),
+          ids: Type.Array(Type.String({ pattern: ClientIdPattern }), { minItems: 1, maxItems: 50 }),
+        }),
+      ]),
+    ),
+    tags: Type.Optional(
+      Type.Array(Type.String({ pattern: TagIdPattern }), {
+        maxItems: 20,
+        description: 'The profile must carry every tag.',
+      }),
+    ),
+    states: Type.Optional(Type.Array(RunState)),
+    favourites_only: Type.Optional(Type.Boolean()),
+    template: Type.Optional(Nullable(Type.String({ pattern: TemplateIdPattern }))),
+  },
+  { additionalProperties: false },
+);
+export type ProfileFilter = Static<typeof ProfileFilter>;
+
+export const Sort = Type.Object({
+  key: Type.Enum(['name', 'client', 'last_used', 'created', 'state']),
+  descending: Type.Boolean(),
+});
+export type Sort = Static<typeof Sort>;
+
+export const ProfilePage = Type.Object({
+  rows: Type.Array(ProfileView, { maxItems: 500 }),
+  total: Type.Integer({ minimum: 0 }),
+  next_cursor: Nullable(Type.String({ maxLength: 64 })),
+});
+export type ProfilePage = Static<typeof ProfilePage>;
+
+export const Client = Type.Object({
+  id: Type.String({ pattern: ClientIdPattern }),
+  workspace_id: Type.String({ pattern: WorkspaceIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+  colour: Nullable(Colour),
+  archived_at: Nullable(Type.String()),
+  version: Type.Integer({ minimum: 1 }),
+  created_at: Type.String(),
+});
+export type Client = Static<typeof Client>;
+export const ClientView = Type.Intersect([Client, Type.Object({ profiles: Type.Integer({ minimum: 0 }) })]);
+export type ClientView = Static<typeof ClientView>;
+
+export const Tag = Type.Object({
+  id: Type.String({ pattern: TagIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 40 }),
+  profiles: Type.Integer({ minimum: 0 }),
+});
+export type Tag = Static<typeof Tag>;
+
+export const TemplateConfig = Type.Object({
+  start_urls: Type.Array(StartUrl, { maxItems: 10 }),
+  camera: PermissionDefault,
+  microphone: PermissionDefault,
+  location: PermissionDefault,
+  tags: Type.Array(Type.String({ maxLength: 40 }), { maxItems: 20 }),
+  notes: Type.String({ maxLength: 2000 }),
+});
+export const Template = Type.Object({
+  id: Type.String({ pattern: TemplateIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+  schema_version: Type.Integer({ minimum: 1 }),
+  config: TemplateConfig,
+  version: Type.Integer({ minimum: 1 }),
+  updated_at: Type.String(),
+});
+export type Template = Static<typeof Template>;
+
+export const SavedFilter = Type.Object({
+  id: Type.String({ pattern: FilterIdPattern }),
+  name: Type.String({ minLength: 1, maxLength: 60 }),
+  filter: Type.Object({ filter: ProfileFilter, sort: Sort }),
+  created_at: Type.String(),
+});
+export type SavedFilter = Static<typeof SavedFilter>;
+
+export const Library = Type.Object({
+  counts: Type.Object({
+    active: Type.Integer(),
+    favourites: Type.Integer(),
+    running: Type.Integer(),
+    archived: Type.Integer(),
+    trash: Type.Integer(),
+    without_client: Type.Integer(),
+    per_client: Type.Array(Type.Tuple([Type.String({ pattern: ClientIdPattern }), Type.Integer()])),
+  }),
+  clients: Type.Array(ClientView, { maxItems: 5000 }),
+  tags: Type.Array(Tag, { maxItems: 5000 }),
+  templates: Type.Array(Template, { maxItems: 1000 }),
+  saved_filters: Type.Array(SavedFilter, { maxItems: 200 }),
+  trash_retention_days: Type.Integer({ minimum: 1 }),
+});
+export type Library = Static<typeof Library>;
+
+const ProfileIds = Type.Array(Type.String({ pattern: ProfileIdPattern }), { maxItems: 10000 });
+/** Explicit ids, or every profile matching a filter ("select all matching", checked against the count shown). */
+export const Selection = Type.Union([
+  Type.Object({ kind: Type.Literal('ids'), ids: ProfileIds }),
+  Type.Object({
+    kind: Type.Literal('filter'),
+    filter: ProfileFilter,
+    expected_total: Type.Integer({ minimum: 0 }),
+  }),
+]);
+export type Selection = Static<typeof Selection>;
+
+export const BulkAction = Type.Union([
+  Type.Object({
+    action: Type.Literal('add_tag'),
+    tag_id: Type.Optional(Type.String({ pattern: TagIdPattern })),
+    tag_name: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+  }),
+  Type.Object({ action: Type.Literal('remove_tag'), tag_id: Type.String({ pattern: TagIdPattern }) }),
+  Type.Object({
+    action: Type.Literal('move'),
+    client_id: Nullable(Type.String({ pattern: ClientIdPattern })),
+  }),
+  Type.Object({ action: Type.Literal('archive') }),
+  Type.Object({ action: Type.Literal('unarchive') }),
+  Type.Object({ action: Type.Literal('favourite'), value: Type.Boolean() }),
+  Type.Object({ action: Type.Literal('trash') }),
+  Type.Object({ action: Type.Literal('restore') }),
+]);
+export type BulkAction = Static<typeof BulkAction>;
+
+export const BulkResult = Type.Object({
+  action: Type.String(),
+  requested: Type.Integer(),
+  changed: Type.Integer(),
+  unchanged: Type.Integer(),
+  failed: Type.Array(
+    Type.Object({
+      id: Type.String(),
+      name: Nullable(Type.String()),
+      code: Type.String(),
+      message: Type.String(),
+    }),
+  ),
+  undo_token: Nullable(Type.String({ pattern: '^[0-9a-f]{32}$' })),
+});
+export type BulkResult = Static<typeof BulkResult>;
+
+export const FieldError = Type.Object({ field: Type.String(), code: Type.String(), message: Type.String() });
+export const ImportPreview = Type.Object({
+  preview_id: Nullable(Type.String({ pattern: ImportJobIdPattern })),
+  file_name: Type.String(),
+  format: Nullable(Type.Enum(['csv', 'json', 'bundle'])),
+  schema_version: Nullable(Type.Integer()),
+  file_error: Nullable(Type.Object({ code: Type.String(), message: Type.String() })),
+  total: Type.Integer(),
+  valid: Type.Integer(),
+  invalid: Type.Integer(),
+  will_create: Type.Integer(),
+  will_update: Type.Integer(),
+  will_skip: Type.Integer(),
+  already_imported: Type.Integer(),
+  with_warnings: Type.Integer(),
+  new_clients: Type.Array(Type.String(), { maxItems: 50 }),
+  new_tags: Type.Array(Type.String(), { maxItems: 50 }),
+  rows: Type.Array(
+    Type.Object({
+      row: Type.Integer(),
+      status: Type.Enum(['create', 'update', 'skip_duplicate', 'already_imported', 'error']),
+      name: Type.String(),
+      client: Nullable(Type.String()),
+      tags: Type.Array(Type.String()),
+      warnings: Type.Array(Type.String()),
+      errors: Type.Array(FieldError),
+    }),
+    { maxItems: 500 },
+  ),
+  rows_truncated: Type.Boolean(),
+  errors: Type.Array(Type.Intersect([Type.Object({ row: Type.Integer() }), FieldError]), { maxItems: 1000 }),
+});
+export type ImportPreview = Static<typeof ImportPreview>;
+
+export const ImportJob = Type.Object({
+  id: Type.String({ pattern: ImportJobIdPattern }),
+  status: Type.Enum([
+    'previewed',
+    'running',
+    'completed',
+    'completed_with_errors',
+    'failed',
+    'cancelled',
+    'interrupted',
+  ]),
+  source_name: Type.String(),
+  source_digest: Type.String(),
+  format: Type.Enum(['csv', 'json', 'bundle']),
+  settings: Type.Unknown(),
+  total: Type.Integer(),
+  succeeded: Type.Integer(),
+  failed: Type.Integer(),
+  skipped: Type.Integer(),
+  errors: Type.Array(Type.Intersect([Type.Object({ row: Type.Integer() }), FieldError])),
+  created_at: Type.String(),
+  started_at: Nullable(Type.String()),
+  finished_at: Nullable(Type.String()),
+});
+export type ImportJob = Static<typeof ImportJob>;
+
+export const ImportSettings = Type.Object(
+  {
+    duplicates: Type.Optional(Type.Enum(['skip', 'create', 'update'])),
+    default_client: Type.Optional(Nullable(Type.String({ maxLength: 120 }))),
+  },
+  { additionalProperties: false },
+);
+export type ImportSettings = Static<typeof ImportSettings>;
+
 const Label = Type.String({ minLength: 1, maxLength: 120 });
 
 /** Command name -> argument object and result. Argument keys are camelCase (Tauri converts to snake_case in Rust). */
@@ -250,7 +496,11 @@ export const COMMANDS = {
     result: Type.Array(ProfileView, { maxItems: 10000 }),
   },
   create_profile: {
-    args: Type.Object({ name: Label, clientLabel: Type.Optional(Label) }),
+    args: Type.Object({
+      name: Label,
+      client: Type.Optional(Label),
+      templateId: Type.Optional(Type.String({ pattern: TemplateIdPattern })),
+    }),
     result: ProfileView,
   },
   update_profile: {
@@ -258,11 +508,11 @@ export const COMMANDS = {
       profileId: Type.String({ pattern: ProfileIdPattern }),
       expectedVersion: Type.Integer({ minimum: 1 }),
       name: Type.Optional(Label),
-      clientLabel: Type.Optional(Label),
-      clearClientLabel: Type.Optional(Type.Boolean()),
+      clientId: Type.Optional(Type.String({ pattern: ClientIdPattern })),
+      clearClient: Type.Optional(Type.Boolean()),
       notes: Type.Optional(Type.String({ maxLength: 2000 })),
-      clientColour: Type.Optional(Colour),
-      clearClientColour: Type.Optional(Type.Boolean()),
+      favourite: Type.Optional(Type.Boolean()),
+      tags: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 40 }), { maxItems: 20 })),
       startUrls: Type.Optional(Type.Array(StartUrl, { maxItems: 10 })),
       clearDownloadDir: Type.Optional(Type.Boolean()),
       camera: Type.Optional(PermissionDefault),
@@ -336,6 +586,116 @@ export const COMMANDS = {
     result: Type.Null(),
   },
   remove_local_data: { args: Type.Object({ confirm: Type.Literal('DELETE') }), result: Type.Null() },
+
+  // milestone 04 (roadmap names: profiles.query / profiles.update / profiles.bulk / imports.preview /
+  // imports.commit / exports.configuration)
+  query_profiles: {
+    args: Type.Object({
+      filter: Type.Optional(ProfileFilter),
+      sort: Type.Optional(Sort),
+      cursor: Type.Optional(Type.String({ maxLength: 64, description: 'Continue after the previous page.' })),
+      offset: Type.Optional(
+        Type.Integer({ minimum: 0, maximum: 10000, description: 'Jump to a row (ignored with a cursor).' }),
+      ),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    }),
+    result: ProfilePage,
+  },
+  get_library: { args: Type.Object({}), result: Library },
+  create_client: { args: Type.Object({ name: Label, colour: Type.Optional(Colour) }), result: Client },
+  update_client: {
+    args: Type.Object({
+      clientId: Type.String({ pattern: ClientIdPattern }),
+      expectedVersion: Type.Integer({ minimum: 1 }),
+      name: Type.Optional(Label),
+      colour: Type.Optional(Colour),
+      clearColour: Type.Optional(Type.Boolean()),
+      archived: Type.Optional(Type.Boolean()),
+    }),
+    result: Client,
+  },
+  create_tag: { args: Type.Object({ name: Type.String({ minLength: 1, maxLength: 40 }) }), result: TagRef },
+  rename_tag: {
+    args: Type.Object({
+      tagId: Type.String({ pattern: TagIdPattern }),
+      name: Type.String({ minLength: 1, maxLength: 40 }),
+    }),
+    result: Type.Null(),
+  },
+  delete_tag: { args: Type.Object({ tagId: Type.String({ pattern: TagIdPattern }) }), result: Type.Null() },
+  save_filter: {
+    args: Type.Object({
+      name: Type.String({ minLength: 1, maxLength: 60 }),
+      filter: ProfileFilter,
+      sort: Type.Optional(Sort),
+    }),
+    result: SavedFilter,
+  },
+  delete_filter: {
+    args: Type.Object({ filterId: Type.String({ pattern: FilterIdPattern }) }),
+    result: Type.Null(),
+  },
+  save_template: {
+    args: Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }), name: Label }),
+    result: Template,
+  },
+  delete_template: {
+    args: Type.Object({ templateId: Type.String({ pattern: TemplateIdPattern }) }),
+    result: Type.Null(),
+  },
+  duplicate_profile: {
+    args: Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }), name: Label }),
+    result: ProfileView,
+  },
+  bulk_profiles: { args: Type.Object({ action: BulkAction, selection: Selection }), result: BulkResult },
+  undo_action: {
+    args: Type.Object({ token: Type.String({ pattern: '^[0-9a-f]{32}$' }) }),
+    result: Type.Object({ restored: Type.Integer(), skipped: Type.Integer() }),
+  },
+  delete_profiles: {
+    args: Type.Object({
+      selection: Selection,
+      confirm: Type.Literal('DELETE'),
+      expectedCount: Type.Integer({ minimum: 1, maximum: 10000 }),
+    }),
+    result: BulkResult,
+  },
+  choose_import_file: {
+    args: Type.Object({}),
+    result: Type.Object({
+      file_ref: Nullable(Type.String({ pattern: '^[0-9a-f]{32}$' })),
+      name: Nullable(Type.String()),
+      size: Nullable(Type.Integer()),
+    }),
+  },
+  preview_import: {
+    args: Type.Object({
+      fileRef: Type.String({ pattern: '^[0-9a-f]{32}$' }),
+      settings: Type.Optional(ImportSettings),
+    }),
+    result: ImportPreview,
+  },
+  commit_import: {
+    args: Type.Object({ previewId: Type.String({ pattern: ImportJobIdPattern }) }),
+    result: Started,
+  },
+  cancel_import: {
+    args: Type.Object({ jobId: Type.String({ pattern: ImportJobIdPattern }) }),
+    result: Type.Null(),
+  },
+  list_imports: { args: Type.Object({}), result: Type.Array(ImportJob, { maxItems: 50 }) },
+  export_profiles: {
+    args: Type.Object({
+      selection: Selection,
+      format: Type.Enum(['csv', 'json', 'bundle']),
+      includeNotes: Type.Optional(Type.Boolean()),
+    }),
+    result: Type.Object({
+      path: Nullable(Type.String()),
+      exported: Type.Integer(),
+      notes_withheld: Type.Integer(),
+    }),
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;

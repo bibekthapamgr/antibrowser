@@ -5,18 +5,21 @@
 //! processes. The webview can invoke only the commands listed in `capabilities/default.json`, each of which checks
 //! its caller and validates its inputs in Rust.
 
+pub mod authz;
 pub mod commands;
 pub mod deeplink;
 pub mod events;
 pub mod external;
 pub mod ipc;
 pub mod lifecycle;
+pub mod manage;
 pub mod operations;
 pub mod recovery;
 pub mod runtime;
 pub mod secrets;
 pub mod state;
 pub mod supervisor;
+pub mod transfer;
 
 use crate::events::{DEEP_LINK, QUIT_REQUESTED};
 use crate::state::AppState;
@@ -64,6 +67,27 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::recover_profile,
         commands::install_runtime,
         commands::select_profile_download_directory,
+        commands::query_profiles,
+        commands::get_library,
+        commands::create_client,
+        commands::update_client,
+        commands::create_tag,
+        commands::rename_tag,
+        commands::delete_tag,
+        commands::save_filter,
+        commands::delete_filter,
+        commands::save_template,
+        commands::delete_template,
+        commands::duplicate_profile,
+        commands::bulk_profiles,
+        commands::undo_action,
+        commands::delete_profiles,
+        commands::choose_import_file,
+        commands::preview_import,
+        commands::commit_import,
+        commands::cancel_import,
+        commands::list_imports,
+        commands::export_profiles,
     ]
 }
 

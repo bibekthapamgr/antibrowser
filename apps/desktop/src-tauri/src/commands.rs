@@ -7,10 +7,15 @@
 
 use crate::ipc::{self, IpcError};
 use crate::lifecycle::ProfileStatus;
+use crate::manage::{BulkAction, BulkResult, Library, ProfilePage, Selection, UndoResult};
 use crate::operations::Started;
 use crate::state::{AppState, AppView, ProfileChanges, ProfileView, RuntimeStatus};
-use pb_runtime::ProfileId;
+use crate::transfer::{ChosenImport, ExportFormat, ExportResult, ImportPreview, ImportSettings};
+use pb_runtime::{ClientId, FilterId, ImportJobId, ProfileId, TagId, TemplateId};
 use pb_storage::Workspace;
+use pb_storage::catalog::{Client, SavedFilter, TagRefOwned, Template};
+use pb_storage::imports::ImportJob;
+use pb_storage::query::{ProfileFilter, Sort};
 use pb_storage::settings::SettingValue;
 use serde::Serialize;
 use serde_json::Value;
@@ -67,19 +72,21 @@ pub fn list_profiles<Rt: Runtime>(
     state.list_profiles(query.as_deref(), limit)
 }
 
+/// Basic creation: a name and, optionally, a client (by name; created if new) and a template.
 #[tauri::command]
 pub fn create_profile<Rt: Runtime>(
     webview: Webview<Rt>,
     state: S<'_>,
     name: String,
-    client_label: Option<String>,
+    client: Option<String>,
+    template_id: Option<TemplateId>,
 ) -> R<ProfileView> {
     caller(&webview)?;
-    state.create_profile(&name, client_label.as_deref())
+    state.create_profile(&name, client.as_deref(), template_id.as_ref())
 }
 
-/// Profile settings. Start URLs, colour and permission defaults are validated in Rust; the download folder is set
-/// only through the native picker (`select_profile_download_directory`).
+/// Profile settings (`profiles.update(id, expected_version)`). Start URLs, tags and permission defaults are
+/// validated in Rust; the download folder is set only through the native picker.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn update_profile<Rt: Runtime>(
@@ -88,11 +95,11 @@ pub fn update_profile<Rt: Runtime>(
     profile_id: ProfileId,
     expected_version: i64,
     name: Option<String>,
-    client_label: Option<String>,
-    clear_client_label: Option<bool>,
+    client_id: Option<ClientId>,
+    clear_client: Option<bool>,
     notes: Option<String>,
-    client_colour: Option<String>,
-    clear_client_colour: Option<bool>,
+    favourite: Option<bool>,
+    tags: Option<Vec<String>>,
     start_urls: Option<Vec<String>>,
     clear_download_dir: Option<bool>,
     camera: Option<String>,
@@ -105,11 +112,11 @@ pub fn update_profile<Rt: Runtime>(
         expected_version,
         ProfileChanges {
             name: name.as_deref(),
-            client_label: client_label.as_deref(),
-            clear_client_label: clear_client_label.unwrap_or(false),
+            client_id: client_id.as_ref(),
+            clear_client: clear_client.unwrap_or(false),
             notes: notes.as_deref(),
-            client_colour: client_colour.as_deref(),
-            clear_client_colour: clear_client_colour.unwrap_or(false),
+            favourite,
+            tags: tags.as_deref(),
             start_urls: start_urls.as_deref(),
             clear_download_dir: clear_download_dir.unwrap_or(false),
             camera: camera.as_deref(),
@@ -117,6 +124,303 @@ pub fn update_profile<Rt: Runtime>(
             location: location.as_deref(),
         },
     )
+}
+
+// ------------------------------------------------------------------------------------- milestone 04
+/// `profiles.query(cursor, filters)`: one page of the profile table.
+#[tauri::command]
+pub fn query_profiles<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    filter: Option<ProfileFilter>,
+    sort: Option<Sort>,
+    cursor: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+) -> R<ProfilePage> {
+    caller(&webview)?;
+    if cursor.as_ref().is_some_and(|c| c.len() > 64) {
+        return Err(ipc::CURSOR_STALE);
+    }
+    state.query_profiles(filter, sort, cursor.as_deref(), offset, limit)
+}
+
+/// Sidebar data: counts, clients (folders), tags, templates, saved filters.
+#[tauri::command]
+pub fn get_library<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<Library> {
+    caller(&webview)?;
+    state.library()
+}
+
+#[tauri::command]
+pub fn create_client<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    name: String,
+    colour: Option<String>,
+) -> R<Client> {
+    caller(&webview)?;
+    state.create_client(&name, colour.as_deref())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_client<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    client_id: ClientId,
+    expected_version: i64,
+    name: Option<String>,
+    colour: Option<String>,
+    clear_colour: Option<bool>,
+    archived: Option<bool>,
+) -> R<Client> {
+    caller(&webview)?;
+    state.update_client(
+        &client_id,
+        expected_version,
+        name.as_deref(),
+        colour.as_deref(),
+        clear_colour.unwrap_or(false),
+        archived,
+    )
+}
+
+#[tauri::command]
+pub fn create_tag<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>, name: String) -> R<TagRefOwned> {
+    caller(&webview)?;
+    state.create_tag(&name)
+}
+
+#[tauri::command]
+pub fn rename_tag<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    tag_id: TagId,
+    name: String,
+) -> R<()> {
+    caller(&webview)?;
+    state.rename_tag(&tag_id, &name)
+}
+
+#[tauri::command]
+pub fn delete_tag<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>, tag_id: TagId) -> R<()> {
+    caller(&webview)?;
+    state.delete_tag(&tag_id)
+}
+
+#[tauri::command]
+pub fn save_filter<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    name: String,
+    filter: ProfileFilter,
+    sort: Option<Sort>,
+) -> R<SavedFilter> {
+    caller(&webview)?;
+    state.save_filter(&name, filter, sort)
+}
+
+#[tauri::command]
+pub fn delete_filter<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    filter_id: FilterId,
+) -> R<()> {
+    caller(&webview)?;
+    state.delete_filter(&filter_id)
+}
+
+/// Saves a profile's configuration as a template (never its browser data).
+#[tauri::command]
+pub fn save_template<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    name: String,
+) -> R<Template> {
+    caller(&webview)?;
+    state.save_template_from_profile(&profile_id, &name)
+}
+
+#[tauri::command]
+pub fn delete_template<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    template_id: TemplateId,
+) -> R<()> {
+    caller(&webview)?;
+    state.delete_template(&template_id)
+}
+
+/// New profile with the same configuration and empty browser storage (sign-ins are never copied).
+#[tauri::command]
+pub fn duplicate_profile<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    profile_id: ProfileId,
+    name: String,
+) -> R<ProfileView> {
+    caller(&webview)?;
+    state.duplicate_profile(&profile_id, &name)
+}
+
+/// `profiles.bulk(action, ids)`: per-profile results; reversible actions return an undo token.
+#[tauri::command]
+pub async fn bulk_profiles<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    action: BulkAction,
+    selection: Selection,
+) -> R<BulkResult> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.bulk(action, selection))
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+#[tauri::command]
+pub fn undo_action<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    token: String,
+) -> R<UndoResult> {
+    caller(&webview)?;
+    if token.len() != 32 {
+        return Err(ipc::UNDO_EXPIRED);
+    }
+    state.undo(&token)
+}
+
+/// Permanent deletion from the trash; `confirm` must be "DELETE" and `expected_count` the number confirmed.
+#[tauri::command]
+pub async fn delete_profiles<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    selection: Selection,
+    confirm: String,
+    expected_count: usize,
+) -> R<BulkResult> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.delete_permanently(selection, &confirm, expected_count)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Native file picker for an import (CSV, JSON or a Project Browser export). Returns an opaque reference.
+#[tauri::command]
+pub async fn choose_import_file<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+) -> R<ChosenImport> {
+    caller(&webview)?;
+    let picker = app.clone();
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .add_filter("Profile configuration", &["csv", "json", "zip"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?;
+    let Some(path) = chosen.and_then(|p| p.into_path().ok()) else {
+        return Ok(ChosenImport {
+            file_ref: None,
+            name: None,
+            size: None,
+        });
+    };
+    app.state::<Arc<AppState>>().register_import_file(&path)
+}
+
+/// `imports.preview(file_ref)`: validates every row and plans the import (dry run; nothing is written).
+#[tauri::command]
+pub async fn preview_import<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    file_ref: String,
+    settings: Option<ImportSettings>,
+) -> R<ImportPreview> {
+    caller(&webview)?;
+    if file_ref.len() != 32 {
+        return Err(ipc::UNKNOWN_FILE);
+    }
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.preview_import(&file_ref, settings.unwrap_or_default())
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// `imports.commit(preview_id)`: refused if the file changed since the preview.
+#[tauri::command]
+pub fn commit_import<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    preview_id: ImportJobId,
+) -> R<Started> {
+    caller(&webview)?;
+    state.commit_import(&preview_id)
+}
+
+#[tauri::command]
+pub fn cancel_import<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    job_id: ImportJobId,
+) -> R<()> {
+    caller(&webview)?;
+    state.cancel_import(&job_id)
+}
+
+#[tauri::command]
+pub fn list_imports<Rt: Runtime>(webview: Webview<Rt>, state: S<'_>) -> R<Vec<ImportJob>> {
+    caller(&webview)?;
+    state.list_imports()
+}
+
+/// `exports.configuration(ids)`: configuration only, saved where the user picks in the native dialog.
+#[tauri::command]
+pub async fn export_profiles<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    selection: Selection,
+    format: ExportFormat,
+    include_notes: Option<bool>,
+) -> R<ExportResult> {
+    caller(&webview)?;
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    let prepare = state.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        prepare.prepare_export(selection, format, include_notes.unwrap_or(true))
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)??;
+    let picker = app.clone();
+    let name = prepared.suggested_name.clone();
+    let target = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .set_file_name(name)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?;
+    let Some(path) = target.and_then(|p| p.into_path().ok()) else {
+        return Ok(ExportResult {
+            path: None,
+            exported: 0,
+            notes_withheld: 0,
+        });
+    };
+    state.write_export(&path, &prepared)
 }
 
 /// `profile_id` is typed: a malformed id or path fails inside the IPC layer and this body never runs.

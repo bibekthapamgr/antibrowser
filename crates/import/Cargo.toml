@@ -1,0 +1,24 @@
+[package]
+name = "pb-import"
+version = "0.1.0"
+description = "Safe profile-configuration import and export (CSV, JSON, bundle): limits, validation, archive checks"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pb-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+csv = "1.3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

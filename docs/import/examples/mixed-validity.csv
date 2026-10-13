@@ -1,0 +1,11 @@
+name,client,tags,notes,start_urls,camera,microphone,location,favourite,template
+Shop admin,Client North,ecommerce,,,,,,,
+,Client East,,this row has no name,,,,,,
+Support inbox,Client East,,,ftp://files.example/,,,,,
+Camera test,Client South,,,,sometimes,,,,
+Social,Client North,,Password: hunter2,,,,,,
+Shop admin,Client North,,same name and client as row 2,,,,,,
+"=HYPERLINK(""http://evil.example"",""click"")",Client South,,a formula-looking name stays plain text,,,,,,
+Analytics,,,,,,,,,Missing template
+Long tag,,this-tag-is-much-longer-than-the-forty-characters-allowed,,,,,,,
+Favourite flag,,,,,,,,maybe,

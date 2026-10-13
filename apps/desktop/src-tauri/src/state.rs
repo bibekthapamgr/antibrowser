@@ -84,6 +84,13 @@ pub struct AppState {
     /// Background backups in progress, so a launch request can cancel them and `backup_now` can join them.
     pub(crate) backups_running: Mutex<HashMap<ProfileId, crate::lifecycle::BackupJob>>,
     pub(crate) installing: AtomicBool,
+    /// Undo records of recent bulk actions (milestone 04).
+    pub(crate) undo: Mutex<Vec<crate::manage::UndoEntry>>,
+    /// Files chosen for import in the native dialog, by opaque reference.
+    pub(crate) import_files: Mutex<HashMap<String, crate::transfer::ChosenFile>>,
+    pub(crate) import_previews:
+        Mutex<HashMap<pb_runtime::ImportJobId, crate::transfer::PreviewState>>,
+    pub(crate) imports_running: Mutex<HashMap<pb_runtime::ImportJobId, Arc<AtomicBool>>>,
     pub(crate) poll_count: AtomicU64,
     pub(crate) low_disk_warned: AtomicBool,
     pub reconcile: ReconcileReport,
@@ -104,9 +111,21 @@ pub struct ProfileView {
     pub id: String,
     pub workspace_id: Option<String>,
     pub name: String,
-    pub client_label: Option<String>,
+    pub client_id: Option<String>,
+    pub client_name: Option<String>,
     pub client_colour: Option<String>,
+    pub tags: Vec<pb_storage::TagRef>,
     pub notes: String,
+    pub favourite: bool,
+    pub archived_at: Option<String>,
+    /// Set while the profile is in the trash, with the date it will be deleted permanently.
+    pub trashed_at: Option<String>,
+    pub purge_after: Option<String>,
+    pub template_id: Option<String>,
+    /// Proxy assigned in milestone 05 (placeholder).
+    pub proxy_label: Option<String>,
+    /// Cloud sync arrives in milestone 07: always `local_only` for now.
+    pub sync_status: &'static str,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -160,11 +179,12 @@ pub struct RuntimeStatus {
 #[derive(Default)]
 pub struct ProfileChanges<'a> {
     pub name: Option<&'a str>,
-    pub client_label: Option<&'a str>,
-    pub clear_client_label: bool,
+    pub client_id: Option<&'a pb_runtime::ClientId>,
+    pub clear_client: bool,
     pub notes: Option<&'a str>,
-    pub client_colour: Option<&'a str>,
-    pub clear_client_colour: bool,
+    pub favourite: Option<bool>,
+    /// Replaces the tags (names; missing tags are created).
+    pub tags: Option<&'a [String]>,
     pub start_urls: Option<&'a [String]>,
     pub clear_download_dir: bool,
     pub camera: Option<&'a str>,
@@ -207,6 +227,9 @@ impl AppState {
             let _ = store.record_timing("store_open_ms", t0.elapsed().as_secs_f64() * 1000.0);
             let _ = store.ensure_device(platform(), std::env::consts::ARCH);
             tidy_profiles(&root, &backups);
+            // Deletions and imports interrupted by a crash: finish moving folders out, mark imports resumable.
+            let _ = root.purge_retired();
+            let _ = store.mark_interrupted_imports();
             let trusted = trusted_executables(store, &runtime, &paths.runtimes);
             reconcile = supervisor.reconcile_on_startup(store, &root, &trusted);
         }
@@ -234,6 +257,10 @@ impl AppState {
             launch_lock: Mutex::new(()),
             backups_running: Mutex::new(HashMap::new()),
             installing: AtomicBool::new(false),
+            undo: Mutex::new(Vec::new()),
+            import_files: Mutex::new(HashMap::new()),
+            import_previews: Mutex::new(HashMap::new()),
+            imports_running: Mutex::new(HashMap::new()),
             poll_count: AtomicU64::new(0),
             low_disk_warned: AtomicBool::new(false),
             reconcile,
@@ -266,7 +293,10 @@ impl AppState {
         }
     }
 
-    fn active_workspace(&self, store: &LocalStore) -> Result<Option<WorkspaceId>, IpcError> {
+    pub(crate) fn active_workspace(
+        &self,
+        store: &LocalStore,
+    ) -> Result<Option<WorkspaceId>, IpcError> {
         let value = store.get_setting(settings::ACTIVE_WORKSPACE)?.value;
         let Some(id) = value.as_str().and_then(|s| WorkspaceId::parse(s).ok()) else {
             return Ok(None);
@@ -285,9 +315,18 @@ impl AppState {
             id: p.id.to_string(),
             workspace_id: p.workspace_id.map(|w| w.to_string()),
             name: p.name,
-            client_label: p.client_label,
+            client_id: p.client_id.map(|c| c.to_string()),
+            client_name: p.client_name,
             client_colour: p.client_colour,
+            tags: p.tags,
             notes: p.notes,
+            favourite: p.favourite,
+            archived_at: p.archived_at,
+            trashed_at: p.trashed_at,
+            purge_after: p.purge_after,
+            template_id: p.template_id.map(|t| t.to_string()),
+            proxy_label: p.proxy_label,
+            sync_status: "local_only",
             version: p.version,
             created_at: p.created_at,
             updated_at: p.updated_at,
@@ -395,6 +434,7 @@ impl AppState {
     }
 
     // ------------------------------------------------------------------------- profiles
+    /// Active profiles matching a search (first page). The profile table uses `query_profiles`.
     pub fn list_profiles(
         &self,
         query: Option<&str>,
@@ -413,26 +453,29 @@ impl AppState {
         Ok(rows.into_iter().map(|p| self.view(p)).collect())
     }
 
+    /// Basic creation needs only a name; a client (by name, created if new) and a template are optional.
+    /// Browser storage always starts empty.
     pub fn create_profile(
         &self,
         name: &str,
-        client_label: Option<&str>,
+        client: Option<&str>,
+        template: Option<&pb_runtime::TemplateId>,
     ) -> Result<ProfileView, IpcError> {
         let name = ipc::clean_text(name, limits::LABEL_CHARS, ipc::INVALID_LABEL)?;
-        let client = client_label
+        let client = client
             .filter(|c| !c.trim().is_empty())
             .map(|c| ipc::clean_text(c, limits::LABEL_CHARS, ipc::INVALID_LABEL))
             .transpose()?;
         let store = self.store()?;
         let ws = self.active_workspace(&store)?.ok_or(ipc::NO_WORKSPACE)?;
+        let client_id = client.map(|c| store.ensure_client(&ws, &c)).transpose()?;
         let id = ProfileId::generate().map_err(|_| ipc::INTERNAL)?;
-        let p = store.insert_profile(NewProfile {
-            id: &id,
-            workspace_id: Some(&ws),
-            name: &name,
-            client_label: client.as_deref(),
-            folder_label: None,
-        })?;
+        let mut new = NewProfile::basic(id, Some(ws.clone()), &name, client_id);
+        if let Some(t) = template {
+            self.apply_template(&store, &ws, t, &mut new)?;
+        }
+        let p = store.insert_profile(new)?;
+        let _ = store.audit(Some(&p.id), "create", "ok", None, None);
         Ok(self.view(p))
     }
 
@@ -446,27 +489,23 @@ impl AppState {
             .name
             .map(|n| ipc::clean_text(n, limits::LABEL_CHARS, ipc::INVALID_LABEL))
             .transpose()?;
-        let client = c
-            .client_label
-            .map(|v| ipc::clean_text(v, limits::LABEL_CHARS, ipc::INVALID_LABEL))
-            .transpose()?;
         let notes = c.notes.map(ipc::clean_notes).transpose()?;
-        let colour = c
-            .client_colour
-            .map(|v| {
-                let ok = v.len() == 7
-                    && v.starts_with('#')
-                    && v[1..]
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-                ok.then(|| v.to_owned()).ok_or(ipc::INVALID_COLOUR)
-            })
-            .transpose()?;
         if let Some(urls) = c.start_urls
             && (urls.len() > pb_runtime::MAX_START_URLS || !urls.iter().all(|u| valid_start_url(u)))
         {
             return Err(pb_runtime::LaunchError::BadStartUrl.into());
         }
+        let tag_names = c
+            .tags
+            .map(|t| {
+                if t.len() > 20 {
+                    return Err(ipc::INVALID_TAG);
+                }
+                t.iter()
+                    .map(|n| ipc::clean_text(n, 40, ipc::INVALID_TAG))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         let perm = |v: Option<&str>| {
             v.map(|s| PermissionDefault::parse(s).ok_or(ipc::INVALID_PERMISSION))
                 .transpose()
@@ -474,26 +513,42 @@ impl AppState {
         let (camera, microphone, location) =
             (perm(c.camera)?, perm(c.microphone)?, perm(c.location)?);
         let store = self.store()?;
+        let current = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
+        if current.trashed_at.is_some() {
+            return Err(ipc::PROFILE_IN_TRASH);
+        }
+        let ws = current.workspace_id.clone().ok_or(ipc::NO_WORKSPACE)?;
+        if let Some(client) = c.client_id {
+            let found = store.get_client(client)?.ok_or(ipc::UNKNOWN_CLIENT)?;
+            if found.workspace_id != ws {
+                return Err(ipc::UNKNOWN_CLIENT);
+            }
+        }
+        let tag_ids = tag_names
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|n| store.ensure_tag(&ws, n).map(|t| t.id))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         let p = store.update_profile(
             profile_id,
             ProfileUpdate {
                 name: name.as_deref(),
-                client_label: if c.clear_client_label {
+                client_id: if c.clear_client {
                     Some(None)
                 } else {
-                    client.as_deref().map(Some)
+                    c.client_id.map(Some)
                 },
                 notes: notes.as_deref(),
-                client_colour: if c.clear_client_colour {
-                    Some(None)
-                } else {
-                    colour.as_deref().map(Some)
-                },
                 start_urls: c.start_urls,
                 download_dir: c.clear_download_dir.then_some(None),
                 camera,
                 microphone,
                 location,
+                favourite: c.favourite,
+                tags: tag_ids.as_deref(),
             },
             expected_version,
         )?;

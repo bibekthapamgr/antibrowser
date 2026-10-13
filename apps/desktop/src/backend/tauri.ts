@@ -19,15 +19,57 @@ export function tauriBackend(): Backend {
       },
     },
     profiles: {
-      list: (query) => call('list_profiles', query ? { query, limit: 10000 } : { limit: 10000 }),
-      create: (name, clientLabel) => call('create_profile', clientLabel ? { name, clientLabel } : { name }),
+      query: (q) => call('query_profiles', q),
+      create: (name, client, templateId) =>
+        call('create_profile', {
+          name,
+          ...(client ? { client } : {}),
+          ...(templateId ? { templateId } : {}),
+        }),
       update: (profileId, c) => call('update_profile', { profileId, ...c }),
+      duplicate: (profileId, name) => call('duplicate_profile', { profileId, name }),
+      bulk: (action, selection) => call('bulk_profiles', { action, selection }),
+      undo: (token) => call('undo_action', { token }),
+      deletePermanently: (selection, expectedCount) =>
+        call('delete_profiles', { selection, confirm: 'DELETE', expectedCount }),
       launch: (profileId) => call('launch_profile', { profileId }),
       stop: (profileId, force) => call('stop_profile', force ? { profileId, force } : { profileId }),
       closeAll: (force) => call('close_all_profiles', force ? { force } : {}),
       status: (profileId) => call('get_profile_status', { profileId }),
       recover: (profileId, action) => call('recover_profile', { profileId, action }),
       selectDownloadDirectory: (profileId) => call('select_profile_download_directory', { profileId }),
+    },
+    library: {
+      library: () => call('get_library', {}),
+      createClient: (name, colour) => call('create_client', colour ? { name, colour } : { name }),
+      updateClient: (clientId, expectedVersion, c) =>
+        call('update_client', { clientId, expectedVersion, ...c }),
+      createTag: (name) => call('create_tag', { name }),
+      renameTag: async (tagId, name) => {
+        await call('rename_tag', { tagId, name });
+      },
+      deleteTag: async (tagId) => {
+        await call('delete_tag', { tagId });
+      },
+      saveFilter: (name, filter, sort) => call('save_filter', { name, filter, sort }),
+      deleteFilter: async (filterId) => {
+        await call('delete_filter', { filterId });
+      },
+      saveTemplate: (profileId, name) => call('save_template', { profileId, name }),
+      deleteTemplate: async (templateId) => {
+        await call('delete_template', { templateId });
+      },
+    },
+    transfer: {
+      chooseFile: () => call('choose_import_file', {}),
+      preview: (fileRef, settings) => call('preview_import', { fileRef, settings }),
+      commit: (previewId) => call('commit_import', { previewId }),
+      cancel: async (jobId) => {
+        await call('cancel_import', { jobId });
+      },
+      jobs: () => call('list_imports', {}),
+      export: (selection, format, includeNotes) =>
+        call('export_profiles', { selection, format, includeNotes }),
     },
     system: {
       runtimeStatus: () => call('get_runtime_status', {}),

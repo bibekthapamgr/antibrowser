@@ -1,0 +1,8 @@
+# project-browser profiles v1
+name,client,tags,notes,start_urls,camera,microphone,location,favourite,template
+Shop admin,Client North,ecommerce;vip,Call the client on Mondays,https://shop.example/admin,block,block,ask,true,
+Ads QA,Client South,ads;qa,,https://ads.example/ https://analytics.example/,ask,ask,block,false,
+Support desk,Client East,support,"Two lines of notes:
+the second line",,ask,ask,ask,,
+Café Zürich,Client Süd,ecommerce,Unicode names are fine,,,,,,
+日本ストア,Client Japan,,,https://shop.example.jp/,,,,yes,

@@ -234,7 +234,7 @@ fn workspace_with_profile(f: &Fixture) -> String {
     let p = invoke(
         f,
         "create_profile",
-        json!({ "name": "Known", "clientLabel": "Client North" }),
+        json!({ "name": "Known", "client": "Client North" }),
     )
     .unwrap_or_else(|e| panic!("{e}"));
     p["id"].as_str().unwrap_or_default().to_owned()
@@ -284,13 +284,13 @@ fn keyboardless_flow_first_run_workspace_profile_and_profile_settings() {
     let updated = invoke(
         &f,
         "update_profile",
-        json!({ "profileId": id, "expectedVersion": 1, "name": "Renamed", "clearClientLabel": true, "notes": "line1\nline2" }),
+        json!({ "profileId": id, "expectedVersion": 1, "name": "Renamed", "clearClient": true, "notes": "line1\nline2" }),
     )
     .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         (
             updated["name"].clone(),
-            updated["client_label"].clone(),
+            updated["client_name"].clone(),
             updated["version"].clone()
         ),
         (json!("Renamed"), Value::Null, json!(2))
@@ -390,7 +390,7 @@ fn oversized_requests_are_rejected_without_side_effects() {
         ("create_profile", json!({ "name": huge }), "INVALID_LABEL"),
         (
             "create_profile",
-            json!({ "name": "ok", "clientLabel": huge }),
+            json!({ "name": "ok", "client": huge }),
             "INVALID_LABEL",
         ),
         ("list_profiles", json!({ "query": huge }), "QUERY_TOO_LONG"),
@@ -910,8 +910,15 @@ fn profile_settings_are_validated_and_written_into_the_browser_profile() {
     let f = fixture();
     let known = workspace_with_profile(&f);
     let bad = [
-        (json!({ "clientColour": "red" }), "INVALID_COLOUR"),
-        (json!({ "clientColour": "#GGGGGG" }), "INVALID_COLOUR"),
+        (json!({ "tags": ["x".repeat(41)] }), "INVALID_TAG"),
+        (
+            json!({ "tags": (0..21).map(|i| format!("t{i}")).collect::<Vec<_>>() }),
+            "INVALID_TAG",
+        ),
+        (
+            json!({ "clientId": "cli_01J9ZSEED0A010000000000000" }),
+            "UNKNOWN_CLIENT",
+        ),
         (
             json!({ "startUrls": ["file:///etc/passwd"] }),
             "BAD_START_URL",
@@ -939,7 +946,7 @@ fn profile_settings_are_validated_and_written_into_the_browser_profile() {
     let updated = invoke(
         &f,
         "update_profile",
-        json!({ "profileId": known, "expectedVersion": 1, "clientColour": "#7c3aed",
+        json!({ "profileId": known, "expectedVersion": 1, "tags": ["Ads", "VIP"],
                 "startUrls": ["https://shop.example/admin", "https://mail.example/"],
                 "camera": "block", "microphone": "allow", "location": "ask" }),
     )
@@ -1422,4 +1429,854 @@ fn tampered_downloads_and_unsigned_manifests_are_refused() {
         .as_deref(),
         Some("RUNTIME_UNAVAILABLE")
     );
+}
+
+// ---------------------------------------------------------------------------------------------- milestone 04
+
+fn page(f: &Fixture, body: Value) -> Value {
+    invoke(f, "query_profiles", body).unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn names(v: &Value) -> Vec<String> {
+    v["rows"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|r| r["name"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn create(f: &Fixture, name: &str, client: Option<&str>) -> String {
+    let mut body = json!({ "name": name });
+    if let Some(c) = client {
+        body["client"] = json!(c);
+    }
+    invoke(f, "create_profile", body).unwrap_or_else(|e| panic!("{e}"))["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[test]
+fn profile_table_pages_filters_sorts_and_rejects_stale_cursors() {
+    let f = fixture();
+    invoke(&f, "create_workspace", json!({ "name": "Agency" })).unwrap_or_else(|e| panic!("{e}"));
+    for i in 0..30 {
+        create(
+            &f,
+            &format!("Profile {i:02}"),
+            Some(if i % 2 == 0 { "North" } else { "South" }),
+        );
+    }
+    create(&f, "Same name", None);
+    create(&f, "Same name", None); // names need not be unique
+    let first = page(&f, json!({ "limit": 10 }));
+    assert_eq!(first["total"], json!(32));
+    assert_eq!(names(&first)[0], "Profile 00");
+    let cursor = first["next_cursor"].as_str().unwrap_or_default().to_owned();
+    let second = page(&f, json!({ "limit": 10, "cursor": cursor }));
+    assert_eq!(names(&second)[0], "Profile 10");
+    // The virtualized table jumps straight to the page in view.
+    let jumped = page(&f, json!({ "limit": 10, "offset": 25 }));
+    assert_eq!(names(&jumped)[0], "Profile 25");
+    assert_eq!(jumped["total"], json!(32));
+    assert_eq!(page(&f, json!({ "offset": 9000 }))["rows"], json!([]));
+    // A cursor belongs to its filter.
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "query_profiles",
+            json!({ "cursor": cursor, "filter": { "text": "north" } })
+        ))
+        .as_deref(),
+        Some("CURSOR_STALE")
+    );
+    let lib = invoke(&f, "get_library", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    let north = lib["clients"]
+        .as_array()
+        .and_then(|c| c.iter().find(|c| c["name"] == "North"))
+        .map(|c| c["id"].clone())
+        .unwrap_or_default();
+    assert_eq!(lib["counts"]["active"], json!(32));
+    assert_eq!(lib["counts"]["without_client"], json!(2));
+    let by_client = page(
+        &f,
+        json!({ "filter": { "client": { "kind": "ids", "ids": [north] } }, "limit": 500 }),
+    );
+    assert_eq!(by_client["total"], json!(15));
+    let by_text = page(&f, json!({ "filter": { "text": "SOUTH" } }));
+    assert_eq!(
+        by_text["total"],
+        json!(15),
+        "client names are searchable, case-insensitively"
+    );
+    let desc = page(
+        &f,
+        json!({ "sort": { "key": "name", "descending": true }, "limit": 1 }),
+    );
+    assert_eq!(names(&desc), ["Same name"]);
+    // Unknown filter fields and oversized text are refused before any query runs.
+    assert!(invoke(&f, "query_profiles", json!({ "filter": { "sql": "1=1" } })).is_err());
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "query_profiles",
+            json!({ "filter": { "text": "x".repeat(201) } })
+        ))
+        .as_deref(),
+        Some("INVALID_FILTER")
+    );
+}
+
+#[test]
+fn bulk_actions_report_each_profile_refuse_running_ones_and_undo() {
+    let f = fixture();
+    let running = workspace_with_profile(&f);
+    let idle = create(&f, "Idle", Some("Client North"));
+    let op = invoke(&f, "launch_profile", json!({ "profileId": running }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let ghost = "prf_01J9ZSEED0A010000000000000";
+
+    let r = invoke(
+        &f,
+        "bulk_profiles",
+        json!({ "action": { "action": "trash" }, "selection": { "kind": "ids", "ids": [running, idle, ghost] } }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        (r["requested"].clone(), r["changed"].clone()),
+        (json!(3), json!(1))
+    );
+    let failed: Vec<(String, String)> = r["failed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|x| {
+            (
+                x["id"].as_str().unwrap_or_default().to_owned(),
+                x["code"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert!(
+        failed.contains(&(running.clone(), "PROFILE_RUNNING".into())),
+        "{failed:?}"
+    );
+    assert!(failed.contains(&(ghost.to_owned(), "UNKNOWN_PROFILE".into())));
+    let trash = page(&f, json!({ "filter": { "view": "trash" } }));
+    assert_eq!(names(&trash), ["Idle"]);
+    assert!(trash["rows"][0]["purge_after"].is_string());
+    assert_eq!(
+        code(&invoke(&f, "launch_profile", json!({ "profileId": idle }))).as_deref(),
+        Some("PROFILE_IN_TRASH")
+    );
+
+    // Undo restores exactly what changed.
+    let undone = invoke(&f, "undo_action", json!({ "token": r["undo_token"] }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(undone["restored"], json!(1));
+    assert_eq!(
+        page(&f, json!({ "filter": { "view": "trash" } }))["total"],
+        json!(0)
+    );
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "undo_action",
+            json!({ "token": r["undo_token"] })
+        ))
+        .as_deref(),
+        Some("UNDO_EXPIRED"),
+        "one undo per action"
+    );
+
+    // "Select all matching": the count the user saw must still be true.
+    let all = json!({ "kind": "filter", "filter": {}, "expected_total": 5 });
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "bulk_profiles",
+            json!({ "action": { "action": "favourite", "value": true }, "selection": all })
+        ))
+        .as_deref(),
+        Some("SELECTION_CHANGED")
+    );
+    let all = json!({ "kind": "filter", "filter": {}, "expected_total": 2 });
+    let tagged = invoke(
+        &f,
+        "bulk_profiles",
+        json!({ "action": { "action": "add_tag", "tag_name": "VIP" }, "selection": all }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(tagged["changed"], json!(2));
+    let rows = page(&f, json!({}));
+    assert!(
+        rows["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|r| r["tags"][0]["name"] == "VIP")
+    );
+    // Moving to a client of the same workspace; archiving hides from the active view.
+    let lib = invoke(&f, "get_library", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    let client = lib["clients"][0]["id"].clone();
+    let moved = invoke(&f, "bulk_profiles", json!({ "action": { "action": "move", "client_id": client }, "selection": { "kind": "ids", "ids": [running] } }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(moved["unchanged"], json!(1), "already in that client");
+    invoke(
+        &f,
+        "bulk_profiles",
+        json!({ "action": { "action": "archive" }, "selection": { "kind": "ids", "ids": [idle] } }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        names(&page(&f, json!({ "filter": { "view": "archived" } }))),
+        ["Idle"]
+    );
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "bulk_profiles",
+            json!({ "action": { "action": "trash" }, "selection": { "kind": "ids", "ids": [] } })
+        ))
+        .as_deref(),
+        Some("NOTHING_SELECTED")
+    );
+}
+
+#[test]
+fn permanent_deletion_needs_confirmation_the_trash_and_no_live_process() {
+    let f = fixture();
+    let _keep = workspace_with_profile(&f);
+    let doomed = create(&f, "Doomed", None);
+    let foreign = create(&f, "Used elsewhere", None);
+    for id in [&doomed, &foreign] {
+        let op = invoke(&f, "launch_profile", json!({ "profileId": id }))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+        let stop = invoke(&f, "stop_profile", json!({ "profileId": id }))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(wait_op(&f, &stop), OpStatus::Succeeded);
+    }
+    let pid = |id: &str| pb_runtime::ProfileId::parse(id).unwrap_or_else(|e| panic!("{e}"));
+    let dirs = |id: &str| f.state.root.dirs(&pid(id));
+    let backup = f.data().join("backups").join(&doomed).join("last-good");
+    std::fs::create_dir_all(&backup).unwrap_or_else(|e| panic!("{e}"));
+    let sel = |v: &[&String]| json!({ "kind": "ids", "ids": v });
+
+    // Only from the trash.
+    let r = invoke(
+        &f,
+        "delete_profiles",
+        json!({ "selection": sel(&[&doomed]), "confirm": "DELETE", "expectedCount": 1 }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        (r["changed"].clone(), r["failed"][0]["code"].clone()),
+        (json!(0), json!("NOT_IN_TRASH"))
+    );
+    invoke(
+        &f,
+        "bulk_profiles",
+        json!({ "action": { "action": "trash" }, "selection": sel(&[&doomed, &foreign]) }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    // Exact confirmation of exactly the selected profiles.
+    for (confirm, count) in [("delete", 2), ("DELETE", 1), ("", 2)] {
+        assert_eq!(
+            code(&invoke(&f, "delete_profiles", json!({ "selection": sel(&[&doomed, &foreign]), "confirm": confirm, "expectedCount": count }))).as_deref(),
+            Some("CONFIRMATION_REQUIRED")
+        );
+    }
+    // Another browser program is still writing into the second profile's folder.
+    f.procs.add_full(
+        9999,
+        None,
+        1,
+        "/usr/bin/chromium",
+        vec![format!(
+            "--user-data-dir={}",
+            dirs(&foreign).user_data.display()
+        )],
+    );
+    let r = invoke(
+        &f,
+        "delete_profiles",
+        json!({ "selection": sel(&[&doomed, &foreign]), "confirm": "DELETE", "expectedCount": 2 }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(r["changed"], json!(1));
+    assert_eq!(
+        (r["failed"][0]["id"].clone(), r["failed"][0]["code"].clone()),
+        (json!(foreign), json!("PROFILE_RUNNING"))
+    );
+    assert!(!dirs(&doomed).root.exists(), "folder removed");
+    assert!(!backup.exists(), "backups removed");
+    assert!(
+        dirs(&foreign).root.exists(),
+        "a folder in use is never removed"
+    );
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "get_profile_status",
+            json!({ "profileId": doomed })
+        ))
+        .as_deref(),
+        Some("UNKNOWN_PROFILE")
+    );
+    assert_eq!(
+        page(&f, json!({ "filter": { "view": "trash" } }))["total"],
+        json!(1)
+    );
+    let leftovers = std::fs::read_dir(f.data().join("profiles"))
+        .map(|d| {
+            d.filter_map(Result::ok)
+                .filter(|e| e.file_name().to_string_lossy().starts_with(".deleting"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0);
+
+    // Retention: once the process is gone and the date has passed, the purge removes it.
+    f.procs.remove(9999);
+    {
+        let conn =
+            rusqlite::Connection::open(f.data().join("local.db")).unwrap_or_else(|e| panic!("{e}"));
+        conn.execute(
+            "update trash_entries set purge_after = '2000-01-01T00:00:00.000Z'",
+            [],
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    }
+    assert_eq!(f.state.purge_expired_trash(), 1);
+    assert!(!dirs(&foreign).root.exists());
+    let audit = f
+        .state
+        .store()
+        .unwrap_or_else(|e| panic!("{e:?}"))
+        .list_audit(None, 50)
+        .unwrap_or_default();
+    assert!(audit.iter().any(|a| a.action == "delete"));
+    assert!(audit.iter().any(|a| a.action == "purge"));
+}
+
+#[test]
+fn templates_and_duplicates_copy_configuration_never_browser_data() {
+    let f = fixture();
+    let src = workspace_with_profile(&f);
+    invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": src, "expectedVersion": 1, "tags": ["Ads"], "startUrls": ["https://shop.example/"],
+                "camera": "block", "notes": "only for this account" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    // The source profile has browser data (a signed-in session).
+    let pid = |id: &str| pb_runtime::ProfileId::parse(id).unwrap_or_else(|e| panic!("{e}"));
+    let src_dirs = f
+        .state
+        .root
+        .ensure(&pid(&src))
+        .unwrap_or_else(|e| panic!("{e}"));
+    std::fs::create_dir_all(src_dirs.user_data.join("Default")).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::write(
+        src_dirs.user_data.join("Default").join("Cookies"),
+        b"session",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let t = invoke(
+        &f,
+        "save_template",
+        json!({ "profileId": src, "name": "Shop setup" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(t["config"]["camera"], json!("block"));
+    assert_eq!(
+        t["config"]["notes"],
+        json!(""),
+        "notes are per account, not template material"
+    );
+    let from_t = invoke(
+        &f,
+        "create_profile",
+        json!({ "name": "From template", "templateId": t["id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let dup = invoke(
+        &f,
+        "duplicate_profile",
+        json!({ "profileId": src, "name": "Copy" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    for p in [&from_t, &dup] {
+        assert_eq!(p["start_urls"], json!(["https://shop.example/"]));
+        assert_eq!(p["permissions"]["camera"], json!("block"));
+        assert_eq!(p["tags"][0]["name"], json!("Ads"));
+        let id = p["id"].as_str().unwrap_or_default();
+        let ud = f.state.root.dirs(&pid(id)).user_data;
+        assert!(
+            !ud.join("Default").join("Cookies").exists(),
+            "storage starts empty"
+        );
+    }
+    assert_eq!(dup["client_name"], json!("Client North"));
+    assert_eq!(dup["notes"], json!(""));
+    invoke(&f, "delete_template", json!({ "templateId": t["id"] }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "create_profile",
+            json!({ "name": "x", "templateId": t["id"] })
+        ))
+        .as_deref(),
+        Some("UNKNOWN_TEMPLATE")
+    );
+}
+
+fn write_file(f: &Fixture, name: &str, content: &[u8]) -> PathBuf {
+    let p = f.tmp.path().join(name);
+    std::fs::write(&p, content).unwrap_or_else(|e| panic!("{e}"));
+    p
+}
+
+fn file_ref(f: &Fixture, path: &Path) -> String {
+    f.state
+        .register_import_file(path)
+        .unwrap_or_else(|e| panic!("{e:?}"))
+        .file_ref
+        .unwrap_or_default()
+}
+
+fn job(f: &Fixture, id: &Value) -> Value {
+    invoke(f, "list_imports", json!({}))
+        .unwrap_or_else(|e| panic!("{e}"))
+        .as_array()
+        .and_then(|jobs| jobs.iter().find(|j| &j["id"] == id).cloned())
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn import_preview_binds_the_file_reports_rows_and_never_duplicates_on_retry() {
+    let f = fixture();
+    let _existing = workspace_with_profile(&f); // "Known" of "Client North"
+    let long_note = "n".repeat(2001);
+    let csv = [
+        "name,client,tags,notes,start_urls,camera",
+        "Known,Client North,,,,",
+        "École 😀,Ünïcode,Ads;VIP,,https://shop.example/,block",
+        ",Missing name,,,,",
+        "Bad url,,,,javascript:alert(1),",
+        "'=SUM(1+1),,,,,",
+        &format!("Long note,,,{long_note},,"),
+        "Twice,North,,,,",
+        "Twice,North,,,,",
+    ]
+    .join("\n")
+        + "\n";
+    let path = write_file(&f, "clients.csv", csv.as_bytes());
+    let fr = file_ref(&f, &path);
+    let preview =
+        invoke(&f, "preview_import", json!({ "fileRef": fr })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(preview["format"], json!("csv"));
+    assert_eq!(
+        (
+            preview["total"].clone(),
+            preview["invalid"].clone(),
+            preview["will_create"].clone(),
+            preview["will_skip"].clone()
+        ),
+        (json!(8), json!(3), json!(3), json!(2)),
+        "{preview}"
+    );
+    let errors: Vec<(u64, String)> = preview["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            (
+                e["row"].as_u64().unwrap_or(0),
+                e["code"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert!(errors.contains(&(4, "required".into())), "{errors:?}");
+    assert!(errors.contains(&(5, "invalid_url".into())));
+    assert!(errors.contains(&(7, "too_long".into())));
+    assert_eq!(preview["new_clients"], json!(["Ünïcode", "North"]));
+    // Nothing was written by the preview (dry run).
+    assert_eq!(page(&f, json!({}))["total"], json!(1));
+
+    // The file changes after the preview: the commit is refused.
+    std::fs::write(&path, format!("{csv}Extra,,,,,\n")).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "commit_import",
+            json!({ "previewId": preview["preview_id"] })
+        ))
+        .as_deref(),
+        Some("SOURCE_CHANGED")
+    );
+    std::fs::write(&path, &csv).unwrap_or_else(|e| panic!("{e}"));
+    let op = invoke(
+        &f,
+        "commit_import",
+        json!({ "previewId": preview["preview_id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let j = job(&f, &preview["preview_id"]);
+    assert_eq!(
+        (
+            j["status"].clone(),
+            j["succeeded"].clone(),
+            j["failed"].clone(),
+            j["skipped"].clone()
+        ),
+        (json!("completed_with_errors"), json!(3), json!(3), json!(2)),
+        "{j}"
+    );
+    let all = page(&f, json!({ "limit": 50 }));
+    assert_eq!(all["total"], json!(4));
+    assert!(
+        names(&all).contains(&"=SUM(1+1)".to_owned()),
+        "formula text kept as text"
+    );
+    let ecole = all["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|r| r["name"] == "École 😀")
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        (
+            ecole["client_name"].clone(),
+            ecole["permissions"]["camera"].clone()
+        ),
+        (json!("Ünïcode"), json!("block"))
+    );
+    assert_eq!(ecole["tags"].as_array().map(Vec::len), Some(2));
+
+    // Retry of the same file: every row already imported is recognised, nothing is duplicated.
+    let op = invoke(
+        &f,
+        "commit_import",
+        json!({ "previewId": preview["preview_id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    assert_eq!(page(&f, json!({}))["total"], json!(4));
+    let again =
+        invoke(&f, "preview_import", json!({ "fileRef": fr })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again["already_imported"], json!(3));
+
+    // Duplicate policy "update" changes the existing profile instead of skipping it.
+    let doc = json!({
+        "format": "project-browser.profiles", "schema_version": 1,
+        "profiles": [{ "name": "known", "client": "client north", "tags": ["Updated"], "location": "allow" }]
+    });
+    let upd = write_file(&f, "update.json", doc.to_string().as_bytes());
+    let pv = invoke(
+        &f,
+        "preview_import",
+        json!({ "fileRef": file_ref(&f, &upd), "settings": { "duplicates": "update" } }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(pv["will_update"], json!(1), "{pv}");
+    let op = invoke(
+        &f,
+        "commit_import",
+        json!({ "previewId": pv["preview_id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let known = page(&f, json!({ "filter": { "text": "known" } }));
+    assert_eq!(known["rows"][0]["permissions"]["location"], json!("allow"));
+    assert_eq!(known["total"], json!(1));
+}
+
+#[test]
+fn ten_thousand_row_import_can_be_cancelled_and_resumed_without_duplicates() {
+    let f = fixture();
+    invoke(&f, "create_workspace", json!({ "name": "Agency" })).unwrap_or_else(|e| panic!("{e}"));
+    let mut csv = String::from("name,client,tags\n");
+    for i in 0..10_000 {
+        csv.push_str(&format!(
+            "Account {i},Client {},Batch;Tag {}\n",
+            i % 200,
+            i % 7
+        ));
+    }
+    let path = write_file(&f, "big.csv", csv.as_bytes());
+    let started = std::time::Instant::now();
+    let preview = invoke(
+        &f,
+        "preview_import",
+        json!({ "fileRef": file_ref(&f, &path) }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(preview["will_create"], json!(10_000));
+    assert_eq!(
+        preview["rows"].as_array().map(Vec::len),
+        Some(500),
+        "the preview shows a bounded number of rows"
+    );
+    let op = invoke(
+        &f,
+        "commit_import",
+        json!({ "previewId": preview["preview_id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let job_id = pb_runtime::ImportJobId::parse(preview["preview_id"].as_str().unwrap_or_default())
+        .unwrap_or_else(|e| panic!("{e}"));
+    // Cancel once some rows are in.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while job(&f, &preview["preview_id"])["succeeded"]
+        .as_u64()
+        .unwrap_or(0)
+        == 0
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = f.state.cancel_import(&job_id);
+    assert_eq!(
+        wait_op(&f, &op),
+        OpStatus::Failed,
+        "a cancelled import ends as cancelled"
+    );
+    let partial = job(&f, &preview["preview_id"]);
+    assert_eq!(partial["status"], json!("cancelled"));
+    let imported = partial["succeeded"].as_u64().unwrap_or(0);
+    assert!(imported > 0 && imported < 10_000, "{partial}");
+    assert_eq!(page(&f, json!({}))["total"], json!(imported));
+
+    // Resume: only the remaining rows are created.
+    let op = invoke(
+        &f,
+        "commit_import",
+        json!({ "previewId": preview["preview_id"] }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let done = job(&f, &preview["preview_id"]);
+    assert_eq!(done["status"], json!("completed"));
+    assert_eq!(
+        done["succeeded"].as_u64().unwrap_or(0) + done["skipped"].as_u64().unwrap_or(0),
+        10_000
+    );
+    assert_eq!(page(&f, json!({}))["total"], json!(10_000), "no duplicates");
+    let lib = invoke(&f, "get_library", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(lib["clients"].as_array().map(Vec::len), Some(200));
+    assert_eq!(lib["tags"].as_array().map(Vec::len), Some(8));
+    let peak = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find(|l| l.starts_with("VmHWM"))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "VmHWM n/a".into());
+    eprintln!(
+        "10,000-row preview + import + resume: {:.1} s ({} build); process peak memory {}",
+        started.elapsed().as_secs_f64(),
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        peak.split_whitespace()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+}
+
+#[test]
+fn unsafe_or_unsupported_import_files_are_reported_not_imported() {
+    let f = fixture();
+    invoke(&f, "create_workspace", json!({ "name": "Agency" })).unwrap_or_else(|e| panic!("{e}"));
+    let zip_with = |entries: &[(&str, &[u8])]| -> Vec<u8> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut buf);
+            for (n, d) in entries {
+                w.start_file(*n, zip::write::SimpleFileOptions::default())
+                    .unwrap_or_else(|e| panic!("{e}"));
+                std::io::Write::write_all(&mut w, d).unwrap_or_else(|e| panic!("{e}"));
+            }
+            w.finish().unwrap_or_else(|e| panic!("{e}"));
+        }
+        buf.into_inner()
+    };
+    let manifest =
+        json!({ "format": "project-browser.export", "schema_version": 1, "cookies": true })
+            .to_string();
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "traversal.zip",
+            zip_with(&[("../../evil.json", b"{}")]),
+            "UNSAFE_ARCHIVE",
+        ),
+        (
+            "session.zip",
+            zip_with(&[
+                ("manifest.json", manifest.as_bytes()),
+                ("profiles.json", b"{}"),
+            ]),
+            "SESSION_DATA_NOT_SUPPORTED",
+        ),
+        (
+            "schema.json",
+            br#"{"format":"project-browser.profiles","schema_version":9,"profiles":[]}"#.to_vec(),
+            "UNSUPPORTED_SCHEMA",
+        ),
+        ("cols.csv", b"name,cookie\nA,x\n".to_vec(), "BAD_COLUMNS"),
+        (
+            "binary.csv",
+            b"name\n\xff\xfe\x00\n".to_vec(),
+            "FILE_NOT_UTF8",
+        ),
+    ];
+    for (name, bytes, expected) in cases {
+        let path = write_file(&f, name, &bytes);
+        let pv = invoke(
+            &f,
+            "preview_import",
+            json!({ "fileRef": file_ref(&f, &path) }),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(pv["file_error"]["code"], json!(expected), "{name}: {pv}");
+        assert!(pv["preview_id"].is_null(), "nothing can be committed");
+    }
+    let big = write_file(&f, "big.csv", &vec![b'a'; 21 * 1024 * 1024]);
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "preview_import",
+            json!({ "fileRef": file_ref(&f, &big) })
+        ))
+        .as_deref(),
+        Some("FILE_TOO_LARGE")
+    );
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "preview_import",
+            json!({ "fileRef": "0".repeat(32) })
+        ))
+        .as_deref(),
+        Some("UNKNOWN_FILE")
+    );
+}
+
+#[test]
+fn export_holds_configuration_only_withholds_secret_notes_and_escapes_formulas() {
+    let f = fixture();
+    let a = workspace_with_profile(&f);
+    let b = create(&f, "=HYPERLINK(\"http://evil\")", None);
+    // New notes that look like secrets are refused; older data may still hold some, so export checks again.
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "update_profile",
+            json!({ "profileId": a, "expectedVersion": 1, "notes": "Password: hunter2" }),
+        ))
+        .as_deref(),
+        Some("NOTES_LOOK_SECRET")
+    );
+    let pa = pb_runtime::ProfileId::parse(&a).unwrap_or_else(|e| panic!("{e}"));
+    f.state
+        .store()
+        .unwrap_or_else(|e| panic!("{e:?}"))
+        .update_profile(
+            &pa,
+            pb_storage::ProfileUpdate {
+                notes: Some("Password: hunter2"),
+                ..Default::default()
+            },
+            1,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    // Hidden characters are removed from notes.
+    let saved = invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": b, "expectedVersion": 1, "notes": "pay\u{202E}lbuod\u{7}" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(saved["notes"], json!("paylbuod"));
+    invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": b, "expectedVersion": 2, "notes": "Call on Mondays" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let downloads = f.tmp.path().join("dl");
+    std::fs::create_dir_all(&downloads).unwrap_or_else(|e| panic!("{e}"));
+    f.state
+        .set_profile_download_directory(
+            &pb_runtime::ProfileId::parse(&a).unwrap_or_else(|e| panic!("{e}")),
+            &downloads,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let sel: pb_desktop_lib::manage::Selection =
+        serde_json::from_value(json!({ "kind": "filter", "filter": {}, "expected_total": 2 }))
+            .unwrap_or_else(|e| panic!("{e}"));
+    let csv = f
+        .state
+        .prepare_export(
+            sel.clone(),
+            pb_desktop_lib::transfer::ExportFormat::Csv,
+            true,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!((csv.count, csv.notes_withheld), (2, 1));
+    let text = String::from_utf8_lossy(&csv.bytes).into_owned();
+    assert!(
+        !text.contains("hunter2"),
+        "secret-looking notes are withheld"
+    );
+    assert!(text.contains("Call on Mondays"));
+    assert!(text.contains("'=HYPERLINK"), "formula neutralised");
+    assert!(
+        !text.contains(&downloads.display().to_string()),
+        "no local paths"
+    );
+    let out = f.tmp.path().join("out.csv");
+    let written = f
+        .state
+        .write_export(&out, &csv)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(written.exported, 2);
+    // Round trip: the export is a valid import.
+    let parsed = pb_import::parse("out.csv", &std::fs::read(&out).unwrap_or_default())
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(parsed.rows.iter().all(|r| r.outcome.is_ok()));
+    for format in [
+        pb_desktop_lib::transfer::ExportFormat::Json,
+        pb_desktop_lib::transfer::ExportFormat::Bundle,
+    ] {
+        let e = f
+            .state
+            .prepare_export(sel.clone(), format, false)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        let parsed =
+            pb_import::parse(&e.suggested_name, &e.bytes).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(parsed.rows.len(), 2);
+        assert!(
+            parsed
+                .rows
+                .iter()
+                .all(|r| r.outcome.as_ref().is_ok_and(|p| p.notes.is_empty())),
+            "notes excluded on request"
+        );
+    }
 }

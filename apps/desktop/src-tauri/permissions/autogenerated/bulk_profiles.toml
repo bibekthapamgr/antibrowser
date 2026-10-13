@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bulk-profiles"
+description = "Enables the bulk_profiles command without any pre-configured scope."
+commands.allow = ["bulk_profiles"]
+
+[[permission]]
+identifier = "deny-bulk-profiles"
+description = "Denies the bulk_profiles command without any pre-configured scope."
+commands.deny = ["bulk_profiles"]

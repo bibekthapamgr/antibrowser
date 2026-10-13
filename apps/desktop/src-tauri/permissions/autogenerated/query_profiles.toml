@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-profiles"
+description = "Enables the query_profiles command without any pre-configured scope."
+commands.allow = ["query_profiles"]
+
+[[permission]]
+identifier = "deny-query-profiles"
+description = "Denies the query_profiles command without any pre-configured scope."
+commands.deny = ["query_profiles"]

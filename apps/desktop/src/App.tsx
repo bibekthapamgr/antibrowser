@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppView, Backend } from './backend/types.ts';
+import type { AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { LiveRegion } from './components.tsx';
+import { ProfilesScreen } from './profiles.tsx';
 import {
   CrashPrompt,
   DatabaseRecovery,
   DiagnosticsScreen,
   DownloadsScreen,
-  ProfilesScreen,
   QuitPrompt,
   SettingsScreen,
   Welcome,
@@ -33,6 +33,8 @@ export function App({ backend }: { backend: Backend }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [quit, setQuit] = useState<{ running: number; unresponsive: number } | null>(null);
+  const [importOp, setImportOp] = useState<Operation | null>(null);
+  const [folderSlot, setFolderSlot] = useState<HTMLElement | null>(null);
   const toastSeq = useRef(0);
   const reported = useRef(false);
 
@@ -72,6 +74,7 @@ export function App({ backend }: { backend: Backend }) {
 
   useEffect(() => {
     const offOp = backend.on('operation', (op) => {
+      if (op.kind === 'import_profiles') setImportOp(op.status === 'running' ? op : null);
       if (op.status === 'running') return;
       setRefreshKey((k) => k + 1);
       if (op.status === 'failed') notify(op.message ?? 'The action failed.', 'error');
@@ -81,6 +84,8 @@ export function App({ backend }: { backend: Backend }) {
       else if (op.kind === 'install_runtime') notify('The browser is installed.');
       else if (op.kind === 'recover_profile') notify('Profile recovered.');
       else if (op.kind === 'backup_profile') notify('Backup saved.');
+      else if (op.kind === 'import_profiles')
+        notify('Import finished. Details are in Downloads and updates.');
     });
     const offChanged = backend.on('profiles-changed', (p) => {
       setRefreshKey((k) => k + 1);
@@ -171,6 +176,13 @@ export function App({ backend }: { backend: Backend }) {
             ))}
           </ul>
         </nav>
+        <div ref={setFolderSlot} className="sidebar__folders" hidden={view !== 'profiles'} />
+        {importOp && (
+          <div className="sidebar__import" role="status">
+            Importing profiles…
+            <progress aria-label="Import progress" value={importOp.progress ?? undefined} max={1} />
+          </div>
+        )}
         <div className="sidebar__status" role="status">
           {app.running_count === 0
             ? 'No profiles open'
@@ -180,13 +192,15 @@ export function App({ backend }: { backend: Backend }) {
         <p className="sidebar__note">Internal build {app.app.version} · local profiles only</p>
       </aside>
 
-      <main className="main" id="main" tabIndex={-1}>
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}
+      <main className="main" id="main" tabIndex={0} aria-label="Content">
         {view === 'profiles' && (
           <ProfilesScreen
             backend={backend}
             refreshKey={refreshKey}
             notify={notify}
             runningCount={app.running_count}
+            folderSlot={folderSlot}
           />
         )}
         {view === 'downloads' && (
@@ -194,7 +208,13 @@ export function App({ backend }: { backend: Backend }) {
         )}
         {view === 'diagnostics' && <DiagnosticsScreen backend={backend} notify={notify} />}
         {view === 'settings' && (
-          <SettingsScreen backend={backend} app={app} onChanged={refresh} notify={notify} />
+          <SettingsScreen
+            backend={backend}
+            app={app}
+            refreshKey={refreshKey}
+            onChanged={refresh}
+            notify={notify}
+          />
         )}
       </main>
 

@@ -103,6 +103,9 @@ impl AppState {
         if profile.state == RunState::Recovering {
             return Err(ipc::PROFILE_BUSY);
         }
+        if profile.trashed_at.is_some() {
+            return Err(ipc::PROFILE_IN_TRASH);
+        }
         // 3.
         let runtime = self.resolve_runtime(&store)?;
         // 4.
@@ -266,7 +269,7 @@ impl AppState {
             .get_setting(pb_storage::settings::DOWNLOAD_DIR)
             .ok()
             .and_then(|v| v.value.as_str().map(str::to_owned));
-        let display_name = match &profile.client_label {
+        let display_name = match &profile.client_name {
             Some(c) => format!("{} · {c}", profile.name),
             None => profile.name.clone(),
         };
@@ -365,6 +368,10 @@ impl AppState {
         }
         // Disk check about every 30 s while profiles are open.
         let n = self.poll_count.fetch_add(1, Ordering::Relaxed);
+        // Trash retention: shortly after start-up, then about hourly (one poll is ~1.5 s).
+        if n % 2400 == 2 {
+            self.purge_expired_trash();
+        }
         if n.is_multiple_of(20) && self.supervisor.running_count() > 0 {
             let free = free_space(&self.paths.data).unwrap_or(u64::MAX);
             if free < WARN_FREE_BYTES {
@@ -700,7 +707,7 @@ impl AppState {
     /// Cancels a routine backup of `profile_id` and waits up to [`BACKUP_CANCEL_WAIT`] for it to release the
     /// profile. Returns `true` when the profile is free, `false` when it stays busy with something that cannot
     /// be cancelled (recovery) or the backup did not stop in time.
-    fn cancel_backup(&self, profile_id: &ProfileId) -> bool {
+    pub(crate) fn cancel_backup(&self, profile_id: &ProfileId) -> bool {
         let flag = match self.backups_running.lock() {
             Ok(jobs) => match jobs.get(profile_id) {
                 Some(job) => job.cancel.clone(),

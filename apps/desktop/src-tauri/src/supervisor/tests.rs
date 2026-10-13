@@ -25,13 +25,12 @@ fn setup() -> Fx {
         .unwrap_or_else(|e| panic!("{e}"));
     let id = ProfileId::generate().unwrap_or_else(|e| panic!("{e}"));
     store
-        .insert_profile(NewProfile {
-            id: &id,
-            workspace_id: Some(&ws.id),
-            name: "P",
-            client_label: None,
-            folder_label: None,
-        })
+        .insert_profile(NewProfile::basic(
+            id.clone(),
+            Some(ws.id.clone()),
+            "P",
+            None,
+        ))
         .unwrap_or_else(|e| panic!("{e}"));
     std::fs::create_dir_all(dir.path().join("profiles")).unwrap_or_else(|e| panic!("{e}"));
     let root = ProfilesRoot::open(&dir.path().join("profiles")).unwrap_or_else(|e| panic!("{e}"));

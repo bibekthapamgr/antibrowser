@@ -4,6 +4,7 @@ members = [
   "crates/runtime",
   "crates/storage",
   "crates/update",
+  "crates/import",
   "apps/desktop/src-tauri",
 ]
 
@@ -25,6 +26,8 @@ sha2 = "0.11"
 getrandom = "0.4"
 hex = "0.4"
 tempfile = "3"
+unicode-normalization = "0.1"
+pb-import = { path = "crates/import" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

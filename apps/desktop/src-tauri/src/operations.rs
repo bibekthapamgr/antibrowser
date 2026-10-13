@@ -17,6 +17,7 @@ pub enum OpKind {
     InstallRuntime,
     RecoverProfile,
     BackupProfile,
+    ImportProfiles,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

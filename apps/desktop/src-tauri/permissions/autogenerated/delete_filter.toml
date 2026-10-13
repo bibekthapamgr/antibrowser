@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-filter"
+description = "Enables the delete_filter command without any pre-configured scope."
+commands.allow = ["delete_filter"]
+
+[[permission]]
+identifier = "deny-delete-filter"
+description = "Denies the delete_filter command without any pre-configured scope."
+commands.deny = ["delete_filter"]

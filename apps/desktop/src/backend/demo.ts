@@ -1,18 +1,40 @@
 /**
  * In-memory backend used when the UI runs outside the desktop shell (plain `vite`, UI tests). It mimics the Rust
- * validation rules and the run-state machine closely enough for UI development; it is never used inside the
+ * validation rules, the run-state machine and the milestone 04 library rules (clients, tags, templates, trash,
+ * bulk actions with undo, import preview/commit) closely enough for UI development; it is never used inside the
  * installed app.
  *
  * Query parameters (`?demo=`): `fresh` (first run), `rows:N` (large list), `crash` (manager crash prompt),
  * `migration` (database recovery screen), `running` (a profile left open, for the quit prompt), `crashed` (a profile
  * that closed unexpectedly, with a backup), `stuck` (closing times out and offers a force close), `noruntime` (the
- * browser is not installed yet).
+ * browser is not installed yet), `bigimport` (the import file has 10,000 rows), `unsafeimport` (the import file is
+ * an unsafe archive).
  */
-import type { EventName, EventPayload, Operation, ProfileStatus } from '@pb/contracts/ipc';
+import type {
+  BulkAction,
+  BulkResult,
+  Client,
+  EventName,
+  EventPayload,
+  ImportJob,
+  ImportPreview,
+  ImportSettings,
+  Library,
+  Operation,
+  ProfileFilter,
+  ProfileStatus,
+  SavedFilter,
+  Selection,
+  Sort,
+  TagRef,
+  Template,
+} from '@pb/contracts/ipc';
+import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
 import type {
   AppView,
   Backend,
   IpcError,
+  ProfileUpdate,
   ProfileView,
   RunState,
   RuntimeStatus,
@@ -23,6 +45,8 @@ import type {
 const CROCK = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const id = (prefix: string) =>
   `${prefix}_${Array.from({ length: 26 }, () => CROCK[Math.floor(Math.random() * 32)]).join('')}`;
+const hex = (n: number) =>
+  Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
 const now = () => new Date().toISOString();
 const err = (code: string, message: string): IpcError => ({ code, message });
 const RUNTIME_VERSION = '155.0.8059.39';
@@ -35,6 +59,118 @@ const STATUS: Record<RunState, ProfileView['status']> = {
   recovering: 'recovering',
 };
 const validUrl = (u: string) => /^https?:\/\/\S{1,2040}$/i.test(u);
+const MAX_BULK = 10_000;
+const HIDDEN = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+const BATCH = 250;
+
+const E = {
+  INVALID_LABEL: err('INVALID_LABEL', 'Names must be 1-120 visible characters.'),
+  INVALID_TAG: err('INVALID_TAG', 'Tags must be 1-40 visible characters (at most 20 per profile).'),
+  NOTES_TOO_LONG: err('NOTES_TOO_LONG', 'Notes can be at most 2,000 characters.'),
+  NOTES_LOOK_SECRET: err(
+    'NOTES_LOOK_SECRET',
+    'These notes look like they contain a password, key or card number. Notes are not encrypted: keep secrets in a password manager.',
+  ),
+  UNKNOWN_PROFILE: err('UNKNOWN_PROFILE', 'This profile does not exist on this device.'),
+  UNKNOWN_CLIENT: err('UNKNOWN_CLIENT', 'That client does not exist in this workspace.'),
+  UNKNOWN_TAG: err('UNKNOWN_TAG', 'That tag does not exist in this workspace.'),
+  UNKNOWN_TEMPLATE: err('UNKNOWN_TEMPLATE', 'That template does not exist in this workspace.'),
+  DUPLICATE_NAME: err('DUPLICATE_NAME', 'That name is already used in this workspace.'),
+  INVALID_FILTER: err('INVALID_FILTER', 'That filter is not valid.'),
+  CURSOR_STALE: err('CURSOR_STALE', 'The list changed its filter; load it again from the start.'),
+  SELECTION_TOO_LARGE: err('SELECTION_TOO_LARGE', 'Select at most 10,000 profiles at a time.'),
+  SELECTION_CHANGED: err(
+    'SELECTION_CHANGED',
+    'The matching profiles changed since you selected them. Check the selection and try again.',
+  ),
+  NOTHING_SELECTED: err('NOTHING_SELECTED', 'Select at least one profile.'),
+  UNDO_EXPIRED: err('UNDO_EXPIRED', 'This action can no longer be undone.'),
+  DELETE_CONFIRMATION: err(
+    'CONFIRMATION_REQUIRED',
+    'Confirm the permanent deletion of exactly the selected profiles.',
+  ),
+  PROFILE_IN_TRASH: err('PROFILE_IN_TRASH', 'This profile is in the trash. Restore it first.'),
+  PROFILE_RUNNING: err('PROFILE_RUNNING', 'This profile is open. Close it first.'),
+  PROFILE_BUSY: err(
+    'PROFILE_BUSY',
+    'This profile is busy (backup or recovery in progress). Try again in a moment.',
+  ),
+  NOT_IN_TRASH: err('NOT_IN_TRASH', 'Only profiles in the trash can be deleted permanently.'),
+  UNKNOWN_FILE: err('UNKNOWN_FILE', 'Choose the file again.'),
+  UNKNOWN_IMPORT: err('UNKNOWN_IMPORT', 'That import does not exist or has expired. Preview the file again.'),
+  IMPORT_IN_PROGRESS: err('IMPORT_IN_PROGRESS', 'An import is already running.'),
+} as const;
+
+/** Stored profile: the client and tags are references, resolved when a view is built. */
+type Rec = Omit<ProfileView, 'client_name' | 'client_colour' | 'tags'> & {
+  tag_ids: string[];
+  import_ref: string | null;
+};
+interface TagRec {
+  id: string;
+  workspace_id: string;
+  name: string;
+}
+interface TemplateRec extends Template {
+  workspace_id: string;
+}
+interface FilterRec extends SavedFilter {
+  workspace_id: string;
+}
+type Prior = Partial<Pick<Rec, 'client_id' | 'archived_at' | 'favourite' | 'trashed_at' | 'purge_after'>> & {
+  tag_ids?: string[];
+};
+interface UndoEntry {
+  token: string;
+  workspace: string;
+  restore: boolean;
+  items: { id: string; prior: Prior; version: number }[];
+  created: number;
+}
+
+// ---------------------------------------------------------------------------------------- demo import files
+interface RawRow {
+  name?: string;
+  client?: string | null;
+  tags?: string;
+  notes?: string;
+  start_urls?: string;
+  favourite?: string;
+  template?: string;
+}
+const SAMPLE_ROWS: RawRow[] = [
+  { name: 'Shop admin', client: 'Client North', tags: 'ecommerce' },
+  { name: 'Café orders', client: 'Client Süd', tags: 'ecommerce;new' },
+  { name: 'Ads review', client: 'Client South', tags: 'ads', notes: '=SUM(A1) stays plain text' },
+  { name: '', client: 'Client East' },
+  { name: 'Support inbox', client: 'Client East', start_urls: 'ftp://files.example/' },
+  { name: 'Social', client: 'Client North', notes: 'Password: hunter2' },
+  { name: 'Shop admin', client: 'Client North' },
+  { name: '日本ストア', client: 'Client Japan', tags: 'ecommerce', favourite: 'yes' },
+  { name: 'Analytics', template: 'Missing template' },
+  { name: 'Long notes', client: 'Client South', notes: 'Weekly checklist. '.repeat(100).trim() },
+];
+const bigRows = (): RawRow[] =>
+  Array.from({ length: 10_000 }, (_, i) => ({
+    name: i === 4999 ? '' : `Imported ${String(i).padStart(5, '0')}`,
+    client: `Client ${String(i % 20).padStart(2, '0')}`,
+    tags: i % 3 === 0 ? 'bulk' : '',
+  }));
+
+interface Planned {
+  row: number;
+  status: ImportPreview['rows'][number]['status'];
+  name: string;
+  client: string | null;
+  tags: string[];
+  notes: string;
+  favourite: boolean;
+  start_urls: string[];
+  template: string | null;
+  warnings: string[];
+  errors: { field: string; code: string; message: string }[];
+  update?: { id: string; version: number };
+}
 
 export function demoBackend(mode = ''): Backend {
   const listeners = new Map<string, Set<(p: unknown) => void>>();
@@ -43,7 +179,13 @@ export function demoBackend(mode = ''): Backend {
   };
 
   const workspaces: Workspace[] = [];
-  const profiles: ProfileView[] = [];
+  const recs: Rec[] = [];
+  const clients: Client[] = [];
+  const tags: TagRec[] = [];
+  const templates: TemplateRec[] = [];
+  const filters: FilterRec[] = [];
+  const jobs: (ImportJob & { workspace_id: string })[] = [];
+  const undo: UndoEntry[] = [];
   const backups = new Map<string, { created_at_unix: number; files: number }>();
   const ops: Operation[] = [];
   let opSeq = 0;
@@ -57,16 +199,77 @@ export function demoBackend(mode = ''): Backend {
     'privacy.crash_reports': { key: 'privacy.crash_reports', value: false, version: 0, ui_settable: true },
     'downloads.directory': { key: 'downloads.directory', value: null, version: 0, ui_settable: false },
     'workspace.active': { key: 'workspace.active', value: null, version: 0, ui_settable: true },
+    'profiles.trash_retention_days': {
+      key: 'profiles.trash_retention_days',
+      value: '30',
+      version: 0,
+      ui_settable: true,
+    },
+  };
+  const ENUMS: Record<string, unknown[]> = {
+    'appearance.theme': ['system', 'light', 'dark'],
+    'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
+    'profiles.trash_retention_days': ['7', '30', '90'],
   };
 
-  const addProfile = (name: string, client: string | null, wsId: string): ProfileView => {
-    const p: ProfileView = {
+  const activeWs = () => settings['workspace.active']?.value as string | null;
+  const retention = () => Number(settings['profiles.trash_retention_days']?.value ?? 30);
+  const inWs = (r: Rec) => r.workspace_id === activeWs();
+
+  // ------------------------------------------------------------------ library helpers
+  const ensureClient = (ws: string, name: string): Client => {
+    const n = clean(name, 120, E.INVALID_LABEL);
+    const found = clients.find((c) => c.workspace_id === ws && nameKey(c.name) === nameKey(n));
+    if (found) return found;
+    const c: Client = {
+      id: id('cli'),
+      workspace_id: ws,
+      name: n,
+      colour: null,
+      archived_at: null,
+      version: 1,
+      created_at: now(),
+    };
+    clients.push(c);
+    return c;
+  };
+  const ensureTag = (ws: string, name: string): TagRec => {
+    const n = clean(name, 40, E.INVALID_TAG);
+    const found = tags.find((t) => t.workspace_id === ws && nameKey(t.name) === nameKey(n));
+    if (found) return found;
+    const t: TagRec = { id: id('tag'), workspace_id: ws, name: n };
+    tags.push(t);
+    return t;
+  };
+  const view = (r: Rec): ProfileView => {
+    const { tag_ids, import_ref: _ref, ...rest } = r;
+    const c = clients.find((x) => x.id === r.client_id);
+    return {
+      ...rest,
+      client_name: c?.name ?? null,
+      client_colour: c?.colour ?? null,
+      tags: tag_ids
+        .map((t) => tags.find((x) => x.id === t))
+        .filter((t): t is TagRec => Boolean(t))
+        .map((t) => ({ id: t.id, name: t.name }))
+        .sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name))),
+    };
+  };
+
+  const addProfile = (name: string, client: string | null, wsId: string, extra: Partial<Rec> = {}): Rec => {
+    const r: Rec = {
       id: id('prf'),
       workspace_id: wsId,
       name,
-      client_label: client,
-      client_colour: null,
+      client_id: client ? ensureClient(wsId, client).id : null,
       notes: '',
+      favourite: false,
+      archived_at: null,
+      trashed_at: null,
+      purge_after: null,
+      template_id: null,
+      proxy_label: null,
+      sync_status: 'local_only',
       version: 1,
       created_at: now(),
       updated_at: now(),
@@ -86,18 +289,21 @@ export function demoBackend(mode = ''): Backend {
       last_started_at: null,
       last_clean_shutdown_at: null,
       last_backup_at: null,
+      tag_ids: [],
+      import_ref: null,
+      ...extra,
     };
-    profiles.push(p);
-    return p;
+    recs.push(r);
+    return r;
   };
 
-  const set = (pid: string, patch: Partial<ProfileView>) => {
-    const i = profiles.findIndex((x) => x.id === pid);
-    const p = profiles[i];
+  const set = (pid: string, patch: Partial<Rec>) => {
+    const i = recs.findIndex((x) => x.id === pid);
+    const p = recs[i];
     if (!p) return;
     const next = { ...p, ...patch };
     next.status = STATUS[next.state];
-    profiles[i] = next;
+    recs[i] = next;
   };
 
   if (mode !== 'fresh' && mode !== 'migration') {
@@ -109,17 +315,49 @@ export function demoBackend(mode = ''): Backend {
       version: 1,
     };
     const rows = mode.startsWith('rows:') ? Number(mode.slice(5)) : 3;
-    const clients = ['Client North', 'Client South', 'Client East', null];
+    const clientNames = ['Client North', 'Client South', 'Client East', null];
+    const tagSets = [['ecommerce'], ['ads', 'qa'], [], ['qa']];
+    const day = 86_400_000;
     for (let i = 0; i < rows; i++) {
-      addProfile(
+      const r = addProfile(
         rows === 3
           ? (['Shop admin', 'Ads QA', 'Support desk'][i] as string)
           : `Profile ${String(i).padStart(5, '0')}`,
-        clients[i % clients.length] ?? null,
+        clientNames[i % clientNames.length] ?? null,
         ws.id,
+        {
+          favourite: i === 0,
+          last_started_at: i % 2 === 0 ? new Date(Date.now() - (i + 1) * day).toISOString() : null,
+        },
       );
+      r.tag_ids = (tagSets[i % tagSets.length] ?? []).map((t) => ensureTag(ws.id, t).id);
     }
-    const first = profiles[0];
+    if (mode === '') {
+      addProfile('Old campaign', 'Client South', ws.id, { archived_at: now() });
+      addProfile('Test account', null, ws.id, {
+        trashed_at: now(),
+        purge_after: new Date(Date.now() + 30 * day).toISOString(),
+      });
+      templates.push({
+        id: id('tpl'),
+        workspace_id: ws.id,
+        name: 'Store manager',
+        schema_version: 1,
+        config: {
+          start_urls: ['https://shop.example/admin'],
+          camera: 'block',
+          microphone: 'block',
+          location: 'ask',
+          tags: ['ecommerce'],
+          notes: '',
+        },
+        version: 1,
+        updated_at: now(),
+      });
+      const north = clients.find((c) => c.name === 'Client North');
+      if (north) north.colour = '#0e7490';
+    }
+    const first = recs[0];
     if (first && (mode === 'running' || mode === 'stuck')) {
       set(first.id, {
         state: 'running',
@@ -142,14 +380,18 @@ export function demoBackend(mode = ''): Backend {
     }
   }
 
-  const activeWs = () => settings['workspace.active']?.value as string | null;
-  const isOpen = (p: ProfileView) =>
-    p.state === 'starting' || p.state === 'running' || p.state === 'stopping';
-  const running = () => profiles.filter(isOpen).length;
-  const clean = (v: string, max: number, code: string, message: string) => {
+  const isOpen = (p: Rec) => p.state === 'starting' || p.state === 'running' || p.state === 'stopping';
+  const running = () => recs.filter(isOpen).length;
+  function clean(v: string, max: number, e: IpcError) {
     const t = v.trim();
-    if (!t || [...t].length > max || /\p{Cc}/u.test(t)) throw err(code, message);
+    if (!t || [...t].length > max || HIDDEN.test(t)) throw e;
     return t;
+  }
+  const cleanNotes = (v: string) => {
+    const n = sanitizeNotes(v);
+    if ([...n].length > 2000) throw E.NOTES_TOO_LONG;
+    if (secretHint(n)) throw E.NOTES_LOOK_SECRET;
+    return n;
   };
   const startOp = (kind: Operation['kind'], target: string | null): Operation => {
     const op: Operation = {
@@ -162,21 +404,28 @@ export function demoBackend(mode = ''): Backend {
       message: null,
     };
     ops.unshift(op);
-    emit('operation', op);
+    emit('operation', { ...op });
     return op;
   };
+  const changed = () => emit('profiles-changed', { running: running() });
   const finish = (op: Operation, patch: Partial<Operation>) => {
     Object.assign(op, patch);
     emit('operation', { ...op });
-    emit('profiles-changed', { running: running() });
+    changed();
   };
   const requireStore = () => {
     if (storeFailed)
       throw err('STORE_UNAVAILABLE', 'Local data could not be opened. Use the recovery options to continue.');
   };
+  const requireWs = () => {
+    requireStore();
+    const ws = activeWs();
+    if (!ws) throw err('NO_WORKSPACE', 'Create a workspace first.');
+    return ws;
+  };
   const find = (pid: string) => {
-    const p = profiles.find((x) => x.id === pid);
-    if (!p) throw err('UNKNOWN_PROFILE', 'This profile does not exist on this device.');
+    const p = recs.find((x) => x.id === pid);
+    if (!p) throw E.UNKNOWN_PROFILE;
     return p;
   };
   const stopNow = (pid: string, outcome: 'clean' | 'forced') => {
@@ -191,6 +440,311 @@ export function demoBackend(mode = ''): Backend {
     });
   };
   const launchOps = new Map<string, Operation>();
+
+  // ------------------------------------------------------------------ query
+  const validateFilter = (f: ProfileFilter) => {
+    if (f.text && [...f.text].length > 200) throw E.INVALID_FILTER;
+    if (f.client?.kind === 'ids' && (f.client.ids.length === 0 || f.client.ids.length > 50))
+      throw E.INVALID_FILTER;
+    if ((f.tags?.length ?? 0) > 20) throw E.INVALID_FILTER;
+    const known = ['text', 'view', 'client', 'tags', 'states', 'favourites_only', 'template'];
+    if (Object.keys(f).some((k) => !known.includes(k))) throw E.INVALID_FILTER;
+  };
+  const matches = (r: Rec, f: ProfileFilter) => {
+    if (!inWs(r)) return false;
+    const v = f.view ?? 'active';
+    if (v === 'active' && (r.archived_at || r.trashed_at)) return false;
+    if (v === 'archived' && (!r.archived_at || r.trashed_at)) return false;
+    if (v === 'trash' && !r.trashed_at) return false;
+    if (f.client?.kind === 'none' && r.client_id) return false;
+    if (f.client?.kind === 'ids' && !f.client.ids.includes(r.client_id ?? '')) return false;
+    if (f.tags?.some((t) => !r.tag_ids.includes(t))) return false;
+    if (f.states?.length && !f.states.includes(r.state)) return false;
+    if (f.favourites_only && !r.favourite) return false;
+    if (f.template && r.template_id !== f.template) return false;
+    const text = f.text?.trim();
+    if (text) {
+      const k = nameKey(text);
+      const c = clients.find((x) => x.id === r.client_id);
+      const hit =
+        nameKey(r.name).includes(k) ||
+        (c ? nameKey(c.name).includes(k) : false) ||
+        r.tag_ids.some((t) => nameKey(tags.find((x) => x.id === t)?.name ?? '').includes(k)) ||
+        r.id === text;
+      if (!hit) return false;
+    }
+    return true;
+  };
+  const STATE_ORDER: Record<RunState, number> = {
+    running: 0,
+    starting: 1,
+    stopping: 2,
+    crashed: 3,
+    recovering: 4,
+    stopped: 5,
+  };
+  const sorted = (rows: Rec[], sort: Sort) => {
+    const dir = sort.descending ? -1 : 1;
+    const clientKey = (r: Rec) => {
+      const c = clients.find((x) => x.id === r.client_id);
+      return c ? nameKey(c.name) : null;
+    };
+    const byName = (a: Rec, b: Rec) =>
+      nameKey(a.name).localeCompare(nameKey(b.name)) || (a.id < b.id ? -1 : 1);
+    return [...rows].sort((a, b) => {
+      switch (sort.key) {
+        case 'client': {
+          const [x, y] = [clientKey(a), clientKey(b)];
+          if (x === null || y === null) return x === y ? byName(a, b) : x === null ? 1 : -1;
+          return dir * x.localeCompare(y) || byName(a, b);
+        }
+        case 'last_used': {
+          const [x, y] = [a.last_started_at, b.last_started_at];
+          if (!x || !y) return x === y ? byName(a, b) : !x ? 1 : -1;
+          return dir * x.localeCompare(y) || byName(a, b);
+        }
+        case 'created':
+          return dir * a.created_at.localeCompare(b.created_at) || (a.id < b.id ? -1 : 1);
+        case 'state':
+          return dir * (STATE_ORDER[a.state] - STATE_ORDER[b.state]) || byName(a, b);
+        default:
+          return dir * nameKey(a.name).localeCompare(nameKey(b.name)) || (a.id < b.id ? -1 : 1);
+      }
+    });
+  };
+  const fingerprint = (f: ProfileFilter, s: Sort) => {
+    let h = 0;
+    for (const ch of JSON.stringify([f, s])) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return h.toString(16).padStart(8, '0');
+  };
+  const queryAll = (f: ProfileFilter, s: Sort = { key: 'name', descending: false }) =>
+    sorted(
+      recs.filter((r) => matches(r, f)),
+      s,
+    );
+
+  const resolve = (selection: Selection): { ids: string[]; missing: string[] } => {
+    const ws = requireWs();
+    if (selection.kind === 'ids') {
+      if (selection.ids.length > MAX_BULK) throw E.SELECTION_TOO_LARGE;
+      const ids = [...new Set(selection.ids)];
+      if (!ids.length) throw E.NOTHING_SELECTED;
+      return {
+        ids: ids.filter((i) => recs.some((r) => r.id === i && r.workspace_id === ws)),
+        missing: ids.filter((i) => !recs.some((r) => r.id === i && r.workspace_id === ws)),
+      };
+    }
+    validateFilter(selection.filter);
+    const all = queryAll(selection.filter);
+    if (all.length !== selection.expected_total) throw E.SELECTION_CHANGED;
+    if (all.length > MAX_BULK) throw E.SELECTION_TOO_LARGE;
+    if (!all.length) throw E.NOTHING_SELECTED;
+    return { ids: all.map((r) => r.id), missing: [] };
+  };
+  const failure = (pid: string, e: IpcError) => ({
+    id: pid,
+    name: recs.find((r) => r.id === pid)?.name ?? null,
+    code: e.code,
+    message: e.message,
+  });
+
+  /** Applies one bulk change to one profile: the prior values when it changed, `null` when nothing changed. */
+  const applyOne = (r: Rec, a: BulkAction, tagId: string | null): Prior | null => {
+    switch (a.action) {
+      case 'add_tag':
+        if (!tagId || r.tag_ids.includes(tagId) || r.tag_ids.length >= 20) return null;
+        return { tag_ids: [...r.tag_ids] };
+      case 'remove_tag':
+        return r.tag_ids.includes(a.tag_id) ? { tag_ids: [...r.tag_ids] } : null;
+      case 'move':
+        return r.client_id === a.client_id ? null : { client_id: r.client_id };
+      case 'archive':
+        return r.archived_at || r.trashed_at ? null : { archived_at: r.archived_at };
+      case 'unarchive':
+        return r.archived_at ? { archived_at: r.archived_at } : null;
+      case 'favourite':
+        return r.favourite === a.value ? null : { favourite: r.favourite };
+      case 'trash':
+        return r.trashed_at ? null : { trashed_at: null, purge_after: null };
+      case 'restore':
+        return r.trashed_at ? { trashed_at: r.trashed_at, purge_after: r.purge_after } : null;
+    }
+  };
+  const patchFor = (a: BulkAction, r: Rec, tagId: string | null): Partial<Rec> => {
+    switch (a.action) {
+      case 'add_tag':
+        return { tag_ids: [...r.tag_ids, tagId as string] };
+      case 'remove_tag':
+        return { tag_ids: r.tag_ids.filter((t) => t !== a.tag_id) };
+      case 'move':
+        return { client_id: a.client_id };
+      case 'archive':
+        return { archived_at: now() };
+      case 'unarchive':
+        return { archived_at: null };
+      case 'favourite':
+        return { favourite: a.value };
+      case 'trash':
+        return {
+          trashed_at: now(),
+          purge_after: new Date(Date.now() + retention() * 86_400_000).toISOString(),
+        };
+      case 'restore':
+        return { trashed_at: null, purge_after: null };
+    }
+  };
+
+  const libraryOf = (ws: string): Library => {
+    const all = recs.filter((r) => r.workspace_id === ws);
+    const active = all.filter((r) => !r.archived_at && !r.trashed_at);
+    const perClient = new Map<string, number>();
+    for (const r of active)
+      if (r.client_id) perClient.set(r.client_id, (perClient.get(r.client_id) ?? 0) + 1);
+    return {
+      counts: {
+        active: active.length,
+        favourites: active.filter((r) => r.favourite).length,
+        running: all.filter((r) => !r.trashed_at && isOpen(r)).length,
+        archived: all.filter((r) => r.archived_at && !r.trashed_at).length,
+        trash: all.filter((r) => r.trashed_at).length,
+        without_client: active.filter((r) => !r.client_id).length,
+        per_client: [...perClient.entries()],
+      },
+      clients: clients
+        .filter((c) => c.workspace_id === ws)
+        .sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name)))
+        .map((c) => ({ ...c, profiles: perClient.get(c.id) ?? 0 })),
+      tags: tags
+        .filter((t) => t.workspace_id === ws)
+        .sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name)))
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          profiles: all.filter((r) => !r.trashed_at && r.tag_ids.includes(t.id)).length,
+        })),
+      templates: templates
+        .filter((t) => t.workspace_id === ws)
+        .map(({ workspace_id: _w, ...t }) => t)
+        .sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name))),
+      saved_filters: filters.filter((f) => f.workspace_id === ws).map(({ workspace_id: _w, ...f }) => f),
+      trash_retention_days: retention(),
+    };
+  };
+
+  // ------------------------------------------------------------------ import (demo)
+  const files = new Map<string, { name: string; rows: RawRow[] | null; size: number }>();
+  const previews = new Map<
+    string,
+    { ws: string; fileRef: string; digest: string; settings: ImportSettings; applied: Set<number> }
+  >();
+  const importsRunning = new Map<string, { cancel: boolean }>();
+  const digestOf = (name: string, rows: RawRow[] | null) => {
+    let h = 0;
+    for (const ch of `${name}${JSON.stringify(rows)}`) h = (h * 33 + ch.charCodeAt(0)) >>> 0;
+    return h.toString(16).padStart(8, '0').repeat(8);
+  };
+  const plan = (ws: string, rows: RawRow[], digest: string, s: ImportSettings) => {
+    const policy = s.duplicates ?? 'skip';
+    const existing = new Map<string, Rec>();
+    for (const r of recs)
+      if (r.workspace_id === ws) {
+        const c = clients.find((x) => x.id === r.client_id);
+        const key = `${nameKey(r.name)}|${c ? nameKey(c.name) : ''}`;
+        if (!existing.has(key)) existing.set(key, r);
+      }
+    const seen = new Set<string>();
+    const newClients: string[] = [];
+    const newTags: string[] = [];
+    const out: Planned[] = rows.map((raw, i) => {
+      const row = i + 2;
+      const errors: Planned['errors'] = [];
+      const warnings: string[] = [];
+      const name = (raw.name ?? '').trim();
+      if (!name) errors.push({ field: 'name', code: 'required', message: 'name is required' });
+      else if ([...name].length > 120)
+        errors.push({ field: 'name', code: 'too_long', message: 'name is longer than 120 characters' });
+      const client = (raw.client ?? '').trim() || s.default_client?.trim() || null;
+      const rowTags = (raw.tags ?? '')
+        .split(';')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      let notes = sanitizeNotes(raw.notes ?? '');
+      const hint = secretHint(notes);
+      if (hint) {
+        warnings.push(`notes left out (${hint})`);
+        notes = '';
+      }
+      // As in the CSV format: tags are separated by ";", start pages by spaces or new lines.
+      const urls = (raw.start_urls ?? '').split(/\s+/).filter(Boolean);
+      for (const u of urls)
+        if (!validUrl(u))
+          errors.push({
+            field: 'start_urls',
+            code: 'invalid_url',
+            message: `"${u}" is not an http(s) address`,
+          });
+      const fav = (raw.favourite ?? '').trim().toLowerCase();
+      if (fav && !['true', 'yes', '1', 'false', 'no', '0'].includes(fav))
+        errors.push({
+          field: 'favourite',
+          code: 'invalid_value',
+          message: 'favourite must be true or false',
+        });
+      const template = raw.template?.trim() || null;
+      if (
+        template &&
+        !errors.length &&
+        !templates.some((t) => t.workspace_id === ws && nameKey(t.name) === nameKey(template))
+      )
+        errors.push({
+          field: 'template',
+          code: 'unknown_template',
+          message: `no template named "${template}"`,
+        });
+      const base = {
+        row,
+        name,
+        client,
+        tags: rowTags,
+        notes,
+        favourite: ['true', 'yes', '1'].includes(fav),
+        start_urls: urls,
+        template,
+        warnings,
+        errors,
+      };
+      if (errors.length) return { ...base, status: 'error' as const };
+      if (recs.some((r) => r.import_ref === `${digest.slice(0, 16)}:${row}`))
+        return { ...base, status: 'already_imported' as const };
+      if (client && !clients.some((c) => c.workspace_id === ws && nameKey(c.name) === nameKey(client))) {
+        if (!newClients.some((c) => nameKey(c) === nameKey(client))) newClients.push(client);
+      }
+      const key = `${nameKey(name)}|${client ? nameKey(client) : ''}`;
+      const hit = existing.get(key);
+      let status: Planned['status'] = 'create';
+      let update: Planned['update'];
+      if (seen.has(key) && policy !== 'create') status = 'skip_duplicate';
+      else if (hit) {
+        if (policy === 'skip') status = 'skip_duplicate';
+        else if (policy === 'update') {
+          status = 'update';
+          update = { id: hit.id, version: hit.version };
+        }
+      }
+      seen.add(key);
+      if (status === 'create' || status === 'update')
+        for (const t of rowTags)
+          if (
+            !tags.some((x) => x.workspace_id === ws && nameKey(x.name) === nameKey(t)) &&
+            !newTags.some((x) => nameKey(x) === nameKey(t))
+          )
+            newTags.push(t);
+      return { ...base, status, ...(update ? { update } : {}) };
+    });
+    return { rows: out, newClients, newTags };
+  };
+  const rowErrors = (rows: Planned[]) =>
+    rows.flatMap((p) => p.errors.map((e) => ({ row: p.row, ...e }))).slice(0, 1000);
 
   const runtimeStatus = (): RuntimeStatus => ({
     browser: {
@@ -226,7 +780,7 @@ export function demoBackend(mode = ''): Backend {
       : [],
     interrupted: [],
     quarantined: 0,
-    running: profiles.filter(isOpen).map((p) => ({
+    running: recs.filter(isOpen).map((p) => ({
       profile_id: p.id,
       run_id: null,
       pid: p.pid,
@@ -250,11 +804,11 @@ export function demoBackend(mode = ''): Backend {
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.3.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: '0.4.0-demo', platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
-                failure: { code: 'MIGRATION_FAILED', from_version: 2, to_version: 3, backup_available: true },
+                failure: { code: 'MIGRATION_FAILED', from_version: 3, to_version: 4, backup_available: true },
               }
             : { status: 'ready' },
           first_run: !storeFailed && workspaces.length === 0,
@@ -277,7 +831,11 @@ export function demoBackend(mode = ''): Backend {
         requireStore();
         const ws: Workspace = {
           id: id('wsp'),
-          name: clean(name, 80, 'INVALID_WORKSPACE_NAME', 'Workspace names must be 1-80 visible characters.'),
+          name: clean(
+            name,
+            80,
+            err('INVALID_WORKSPACE_NAME', 'Workspace names must be 1-80 visible characters.'),
+          ),
           kind: 'local',
           created_at: now(),
         };
@@ -288,56 +846,81 @@ export function demoBackend(mode = ''): Backend {
       },
       async setActiveWorkspace(wsId: string) {
         if (!workspaces.some((w) => w.id === wsId))
-          throw err('UNKNOWN_WORKSPACE', 'That workspace does not exist.');
+          throw err('UNKNOWN_WORKSPACE', 'That workspace does not exist on this device.');
         settings['workspace.active'] = { ...(settings['workspace.active'] as SettingValue), value: wsId };
       },
     },
     profiles: {
-      async list(query?: string) {
+      async query(q: {
+        filter?: ProfileFilter;
+        sort?: Sort;
+        cursor?: string;
+        offset?: number;
+        limit?: number;
+      }) {
         requireStore();
-        const q = query?.trim().toLowerCase();
-        if (q && q.length > 200) throw err('QUERY_TOO_LONG', 'Search text is too long.');
-        return profiles
-          .filter((p) => p.workspace_id === activeWs())
-          .filter((p) => !q || `${p.name} ${p.client_label ?? ''}`.toLowerCase().includes(q))
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .slice(0, 10000);
+        if (!activeWs()) return { rows: [], total: 0, next_cursor: null };
+        const filter = q.filter ?? {};
+        validateFilter(filter);
+        const sort = q.sort ?? { key: 'name', descending: false };
+        const print = fingerprint(filter, sort);
+        let offset = Math.min(q.offset ?? 0, MAX_BULK);
+        if (q.cursor) {
+          const [o, f] = q.cursor.split('.');
+          if (f !== print || !o || !/^\d+$/.test(o)) throw E.CURSOR_STALE;
+          offset = Number(o);
+        }
+        const limit = Math.min(500, Math.max(1, q.limit ?? 200));
+        const all = queryAll(filter, sort);
+        const rows = all.slice(offset, offset + limit).map(view);
+        const next = offset + rows.length;
+        return { rows, total: all.length, next_cursor: next < all.length ? `${next}.${print}` : null };
       },
-      async create(name: string, clientLabel?: string) {
-        requireStore();
-        const ws = activeWs();
-        if (!ws) throw err('NO_WORKSPACE', 'Create a workspace first.');
-        const n = clean(name, 120, 'INVALID_LABEL', 'Names must be 1-120 visible characters.');
-        const c = clientLabel?.trim()
-          ? clean(clientLabel, 120, 'INVALID_LABEL', 'Names must be 1-120 visible characters.')
-          : null;
-        return addProfile(n, c, ws);
+      async create(name: string, client?: string, templateId?: string) {
+        const ws = requireWs();
+        const n = clean(name, 120, E.INVALID_LABEL);
+        const c = client?.trim() ? clean(client, 120, E.INVALID_LABEL) : null;
+        const t = templateId ? templates.find((x) => x.id === templateId && x.workspace_id === ws) : null;
+        if (templateId && !t) throw E.UNKNOWN_TEMPLATE;
+        const r = addProfile(n, c, ws);
+        if (t)
+          set(r.id, {
+            start_urls: [...t.config.start_urls],
+            permissions: {
+              camera: t.config.camera,
+              microphone: t.config.microphone,
+              location: t.config.location,
+            },
+            notes: t.config.notes,
+            tag_ids: t.config.tags.map((x) => ensureTag(ws, x).id),
+            template_id: t.id,
+          });
+        changed();
+        return view(find(r.id));
       },
-      async update(pid, c) {
+      async update(pid: string, c: ProfileUpdate) {
+        const ws = requireWs();
         const p = find(pid);
+        if (p.workspace_id !== ws) throw E.UNKNOWN_PROFILE;
         if (p.version !== c.expectedVersion) {
           throw {
             ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
             current_version: p.version,
           };
         }
-        if (c.notes !== undefined && [...c.notes].length > 2000)
-          throw err('NOTES_TOO_LONG', 'Notes can be at most 2,000 characters.');
-        if (c.clientColour !== undefined && !/^#[0-9a-f]{6}$/.test(c.clientColour))
-          throw err('INVALID_COLOUR', 'Colour must look like #7c3aed.');
+        if (p.trashed_at) throw E.PROFILE_IN_TRASH;
+        const notes = c.notes !== undefined ? cleanNotes(c.notes) : p.notes;
         if (c.startUrls && (c.startUrls.length > 10 || !c.startUrls.every(validUrl)))
           throw err('BAD_START_URL', 'Start address must begin with http:// or https://.');
+        if (c.clientId && !clients.some((x) => x.id === c.clientId && x.workspace_id === ws))
+          throw E.UNKNOWN_CLIENT;
+        if (c.tags && c.tags.length > 20) throw E.INVALID_TAG;
+        const tagIds = c.tags?.map((t) => ensureTag(ws, t).id);
         set(pid, {
-          name:
-            c.name !== undefined
-              ? clean(c.name, 120, 'INVALID_LABEL', 'Names must be 1-120 visible characters.')
-              : p.name,
-          client_label: c.clearClientLabel
-            ? null
-            : c.clientLabel !== undefined
-              ? c.clientLabel.trim()
-              : p.client_label,
-          client_colour: c.clearClientColour ? null : (c.clientColour ?? p.client_colour),
+          name: c.name !== undefined ? clean(c.name, 120, E.INVALID_LABEL) : p.name,
+          client_id: c.clearClient ? null : (c.clientId ?? p.client_id),
+          favourite: c.favourite ?? p.favourite,
+          tag_ids: tagIds ? [...new Set(tagIds)] : p.tag_ids,
           start_urls: c.startUrls ?? p.start_urls,
           download_dir: c.clearDownloadDir ? null : p.download_dir,
           permissions: {
@@ -345,14 +928,145 @@ export function demoBackend(mode = ''): Backend {
             microphone: c.microphone ?? p.permissions.microphone,
             location: c.location ?? p.permissions.location,
           },
-          notes: c.notes ?? p.notes,
+          notes,
           version: p.version + 1,
           updated_at: now(),
         });
-        return find(pid);
+        changed();
+        return view(find(pid));
+      },
+      async duplicate(pid: string, name: string) {
+        const ws = requireWs();
+        const src = find(pid);
+        if (src.workspace_id !== ws) throw E.UNKNOWN_PROFILE;
+        const r = addProfile(clean(name, 120, E.INVALID_LABEL), null, ws, {
+          client_id: src.client_id,
+          start_urls: [...src.start_urls],
+          permissions: { ...src.permissions },
+          tag_ids: [...src.tag_ids],
+          template_id: src.template_id,
+        });
+        changed();
+        return view(r);
+      },
+      async bulk(action: BulkAction, selection: Selection): Promise<BulkResult> {
+        const ws = requireWs();
+        const { ids, missing } = resolve(selection);
+        let tagId: string | null = null;
+        if (action.action === 'add_tag') {
+          if (action.tag_id) {
+            if (!tags.some((t) => t.id === action.tag_id && t.workspace_id === ws)) throw E.UNKNOWN_TAG;
+            tagId = action.tag_id;
+          } else if (action.tag_name) tagId = ensureTag(ws, action.tag_name).id;
+          else throw E.INVALID_TAG;
+        }
+        if (
+          action.action === 'remove_tag' &&
+          !tags.some((t) => t.id === action.tag_id && t.workspace_id === ws)
+        )
+          throw E.UNKNOWN_TAG;
+        if (
+          action.action === 'move' &&
+          action.client_id &&
+          !clients.some((c) => c.id === action.client_id && c.workspace_id === ws)
+        )
+          throw E.UNKNOWN_CLIENT;
+        const failed = missing.map((m) => failure(m, E.UNKNOWN_PROFILE));
+        const items: UndoEntry['items'] = [];
+        let unchanged = 0;
+        for (let i = 0; i < ids.length; i += BATCH) {
+          for (const pid of ids.slice(i, i + BATCH)) {
+            const r = find(pid);
+            if (action.action === 'trash' && isOpen(r)) {
+              failed.push(failure(pid, E.PROFILE_RUNNING));
+              continue;
+            }
+            if (action.action === 'trash' && r.state === 'recovering') {
+              failed.push(failure(pid, E.PROFILE_BUSY));
+              continue;
+            }
+            const prior = applyOne(r, action, tagId);
+            if (!prior) {
+              unchanged++;
+              continue;
+            }
+            set(pid, { ...patchFor(action, r, tagId), version: r.version + 1, updated_at: now() });
+            items.push({ id: pid, prior, version: r.version + 1 });
+          }
+        }
+        let token: string | null = null;
+        if (items.length) {
+          token = hex(32);
+          undo.push({
+            token,
+            workspace: ws,
+            restore: action.action === 'restore',
+            items,
+            created: Date.now(),
+          });
+          if (undo.length > 20) undo.shift();
+        }
+        changed();
+        return {
+          action: action.action,
+          requested: ids.length + missing.length,
+          changed: items.length,
+          unchanged,
+          failed,
+          undo_token: token,
+        };
+      },
+      async undo(token: string) {
+        const ws = requireWs();
+        const i = undo.findIndex((u) => u.token === token && Date.now() - u.created < 600_000);
+        const entry = undo[i];
+        if (!entry || entry.workspace !== ws) throw E.UNDO_EXPIRED;
+        undo.splice(i, 1);
+        let restored = 0;
+        let skipped = 0;
+        for (const it of entry.items) {
+          const r = recs.find((x) => x.id === it.id);
+          // Only profiles nobody changed since the action are put back; undoing a restore never trashes open ones.
+          if (!r || r.version !== it.version || (entry.restore && isOpen(r))) {
+            skipped++;
+            continue;
+          }
+          set(it.id, { ...it.prior, version: r.version + 1, updated_at: now() });
+          restored++;
+        }
+        changed();
+        return { restored, skipped };
+      },
+      async deletePermanently(selection: Selection, count: number) {
+        requireWs();
+        const { ids, missing } = resolve(selection);
+        if (ids.length + missing.length !== count) throw E.DELETE_CONFIRMATION;
+        const failed = missing.map((m) => failure(m, E.UNKNOWN_PROFILE));
+        let deleted = 0;
+        for (const pid of ids) {
+          const r = find(pid);
+          if (!r.trashed_at) failed.push(failure(pid, E.NOT_IN_TRASH));
+          else if (isOpen(r)) failed.push(failure(pid, E.PROFILE_RUNNING));
+          else if (r.state === 'recovering') failed.push(failure(pid, E.PROFILE_BUSY));
+          else {
+            recs.splice(recs.indexOf(r), 1);
+            backups.delete(pid);
+            deleted++;
+          }
+        }
+        changed();
+        return {
+          action: 'delete',
+          requested: count,
+          changed: deleted,
+          unchanged: 0,
+          failed,
+          undo_token: null,
+        };
       },
       async launch(pid: string) {
         const p = find(pid);
+        if (p.trashed_at) throw E.PROFILE_IN_TRASH;
         if (p.state === 'starting' || p.state === 'running') {
           const existing = launchOps.get(pid);
           if (existing) return { operation_id: existing.operation_id };
@@ -360,8 +1074,9 @@ export function demoBackend(mode = ''): Backend {
           finish(op, { status: 'succeeded', progress: 1 });
           return { operation_id: op.operation_id };
         }
-        if (p.state === 'stopping') throw err('PROFILE_STOPPING', 'This profile is still closing.');
-        if (p.state === 'recovering') throw err('PROFILE_BUSY', 'This profile is busy.');
+        if (p.state === 'stopping')
+          throw err('PROFILE_STOPPING', 'This profile is still closing. Try again when it has closed.');
+        if (p.state === 'recovering') throw E.PROFILE_BUSY;
         if (!runtimeInstalled)
           throw err(
             'RUNTIME_NOT_INSTALLED',
@@ -370,7 +1085,7 @@ export function demoBackend(mode = ''): Backend {
         const op = startOp('launch_profile', pid);
         launchOps.set(pid, op);
         set(pid, { state: 'starting', last_error: null, last_started_at: now(), pid: 5000 + opSeq });
-        emit('profiles-changed', { running: running() });
+        changed();
         setTimeout(() => {
           set(pid, { state: 'running', ready: true, window_open: true, runtime_version: RUNTIME_VERSION });
           launchOps.delete(pid);
@@ -390,7 +1105,7 @@ export function demoBackend(mode = ''): Backend {
           return { operation_id: op.operation_id };
         }
         set(pid, { state: 'stopping' });
-        emit('profiles-changed', { running: running() });
+        changed();
         setTimeout(() => {
           if (mode === 'stuck') {
             set(pid, { force_available: true });
@@ -409,7 +1124,7 @@ export function demoBackend(mode = ''): Backend {
       async closeAll(force?: boolean) {
         const op = startOp('close_all', null);
         setTimeout(() => {
-          for (const p of profiles) {
+          for (const p of recs) {
             if (!isOpen(p)) continue;
             if (mode === 'stuck' && !force) set(p.id, { state: 'stopping', force_available: true });
             else stopNow(p.id, force ? 'forced' : 'clean');
@@ -432,7 +1147,7 @@ export function demoBackend(mode = ''): Backend {
         const backup = backups.get(pid);
         const ended = p.state === 'stopped' || p.state === 'crashed';
         return {
-          profile: p,
+          profile: view(p),
           runs:
             p.last_started_at || p.state === 'crashed'
               ? [
@@ -474,7 +1189,7 @@ export function demoBackend(mode = ''): Backend {
           throw err('NO_BACKUP', 'There is no backup of this profile yet.');
         const op = startOp(action === 'backup_now' ? 'backup_profile' : 'recover_profile', pid);
         if (action !== 'backup_now') set(pid, { state: 'recovering' });
-        emit('profiles-changed', { running: running() });
+        changed();
         setTimeout(() => {
           if (action === 'backup_now') {
             backups.set(pid, { created_at_unix: Math.floor(Date.now() / 1000), files: 412 });
@@ -491,6 +1206,329 @@ export function demoBackend(mode = ''): Backend {
         const path = `/Users/demo/Downloads/${p.name}`;
         set(pid, { download_dir: path, version: p.version + 1 });
         return { path };
+      },
+    },
+    library: {
+      async library() {
+        return libraryOf(requireWs());
+      },
+      async createClient(name: string, colour?: string) {
+        const ws = requireWs();
+        const n = clean(name, 120, E.INVALID_LABEL);
+        if (colour !== undefined && !/^#[0-9a-f]{6}$/.test(colour))
+          throw err('INVALID_COLOUR', 'Colour must look like #7c3aed.');
+        if (clients.some((c) => c.workspace_id === ws && nameKey(c.name) === nameKey(n)))
+          throw E.DUPLICATE_NAME;
+        const c = ensureClient(ws, n);
+        c.colour = colour ?? null;
+        return { ...c };
+      },
+      async updateClient(
+        cid: string,
+        expectedVersion: number,
+        ch: { name?: string; colour?: string; clearColour?: boolean; archived?: boolean },
+      ) {
+        const ws = requireWs();
+        const c = clients.find((x) => x.id === cid && x.workspace_id === ws);
+        if (!c) throw E.UNKNOWN_CLIENT;
+        if (c.version !== expectedVersion)
+          throw {
+            ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
+            current_version: c.version,
+          };
+        if (ch.colour !== undefined && !/^#[0-9a-f]{6}$/.test(ch.colour))
+          throw err('INVALID_COLOUR', 'Colour must look like #7c3aed.');
+        if (ch.name !== undefined) {
+          const n = clean(ch.name, 120, E.INVALID_LABEL);
+          if (clients.some((x) => x !== c && x.workspace_id === ws && nameKey(x.name) === nameKey(n)))
+            throw E.DUPLICATE_NAME;
+          c.name = n;
+        }
+        if (ch.clearColour) c.colour = null;
+        else if (ch.colour !== undefined) c.colour = ch.colour;
+        if (ch.archived !== undefined) c.archived_at = ch.archived ? now() : null;
+        c.version++;
+        changed();
+        return { ...c };
+      },
+      async createTag(name: string): Promise<TagRef> {
+        const t = ensureTag(requireWs(), name);
+        return { id: t.id, name: t.name };
+      },
+      async renameTag(tid: string, name: string) {
+        const ws = requireWs();
+        const t = tags.find((x) => x.id === tid && x.workspace_id === ws);
+        if (!t) throw E.UNKNOWN_TAG;
+        const n = clean(name, 40, E.INVALID_TAG);
+        if (tags.some((x) => x !== t && x.workspace_id === ws && nameKey(x.name) === nameKey(n)))
+          throw E.DUPLICATE_NAME;
+        t.name = n;
+        changed();
+      },
+      async deleteTag(tid: string) {
+        const ws = requireWs();
+        const i = tags.findIndex((x) => x.id === tid && x.workspace_id === ws);
+        if (i < 0) throw E.UNKNOWN_TAG;
+        tags.splice(i, 1);
+        for (const r of recs) r.tag_ids = r.tag_ids.filter((t) => t !== tid);
+        changed();
+      },
+      async saveFilter(name: string, filter: ProfileFilter, sort: Sort) {
+        const ws = requireWs();
+        validateFilter(filter);
+        const f: FilterRec = {
+          id: id('flt'),
+          workspace_id: ws,
+          name: clean(name, 60, E.INVALID_LABEL),
+          filter: { filter, sort },
+          created_at: now(),
+        };
+        if (filters.filter((x) => x.workspace_id === ws).length >= 200) throw E.INVALID_FILTER;
+        filters.push(f);
+        const { workspace_id: _w, ...out } = f;
+        return out;
+      },
+      async deleteFilter(fid: string) {
+        const ws = requireWs();
+        const i = filters.findIndex((f) => f.id === fid && f.workspace_id === ws);
+        if (i < 0) throw E.INVALID_FILTER;
+        filters.splice(i, 1);
+      },
+      async saveTemplate(pid: string, name: string) {
+        const ws = requireWs();
+        const p = find(pid);
+        if (p.workspace_id !== ws) throw E.UNKNOWN_PROFILE;
+        const n = clean(name, 120, E.INVALID_LABEL);
+        if (templates.some((t) => t.workspace_id === ws && nameKey(t.name) === nameKey(n)))
+          throw E.DUPLICATE_NAME;
+        const t: TemplateRec = {
+          id: id('tpl'),
+          workspace_id: ws,
+          name: n,
+          schema_version: 1,
+          config: {
+            start_urls: [...p.start_urls],
+            camera: p.permissions.camera,
+            microphone: p.permissions.microphone,
+            location: p.permissions.location,
+            tags: view(p).tags.map((x) => x.name),
+            notes: '',
+          },
+          version: 1,
+          updated_at: now(),
+        };
+        templates.push(t);
+        const { workspace_id: _w, ...out } = t;
+        return out;
+      },
+      async deleteTemplate(tid: string) {
+        const ws = requireWs();
+        const i = templates.findIndex((t) => t.id === tid && t.workspace_id === ws);
+        if (i < 0) throw E.UNKNOWN_TEMPLATE;
+        templates.splice(i, 1);
+      },
+    },
+    transfer: {
+      async chooseFile() {
+        requireWs();
+        const ref = hex(32);
+        const f =
+          mode === 'bigimport'
+            ? { name: 'all-profiles.csv', rows: bigRows(), size: 420_000 }
+            : mode === 'unsafeimport'
+              ? { name: 'shared-export.zip', rows: null, size: 2_048 }
+              : { name: 'agency-profiles.csv', rows: SAMPLE_ROWS, size: 1_870 };
+        files.set(ref, f);
+        return { file_ref: ref, name: f.name, size: f.size };
+      },
+      async preview(fileRef: string, s: ImportSettings): Promise<ImportPreview> {
+        const ws = requireWs();
+        const f = files.get(fileRef);
+        if (!f) throw E.UNKNOWN_FILE;
+        const empty: ImportPreview = {
+          preview_id: null,
+          file_name: f.name,
+          format: null,
+          schema_version: null,
+          file_error: null,
+          total: 0,
+          valid: 0,
+          invalid: 0,
+          will_create: 0,
+          will_update: 0,
+          will_skip: 0,
+          already_imported: 0,
+          with_warnings: 0,
+          new_clients: [],
+          new_tags: [],
+          rows: [],
+          rows_truncated: false,
+          errors: [],
+        };
+        if (!f.rows)
+          return {
+            ...empty,
+            file_error: {
+              code: 'UNSAFE_ARCHIVE',
+              message: 'unsafe archive: entry "../../startup/run.sh" points outside the archive',
+            },
+          };
+        const settingsUsed: ImportSettings = {
+          duplicates: s.duplicates ?? 'skip',
+          default_client: s.default_client?.trim() ? clean(s.default_client, 120, E.INVALID_LABEL) : null,
+        };
+        const digest = digestOf(f.name, f.rows);
+        const p = plan(ws, f.rows, digest, settingsUsed);
+        const count = (st: Planned['status']) => p.rows.filter((r) => r.status === st).length;
+        const job: ImportJob & { workspace_id: string } = {
+          id: id('imp'),
+          workspace_id: ws,
+          status: 'previewed',
+          source_name: f.name,
+          source_digest: digest,
+          format: 'csv',
+          settings: settingsUsed,
+          total: p.rows.length,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+          errors: [],
+          created_at: now(),
+          started_at: null,
+          finished_at: null,
+        };
+        jobs.unshift(job);
+        previews.set(job.id, { ws, fileRef, digest, settings: settingsUsed, applied: new Set() });
+        return {
+          ...empty,
+          preview_id: job.id,
+          format: 'csv',
+          schema_version: 1,
+          total: p.rows.length,
+          invalid: count('error'),
+          valid: p.rows.length - count('error'),
+          will_create: count('create'),
+          will_update: count('update'),
+          will_skip: count('skip_duplicate'),
+          already_imported: count('already_imported'),
+          with_warnings: p.rows.filter((r) => r.status !== 'error' && r.warnings.length).length,
+          new_clients: p.newClients.slice(0, 50),
+          new_tags: p.newTags.slice(0, 50),
+          rows: p.rows.slice(0, 500).map((r) => ({
+            row: r.row,
+            status: r.status,
+            name: r.name,
+            client: r.client,
+            tags: r.tags,
+            warnings: r.warnings,
+            errors: r.errors,
+          })),
+          rows_truncated: p.rows.length > 500,
+          errors: rowErrors(p.rows),
+        };
+      },
+      async commit(previewId: string) {
+        const ws = requireWs();
+        const st = previews.get(previewId);
+        const job = jobs.find((j) => j.id === previewId);
+        if (!st || !job || st.ws !== ws) throw E.UNKNOWN_IMPORT;
+        const f = files.get(st.fileRef);
+        if (!f?.rows) throw E.UNKNOWN_FILE;
+        if (digestOf(f.name, f.rows) !== st.digest)
+          throw err(
+            'SOURCE_CHANGED',
+            'The file changed after the preview. Preview it again before importing.',
+          );
+        if (importsRunning.size) throw E.IMPORT_IN_PROGRESS;
+        const flag = { cancel: false };
+        importsRunning.set(job.id, flag);
+        Object.assign(job, { status: 'running', started_at: now(), finished_at: null });
+        const op = startOp('import_profiles', job.id);
+        const p = plan(ws, f.rows, st.digest, st.settings);
+        let [ok, failed, skipped] = [0, p.rows.filter((r) => r.status === 'error').length, 0];
+        const errors = rowErrors(p.rows);
+        let i = 0;
+        const step = () => {
+          if (flag.cancel) return done(true);
+          for (const r of p.rows.slice(i, i + BATCH)) {
+            if (r.status === 'skip_duplicate' || r.status === 'already_imported') skipped++;
+            if (r.status === 'create') {
+              const rec = addProfile(r.name, r.client, ws, {
+                notes: r.notes,
+                favourite: r.favourite,
+                start_urls: r.start_urls,
+                import_ref: `${st.digest.slice(0, 16)}:${r.row}`,
+              });
+              rec.tag_ids = [...new Set(r.tags.map((t) => ensureTag(ws, t).id))];
+              ok++;
+            }
+            if (r.status === 'update' && r.update) {
+              if (st.applied.has(r.row)) {
+                skipped++;
+                continue;
+              }
+              const rec = recs.find((x) => x.id === r.update?.id);
+              if (!rec) continue;
+              rec.tag_ids = [...new Set([...rec.tag_ids, ...r.tags.map((t) => ensureTag(ws, t).id)])];
+              if (r.notes) rec.notes = r.notes;
+              rec.version++;
+              st.applied.add(r.row);
+              ok++;
+            }
+          }
+          i += BATCH;
+          Object.assign(job, { succeeded: ok, failed, skipped });
+          Object.assign(op, { progress: Math.min(1, i / Math.max(1, p.rows.length)) });
+          emit('operation', { ...op });
+          if (i >= p.rows.length) return done(false);
+          setTimeout(step, 40);
+        };
+        const done = (cancelled: boolean) => {
+          importsRunning.delete(job.id);
+          Object.assign(job, {
+            status: cancelled ? 'cancelled' : failed ? 'completed_with_errors' : 'completed',
+            succeeded: ok,
+            failed,
+            skipped,
+            errors,
+            finished_at: now(),
+          });
+          finish(
+            op,
+            cancelled
+              ? {
+                  status: 'failed',
+                  error_code: 'IMPORT_CANCELLED',
+                  message:
+                    'Import cancelled. Rows already imported were kept; running the same file again continues safely.',
+                }
+              : { status: 'succeeded', progress: 1 },
+          );
+        };
+        setTimeout(step, 40);
+        return { operation_id: op.operation_id };
+      },
+      async cancel(jobId: string) {
+        const flag = importsRunning.get(jobId);
+        if (!flag) throw E.UNKNOWN_IMPORT;
+        flag.cancel = true;
+      },
+      async jobs() {
+        const ws = requireWs();
+        return jobs
+          .filter((j) => j.workspace_id === ws && j.status !== 'previewed')
+          .slice(0, 50)
+          .map(({ workspace_id: _w, ...j }) => j);
+      },
+      async export(selection: Selection, format: 'csv' | 'json' | 'bundle', includeNotes: boolean) {
+        const { ids } = resolve(selection);
+        const withheld = includeNotes ? ids.filter((i) => secretHint(find(i).notes)).length : 0;
+        const ext = format === 'bundle' ? 'zip' : format;
+        return {
+          path: `/Users/demo/Downloads/profiles-${now().slice(0, 10)}.${ext}`,
+          exported: ids.length,
+          notes_withheld: withheld,
+        };
       },
     },
     system: {
@@ -523,6 +1561,8 @@ export function demoBackend(mode = ''): Backend {
         if (!s) throw err('UNKNOWN_SETTING', 'That setting does not exist.');
         if (!s.ui_settable)
           throw err('SETTING_READ_ONLY', 'That setting is changed through its own control.');
+        if (ENUMS[key] && !ENUMS[key]?.includes(value))
+          throw err('INVALID_SETTING_VALUE', 'That value is not allowed for this setting.');
         if (expectedVersion !== undefined && expectedVersion !== s.version) {
           throw {
             ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
@@ -544,10 +1584,10 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.3.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: { version: '0.4.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
-            schema_version: 3,
+            schema_version: 4,
             journal_mode: 'wal',
             foreign_keys: true,
             integrity_ok: true,
@@ -572,7 +1612,7 @@ export function demoBackend(mode = ''): Backend {
       },
       async resolveQuit(choice: string) {
         if (choice === 'close_all' || choice === 'force_close_all') {
-          for (const p of profiles) {
+          for (const p of recs) {
             if (isOpen(p)) stopNow(p.id, 'clean');
           }
           emit('profiles-changed', { running: 0 });
@@ -586,8 +1626,8 @@ export function demoBackend(mode = ''): Backend {
         if (confirm !== 'DELETE')
           throw err('CONFIRMATION_REQUIRED', 'Type DELETE to confirm removing all local data.');
         if (running() > 0) throw err('PROFILES_RUNNING', 'Close all open profiles before doing this.');
-        profiles.length = 0;
-        workspaces.length = 0;
+        for (const list of [recs, workspaces, clients, tags, templates, filters, jobs] as unknown[][])
+          list.length = 0;
         settings['workspace.active'] = { ...(settings['workspace.active'] as SettingValue), value: null };
       },
     },

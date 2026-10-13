@@ -23,6 +23,8 @@ Recorded 2026-10-12 (milestone 01). Exact versions are locked in `pnpm-lock.yaml
 | Vite / @vitejs/plugin-react | 8.3.4 / 6.1.2 | https://vite.dev |
 | Browser runtime | Chrome for Testing **155.0.8059.39** (revision 1697595), pinned in the signed `runtimes/manifest.json` (signed 2026-10-12 after Windows/macOS/Linux compatibility passed; internal alpha only, ADR-0010) | docs/runtime-pipeline.md |
 | ed25519-dalek / ureq (rustls, platform verifier) | 3.0.0 / 3.4.x | crates/update |
+| csv / zip (deflate only) | 1.4.0 / 9.0.2 | crates/import (milestone 04) |
+| unicode-normalization | 0.1.25 | crates/storage name folding (milestone 04) |
 
 ## Backend
 | Component | Pinned | Reference |

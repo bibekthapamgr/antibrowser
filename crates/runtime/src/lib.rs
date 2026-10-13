@@ -15,8 +15,9 @@ pub mod procs;
 pub mod state;
 
 pub use id::{
-    DeviceId, InvalidDeviceId, InvalidProfileId, InvalidWorkspaceId, ProfileId, WorkspaceId,
-    random_hex,
+    ClientId, DeviceId, FilterId, ImportJobId, InvalidClientId, InvalidDeviceId, InvalidFilterId,
+    InvalidImportJobId, InvalidProfileId, InvalidTagId, InvalidTemplateId, InvalidWorkspaceId,
+    ProfileId, TagId, TemplateId, WorkspaceId, random_hex,
 };
 pub use inspect::{ProcRecord, ProcessInfo, ProcessInspector, SystemInspector};
 pub use launch::{

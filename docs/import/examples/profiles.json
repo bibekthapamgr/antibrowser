@@ -1,0 +1,27 @@
+{
+  "format": "project-browser.profiles",
+  "schema_version": 1,
+  "generator": "hand-written example",
+  "profiles": [
+    {
+      "name": "Shop admin",
+      "client": "Client North",
+      "tags": ["ecommerce", "vip"],
+      "notes": "Call the client on Mondays",
+      "start_urls": ["https://shop.example/admin"],
+      "camera": "block",
+      "microphone": "block",
+      "location": "ask",
+      "favourite": true
+    },
+    {
+      "name": "Ads QA",
+      "client": "Client South",
+      "tags": ["ads", "qa"],
+      "start_urls": ["https://ads.example/", "https://analytics.example/"],
+      "location": "block"
+    },
+    { "name": "Café Zürich", "client": "Client Süd" },
+    { "name": "Store from template", "client": "Client North", "template": "Store manager" }
+  ]
+}

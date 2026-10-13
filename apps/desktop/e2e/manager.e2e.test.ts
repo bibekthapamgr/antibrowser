@@ -1,10 +1,12 @@
 /**
- * Milestone 02 UI acceptance, run against the production bundle in demo mode:
+ * Milestone 02-04 UI acceptance, run against the production bundle in demo mode:
  * - a keyboard-only user can create a workspace and reach profile settings
  * - no serious/critical axe violations on each screen, in light and dark
  * - usable at the 900x600 minimum window size (no horizontal page scroll) and at 2x DPI
  * - large lists are virtualized
  * - closing the manager with profiles open asks, and says profiles can keep running
+ * - milestone 04: folders, keyboard selection, bulk actions with undo, "all matching" selection with its count,
+ *   the trash with a typed confirmation, import preview/commit/cancel, export, secret-looking notes
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -171,6 +173,54 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
   },
   { name: 'downloads-install-browser', demo: 'noruntime', nav: 'Downloads and updates' },
   {
+    name: 'profiles-selection',
+    demo: '',
+    prepare: async (p) => {
+      await p.focus('[role=grid]');
+      await p.keyboard.press('Space');
+      await p.keyboard.press('ArrowDown');
+      await p.keyboard.press('Space');
+      await p.waitForSelector('.bulk-bar');
+    },
+  },
+  { name: 'profiles-trash', demo: '', prepare: (p) => clickFolder(p, 'Trash') },
+  {
+    name: 'import-preview',
+    demo: '',
+    prepare: async (p) => {
+      await clickButton(p, '.toolbar', 'Import…');
+      await clickButton(p, '[role=dialog]', 'Choose file…');
+      await p.waitForSelector('.summary');
+    },
+  },
+  {
+    name: 'import-unsafe-file',
+    demo: 'unsafeimport',
+    prepare: async (p) => {
+      await clickButton(p, '.toolbar', 'Import…');
+      await clickButton(p, '[role=dialog]', 'Choose file…');
+      await p.waitForSelector('.notice--error');
+    },
+  },
+  {
+    name: 'export-dialog',
+    demo: '',
+    prepare: async (p) => {
+      await p.click('.table__head input[type=checkbox]');
+      await clickButton(p, '.bulk-bar', 'Export…');
+      await p.waitForSelector('[role=dialog]');
+    },
+  },
+  {
+    name: 'delete-confirmation',
+    demo: '',
+    prepare: async (p) => {
+      await clickFolder(p, 'Trash');
+      await clickButton(p, '.filters', 'Empty trash…');
+      await p.waitForSelector('[role=alertdialog]');
+    },
+  },
+  {
     name: 'quit-with-running-profiles',
     demo: 'running',
     prepare: async (p) => {
@@ -194,15 +244,52 @@ async function clickRow(page: Page, name: string) {
   throw new Error(`no row ${name}`);
 }
 
-async function clickButton(page: Page, scope: string, label: string) {
-  const buttons = await page.$$(`${scope} button`);
-  for (const b of buttons) {
-    if ((await b.evaluate((el) => el.textContent?.trim())) === label) {
-      await b.click();
+async function clickFolder(page: Page, label: string) {
+  const folders = await page.$$('.folder');
+  for (const f of folders) {
+    if ((await f.$eval('.folder__label', (el) => el.textContent?.trim())) === label) {
+      await f.click();
+      await page.waitForFunction(
+        (l) => document.querySelector('.toolbar__title p')?.textContent?.startsWith(l),
+        {},
+        label,
+      );
+      // The table shows the new folder once its first page arrives.
+      await page.waitForFunction(() => !document.querySelector('[role=row][aria-busy=true]'));
       return;
     }
   }
-  throw new Error(`no button ${label} in ${scope}`);
+  throw new Error(`no folder ${label}`);
+}
+
+const rowCount = (page: Page, n: number) =>
+  page.waitForFunction(
+    (count) => document.querySelector('[role=grid]')?.getAttribute('aria-rowcount') === String(count),
+    {},
+    n,
+  );
+
+const toastContains = (page: Page, needle: string) =>
+  page.waitForFunction(
+    (t) => [...document.querySelectorAll('.toast')].some((x) => x.textContent?.includes(t)),
+    {},
+    needle,
+  );
+
+async function clickButton(page: Page, scope: string, label: string) {
+  // Waits for the button to exist and be enabled (dialogs and previews render asynchronously).
+  const handle = await page.waitForFunction(
+    (sc, l) =>
+      [...document.querySelectorAll<HTMLButtonElement>(`${sc} button`)].find(
+        (b) => b.textContent?.trim() === l && !b.disabled,
+      ),
+    { timeout: 10_000 },
+    scope,
+    label,
+  );
+  const el = handle.asElement();
+  if (!el) throw new Error(`no button ${label} in ${scope}`);
+  await (el as unknown as { click(): Promise<void> }).click();
 }
 
 describe.each([
@@ -344,5 +431,146 @@ describe('profile lifecycle (milestone 03)', () => {
 describe('content security policy', () => {
   it('the bundle runs under the shell CSP without violations', () => {
     expect(cspErrors).toEqual([]);
+  });
+});
+
+describe('profile management (milestone 04)', () => {
+  it('selects rows with the keyboard, archives them in bulk and undoes', async () => {
+    const page = await open('');
+    await page.waitForSelector('[role=grid]');
+    await page.focus('[role=grid]');
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    await page.waitForSelector('.bulk-bar');
+    expect(await text(page, '.bulk-bar__count')).toMatch(/^2 selected of 3/);
+    await clickButton(page, '.bulk-bar', 'Archive 2');
+    await page.waitForSelector('.undo-bar');
+    expect(await text(page, '.undo-bar')).toContain('Archived 2 profiles.');
+    await rowCount(page, 1);
+    expect(await page.$('.bulk-bar')).toBeNull();
+    await clickButton(page, '.undo-bar', 'Undo');
+    await rowCount(page, 3);
+    await page.close();
+  });
+
+  it('selects all matching profiles across pages and shows that count on the action', async () => {
+    const page = await open('rows:10000');
+    await page.waitForSelector('[role=grid]');
+    await page.click('.table__head input[type=checkbox]');
+    expect(await text(page, '.bulk-bar__count')).toMatch(/^200 selected of 10,000/);
+    await clickButton(page, '.bulk-bar', 'Select all 10,000 matching');
+    expect(await text(page, '.bulk-bar__count')).toContain('All 10,000 matching profiles selected');
+    await clickButton(page, '.bulk-bar', 'Add tag…');
+    const dialog = await page.waitForSelector('[role=dialog]');
+    expect(await dialog?.$eval('h2', (h) => h.textContent)).toBe('Add a tag to 10,000 selected profiles');
+    await page.keyboard.type('Batch 1');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.undo-bar');
+    expect(await text(page, '.undo-bar')).toContain('Tagged 10,000 profiles');
+    await page.close();
+  });
+
+  it('filters by client folder, tag and accent-insensitive search', async () => {
+    const page = await open('');
+    await clickFolder(page, 'Client North');
+    await rowCount(page, 1);
+    await clickFolder(page, 'All profiles');
+    await rowCount(page, 3);
+    await page.type('input[type=search]', 'ÃDS');
+    await rowCount(page, 1);
+    expect(await text(page, '.trow__name')).toBe('Ads QA');
+    await page.close();
+  });
+
+  it('moves a profile to the trash and deletes permanently only after typing DELETE', async () => {
+    const page = await open('');
+    await clickRow(page, 'Support desk');
+    await clickButton(page, '.drawer', 'Move to trash');
+    await page.waitForSelector('.undo-bar');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer')?.textContent?.includes('In the trash'),
+    );
+    await page.click('.drawer [aria-label="Close profile settings"]');
+    await clickFolder(page, 'Trash');
+    await rowCount(page, 2);
+    await clickButton(page, '.filters', 'Empty trash…');
+    const dialog = await page.waitForSelector('[role=alertdialog]');
+    expect(await dialog?.$eval('h2', (h) => h.textContent)).toBe('Delete 2 profiles permanently?');
+    const disabled = await page.$$eval('[role=alertdialog] button', (b) =>
+      b.filter((x) => x.textContent === 'Delete 2 profiles').map((x) => (x as HTMLButtonElement).disabled),
+    );
+    expect(disabled).toEqual([true]);
+    await page.keyboard.type('DELETE');
+    await clickButton(page, '[role=alertdialog]', 'Delete 2 profiles');
+    await page.waitForFunction(() =>
+      document.querySelector('.empty')?.textContent?.includes('Nothing in Trash'),
+    );
+    await toastContains(page, 'Deleted 2 profiles permanently.');
+    await page.close();
+  });
+
+  it('previews an import with row errors, imports the valid rows and updates the table without a reload', async () => {
+    const page = await open('');
+    await clickButton(page, '.toolbar', 'Import…');
+    await clickButton(page, '[role=dialog]', 'Choose file…');
+    await page.waitForSelector('.summary');
+    const summary = await text(page, '.summary');
+    expect(summary).toMatch(/New profiles\s*5/);
+    expect(summary).toMatch(/Skipped duplicates\s*2/);
+    expect(summary).toMatch(/Rows with errors\s*3/);
+    const errors = await page.$$eval('[role=dialog] details[open] tbody tr', (rows) =>
+      rows.map((r) => r.firstElementChild?.textContent),
+    );
+    expect(errors).toEqual(['5', '6', '10']);
+    await clickButton(page, '[role=dialog]', 'Import 5 profiles');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog]')?.textContent?.includes('Completed with errors'),
+    );
+    await clickButton(page, '[role=dialog]', 'Done');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('.trow__name')].some((n) => n.textContent === 'Café orders'),
+    );
+    await page.close();
+  });
+
+  it('cancels a 10,000-row import and offers to continue it', async () => {
+    const page = await open('bigimport');
+    await clickButton(page, '.toolbar', 'Import…');
+    await clickButton(page, '[role=dialog]', 'Choose file…');
+    await page.waitForSelector('.summary');
+    await clickButton(page, '[role=dialog]', 'Import 9,999 profiles');
+    await page.waitForSelector('[role=dialog] progress');
+    await clickButton(page, '[role=dialog]', 'Cancel import');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog]')?.textContent?.includes('Cancelled.'),
+    );
+    await clickButton(page, '[role=dialog]', 'Continue import');
+    await page.waitForFunction(
+      () => document.querySelector('[role=dialog]')?.textContent?.includes('Completed with errors'),
+      { timeout: 15_000 },
+    );
+    expect(await text(page, '[role=dialog]')).toContain('9,999 profiles imported or updated');
+    await page.close();
+  });
+
+  it('names the client when a profile opens', async () => {
+    const page = await open('');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'Opening Shop admin (Client North)');
+    await page.close();
+  });
+
+  it('warns about secrets in notes and does not save them', async () => {
+    const page = await open('');
+    await clickRow(page, 'Ads QA');
+    await page.type('.drawer textarea[aria-describedby]', 'Password: hunter2');
+    await page.waitForFunction(() => document.querySelector('.drawer textarea[aria-invalid=true]'));
+    await clickButton(page, '.drawer', 'Save changes');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer [role=alert]')?.textContent?.includes('password manager'),
+    );
+    await page.close();
   });
 });
