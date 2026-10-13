@@ -839,14 +839,17 @@ impl Engine<'_> {
             job.state = RestoreState::Downloading;
             job.downloaded = have;
             self.save_restore(job)?;
+            if have == 0 {
+                // Start empty (a leftover larger than the snapshot is not resumable). Truncated through its own
+                // handle: Windows refuses to change the length through an append-only handle.
+                fs::File::create(&download).map_err(local)?;
+            }
+            // Append mode: after a restart (truncated through another handle) writes continue at the new end.
             let mut out = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&download)
                 .map_err(local)?;
-            if have == 0 {
-                out.set_len(0).map_err(local)?;
-            }
             let id = job.id.clone();
             let total = snap.ciphertext_size;
             let restart_target = download.clone();
