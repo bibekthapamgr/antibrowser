@@ -233,6 +233,17 @@ fn a_shared_profile_opens_under_a_lease_heartbeats_and_hands_off_with_a_note() {
     open(&a, &id_a);
     let t = team(&a, &id_a);
     assert_eq!(t["phase"], json!("running"), "{t}");
+    // The profile list says it is shared and open here.
+    let listed = invoke(&a, "list_profiles", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    let row = listed
+        .as_array()
+        .and_then(|l| l.iter().find(|p| p["id"] == json!(id_a)))
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(
+        (row["sync_status"].clone(), row["team_phase"].clone()),
+        (json!("shared"), json!("running"))
+    );
     assert_eq!(
         t["capabilities"],
         json!(["launch", "edit", "backup_download"])

@@ -95,6 +95,26 @@ export const NetworkView = Type.Object({
 });
 export type NetworkView = Static<typeof NetworkView>;
 
+/**
+ * Phases of a shared session on this computer: opening (lease taken; restoring the newest backup, starting the
+ * browser), running (heartbeats every 15 s), closing, handing_off (the closing backup uploads under the session's
+ * lease; released after the commit), pending (waiting for a decision: upload failed or canceled, or the browser did
+ * not close normally), lost (the connection dropped and the browser was closed before the lease could run out),
+ * taken_over (an admin took it; this copy was kept aside and offered as a recovery copy), revoked (access removed;
+ * this copy was kept aside on this computer).
+ */
+export const TEAM_PHASES = [
+  'opening',
+  'running',
+  'closing',
+  'handing_off',
+  'pending',
+  'lost',
+  'taken_over',
+  'revoked',
+] as const;
+export type TeamPhase = (typeof TEAM_PHASES)[number];
+
 export const ProfileView = Type.Object({
   id: Type.String({ pattern: ProfileIdPattern }),
   workspace_id: Nullable(Type.String({ pattern: WorkspaceIdPattern })),
@@ -114,9 +134,12 @@ export const ProfileView = Type.Object({
   fail_closed: Type.Boolean({ description: 'With a proxy: block traffic that cannot go through it.' }),
   network: NetworkView,
   privacy: PrivacyConfig,
-  sync_status: Type.Literal('local_only', {
-    description: 'Organization backup state (milestone 07) is per profile: get_sync_status.',
+  sync_status: Type.Enum(['local_only', 'shared'], {
+    description:
+      'shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status.',
   }),
+  /** This computer's shared session of it (milestone 08); null: none. */
+  team_phase: Nullable(Type.Enum(TEAM_PHASES)),
   version: Type.Integer({ minimum: 1 }),
   created_at: Type.String(),
   updated_at: Type.String(),
@@ -760,25 +783,6 @@ export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
 const ProfileArg = Type.Object({ profileId: Type.String({ pattern: ProfileIdPattern }) });
 
 // ------------------------------------------------------------------------------------------------ milestone 08
-/**
- * Phases of a shared session on this computer: opening (lease taken; restoring the newest backup, starting the
- * browser), running (heartbeats every 15 s), closing, handing_off (the closing backup uploads under the session's
- * lease; released after the commit), pending (waiting for a decision: upload failed or canceled, or the browser did
- * not close normally), lost (the connection dropped and the browser was closed before the lease could run out),
- * taken_over (an admin took it; this copy was kept aside and offered as a recovery copy), revoked (access removed;
- * this copy was kept aside on this computer).
- */
-export const TEAM_PHASES = [
-  'opening',
-  'running',
-  'closing',
-  'handing_off',
-  'pending',
-  'lost',
-  'taken_over',
-  'revoked',
-] as const;
-export type TeamPhase = (typeof TEAM_PHASES)[number];
 export const TeamRequest = Type.Object({
   id: Type.String({ pattern: '^hrq_[0-9A-HJKMNP-TV-Z]{26}$' }),
   profile_id: Type.String(),

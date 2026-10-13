@@ -6,14 +6,19 @@
  *
  * Modes (`?demo=`): `signedin` (start signed in), `unverified` (e-mail not verified), `cloudoffline` (the server is
  * unreachable after the first answers), `member` (the demo user is an operator of the demo organization).
+ * Milestone 08 (with `linked`): `inuse` (Sam has the first organization profile open on another computer).
  */
 import {
   type ASSIGNABLE_ROLES,
+  defaultCapabilities,
+  GRANT_CAPABILITIES,
+  type GrantCapability,
   type Permission,
   ROLE_PERMISSIONS,
   ROLE_SCOPE,
   type Role,
 } from '@pb/contracts/resources';
+import { secretHint } from '../notes.ts';
 import type { AccountRepository, AccountView, CloudRequest, CloudResponse, OrgImportView } from './types.ts';
 
 const CROCK = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -80,8 +85,13 @@ interface OrgRec {
     user_id: string;
     client_id: string | null;
     profile_id: string | null;
+    capabilities: GrantCapability[];
     created_at: string;
   }[];
+  /** Milestone 08: each profile's current lease, access requests and recovery copies. */
+  leases: Map<string, DemoLease>;
+  requests: DemoRequest[];
+  recovery: DemoRecovery[];
   audit: {
     id: string;
     actor_user_id: string | null;
@@ -94,6 +104,43 @@ interface OrgRec {
     details: Record<string, unknown>;
     created_at: string;
   }[];
+}
+
+interface DemoLease {
+  id: string;
+  holder: string;
+  holder_name: string;
+  device_id: string;
+  device_name: string;
+  state: 'active' | 'released' | 'taken_over' | 'revoked';
+  /** The holder stopped answering (its lease ran out): nobody else may open it until an admin takes it over. */
+  uncertain: boolean;
+  fencing: number;
+  since: string;
+  heartbeat_at: string | null;
+  run_state: string | null;
+  note: { text: string; by_user_id: string; by_name: string; at: string } | null;
+}
+
+interface DemoRequest {
+  id: string;
+  profile_id: string;
+  requested_by: string;
+  holder_user_id: string | null;
+  note: string;
+  status: 'open' | 'declined' | 'canceled' | 'fulfilled' | 'expired';
+  created_at: string;
+  responded_at: string | null;
+  expires_at: string;
+}
+
+interface DemoRecovery {
+  id: string;
+  profile_id: string;
+  lease_id: string | null;
+  created_by: string;
+  device_id: string | null;
+  kept_at: string;
 }
 
 export interface DemoSnapshot {
@@ -123,6 +170,8 @@ export interface DemoCloudSync {
   firstProfile(): { orgId: string; profileId: string } | null;
   link(localId: string, orgId: string, orgProfileId: string): void;
   unlink(localId: string): void;
+  /** The local profile's link (synchronous, for list views). */
+  linkOf(localId: string): { org_id: string; org_profile_id: string } | null;
   profileName(orgId: string, orgProfileId: string): string | null;
   /** Newest committed version (0: none) and its snapshot. */
   head(orgId: string, orgProfileId: string): { version: number; snapshot: DemoSnapshot | null };
@@ -134,6 +183,47 @@ export interface DemoCloudSync {
     base: number,
     device: string,
   ): { version: number; snapshot: DemoSnapshot } | { conflict: number };
+}
+
+/** What the demo shared sessions (demo-team.ts) need from the demo server (milestone 08). */
+export interface DemoCloudTeam {
+  open(
+    orgId: string,
+    orgProfileId: string,
+  ):
+    | { note: { text: string; by_user_id: string; by_name: string; at: string } | null }
+    | {
+        refused: 'PROFILE_IN_USE_ELSEWHERE' | 'PROFILE_SESSION_UNCERTAIN' | 'NO_ACCESS';
+        holder_name: string;
+        device_name: string;
+        since: string | null;
+      };
+  /** A heartbeat: the lease's state and open requests addressed to this person. */
+  beat(
+    orgId: string,
+    orgProfileId: string,
+    runState: string,
+  ): { state: 'active' | 'released' | 'taken_over' | 'revoked' | 'none'; requests: DemoTeamRequest[] };
+  release(orgId: string, orgProfileId: string, note: string | null): void;
+  capabilities(orgId: string, orgProfileId: string): GrantCapability[];
+  /** Demo stand-ins for teammates: Sam asks for the profile, or an admin takes it over. */
+  teammateAsks(orgId: string, orgProfileId: string, note: string): void;
+  adminTakesOver(orgId: string, orgProfileId: string): void;
+  keepRecovery(orgId: string, orgProfileId: string): void;
+}
+
+export interface DemoTeamRequest {
+  id: string;
+  profile_id: string;
+  requested_by: string;
+  requested_by_name: string;
+  holder_user_id: string | null;
+  note: string;
+  status: 'open' | 'declined' | 'canceled' | 'fulfilled' | 'expired';
+  created_at: string;
+  responded_at: string | null;
+  expires_at: string;
+  mine: boolean;
 }
 
 interface LocalProfile {
@@ -152,7 +242,7 @@ export function demoCloud(opts: {
     message?: string;
   }) => void;
   localProfiles: (workspaceId: string) => LocalProfile[];
-}): AccountRepository & { sync: DemoCloudSync } {
+}): AccountRepository & { sync: DemoCloudSync; team: DemoCloudTeam } {
   const me = {
     id: rid('usr'),
     display_name: 'Demo Person',
@@ -192,6 +282,7 @@ export function demoCloud(opts: {
   let signingIn = false;
   let recentAuthUntil = 0;
   let requests = 0;
+  let fencing = 100;
 
   // A demo organization with clients, profiles and two more members.
   const seedOrg = (myRole: Role) => {
@@ -224,6 +315,9 @@ export function demoCloud(opts: {
       invitations: [],
       grants: [],
       audit: [],
+      leases: new Map(),
+      requests: [],
+      recovery: [],
     };
     for (const name of ['Client North', 'Client South']) {
       org.clients.push({
@@ -282,8 +376,26 @@ export function demoCloud(opts: {
       user_id: grantTo,
       client_id: north?.id ?? null,
       profile_id: null,
+      capabilities: ['launch', 'backup_download'],
       created_at: t,
     });
+    // Milestone 08: Sam has the first profile open on his Windows laptop.
+    if (opts.mode.includes('inuse') && backedUp) {
+      org.leases.set(backedUp.id, {
+        id: rid('lse'),
+        holder: sam.id,
+        holder_name: sam.display_name,
+        device_id: rid('dev'),
+        device_name: 'Sam’s Windows laptop',
+        state: 'active',
+        uncertain: false,
+        fencing: ++fencing,
+        since: new Date(Date.now() - 40 * 60_000).toISOString(),
+        heartbeat_at: now(),
+        run_state: 'running',
+        note: null,
+      });
+    }
     orgs.set(org.id, org);
   };
   if (opts.mode.includes('member')) seedOrg('operator');
@@ -365,6 +477,85 @@ export function demoCloud(opts: {
     accepted_at: i.accepted_at,
   });
 
+  // ------------------------------------------------------------------ milestone 08: sessions and access
+  const ALL_CAPS: GrantCapability[] = [...GRANT_CAPABILITIES];
+  /** What this person may do with a profile: everything for owners and admins, their grants' capabilities else. */
+  const capsOf = (org: OrgRec, p: OrgRec['profiles'][number], userId = me.id): GrantCapability[] => {
+    const r = org.members.get(userId)?.role;
+    if (!r) return [];
+    if (ROLE_SCOPE[r] === 'organization') return ALL_CAPS;
+    if (r !== 'operator') return [];
+    const caps = new Set<GrantCapability>();
+    for (const g of org.grants)
+      if (g.user_id === userId && (g.profile_id === p.id || (g.client_id && g.client_id === p.client_id)))
+        for (const c of g.capabilities) caps.add(c);
+    return ALL_CAPS.filter((c) => caps.has(c));
+  };
+  const openLease = (org: OrgRec, profileId: string) => {
+    const l = org.leases.get(profileId);
+    return l && l.state === 'active' ? l : null;
+  };
+  const leaseView = (profileId: string, l: DemoLease) => ({
+    id: l.id,
+    profile_id: profileId,
+    purpose: 'session',
+    state: l.state === 'active' && l.uncertain ? 'uncertain' : l.state,
+    holder_user_id: l.holder,
+    holder_name: l.holder_name,
+    device_id: l.device_id,
+    device_name: l.device_name,
+    fencing_token: String(l.fencing),
+    run_state: l.run_state,
+    acquired_at: l.since,
+    expires_at: new Date(Date.parse(l.heartbeat_at ?? l.since) + 60_000).toISOString(),
+    heartbeat_at: l.heartbeat_at,
+    ttl_seconds: 60,
+    heartbeat_seconds: 15,
+  });
+  const inUse = (org: OrgRec, profileId: string) => {
+    const l = openLease(org, profileId);
+    return l
+      ? {
+          lease_id: l.id,
+          purpose: 'session',
+          state: l.uncertain ? 'uncertain' : 'active',
+          holder_user_id: l.holder,
+          holder_name: l.holder_name,
+          device_id: l.device_id,
+          device_name: l.device_name,
+          run_state: l.run_state,
+          since: l.since,
+          heartbeat_at: l.heartbeat_at,
+          expires_at: new Date(Date.parse(l.heartbeat_at ?? l.since) + 60_000).toISOString(),
+          mine: l.holder === me.id,
+        }
+      : null;
+  };
+  const requestRow = (r: DemoRequest): DemoTeamRequest => ({
+    ...r,
+    requested_by_name: people.get(r.requested_by)?.display_name ?? '',
+    mine: r.requested_by === me.id,
+  });
+  const fulfil = (org: OrgRec, profileId: string) => {
+    for (const r of org.requests)
+      if (r.profile_id === profileId && r.status === 'open') {
+        r.status = 'fulfilled';
+        r.responded_at = now();
+      }
+  };
+
+  /** Grants or roles changed: leases their holders may no longer hold end as revoked. */
+  const endOutOfReach = (org: OrgRec) => {
+    for (const [profileId, l] of org.leases) {
+      const p = org.profiles.find((x) => x.id === profileId);
+      if (l.state === 'active' && p && !capsOf(org, p, l.holder).includes('launch')) {
+        l.state = 'revoked';
+        l.fencing = ++fencing;
+        fulfil(org, profileId);
+      }
+    }
+  };
+
   /** The API itself. Returns `{status, body}`; paths are already allow-listed by the caller. */
   const route = (req: CloudRequest): { status: number; body: unknown } => {
     const q = new Map(req.query ?? []);
@@ -441,6 +632,9 @@ export function demoCloud(opts: {
         invitations: [],
         grants: [],
         audit: [],
+        leases: new Map(),
+        requests: [],
+        recovery: [],
       };
       orgs.set(org.id, org);
       audit(org, 'organization.created', org.id);
@@ -645,13 +839,34 @@ export function demoCloud(opts: {
         org.grants = org.grants.filter((g) => g.id !== d);
         if (org.grants.length === before) return notFound('Grant');
         audit(org, 'grant.removed', d ?? null);
+        endOutOfReach(org);
         return { status: 204, body: null };
       }
+      const asked = Array.isArray(body.capabilities)
+        ? ALL_CAPS.filter((c) => (body.capabilities as string[]).includes(c))
+        : null;
+      if (req.method === 'PATCH') {
+        const g = org.grants.find((x) => x.id === d);
+        if (!g) return notFound('Grant');
+        const memberRole = org.members.get(g.user_id)?.role;
+        if (memberRole === 'viewer' && asked?.length)
+          return err(
+            400,
+            'VALIDATION_FAILED',
+            'Viewers’ access cannot include opening, editing or downloads',
+          );
+        g.capabilities = asked ?? [];
+        audit(org, 'grant.updated', g.id);
+        endOutOfReach(org);
+        return { status: 200, body: g };
+      }
+      const memberRole = org.members.get(String(body.user_id))?.role;
       const g = {
         id: rid('grt'),
         user_id: String(body.user_id),
         client_id: (body.client_id as string) ?? null,
         profile_id: (body.profile_id as string) ?? null,
+        capabilities: memberRole === 'viewer' ? [] : (asked ?? defaultCapabilities(memberRole ?? 'viewer')),
         created_at: t,
       };
       if (!org.members.has(g.user_id)) return notFound('Member');
@@ -673,6 +888,10 @@ export function demoCloud(opts: {
         client_id: p.client_id,
         notes: p.notes,
         version: p.version,
+        snapshot_version: sync.head(org.id, p.id).version,
+        last_snapshot_at: sync.head(org.id, p.id).snapshot?.committed_at ?? null,
+        in_use: inUse(org, p.id),
+        capabilities: capsOf(org, p),
         created_at: p.created_at,
         updated_at: p.updated_at,
       });
@@ -722,6 +941,73 @@ export function demoCloud(opts: {
       }
       const p = org.profiles.find((x) => x.id === d && visibleProfile(org, x));
       if (!p) return notFound('Profile');
+      // Milestone 08: who has it open, access requests and forced takeover.
+      const [, , , , , f, g] = parts;
+      if (e === 'leases' && f === 'current') {
+        const denied = need('profile.read');
+        if (denied) return denied;
+        const l = openLease(org, p.id);
+        return { status: 200, body: { lease: l ? leaseView(p.id, l) : null } };
+      }
+      if (e === 'handoff-requests') {
+        if (!f) {
+          if (req.method === 'GET')
+            return (
+              need('profile.read') ?? page(org.requests.filter((x) => x.profile_id === p.id).map(requestRow))
+            );
+          const denied = need('profile.launch');
+          if (denied) return denied;
+          const note = String(body.note ?? '').trim();
+          if (secretHint(note))
+            return err(400, 'NOTE_LOOKS_SECRET', 'Notes must not contain passwords or keys');
+          const l = openLease(org, p.id);
+          if (!l || l.holder === me.id)
+            return err(409, 'PROFILE_NOT_IN_USE', 'Nobody else has this profile open');
+          const open = org.requests.find(
+            (x) => x.profile_id === p.id && x.requested_by === me.id && x.status === 'open',
+          );
+          if (open) return { status: 200, body: requestRow(open) };
+          const r: DemoRequest = {
+            id: rid('hrq'),
+            profile_id: p.id,
+            requested_by: me.id,
+            holder_user_id: l.holder,
+            note,
+            status: 'open',
+            created_at: t,
+            responded_at: null,
+            expires_at: new Date(Date.now() + 4 * 3_600_000).toISOString(),
+          };
+          org.requests.unshift(r);
+          audit(org, 'handoff.requested', p.id);
+          return { status: 201, body: requestRow(r) };
+        }
+        const r = org.requests.find((x) => x.id === f && x.profile_id === p.id);
+        if (!r) return notFound('Request');
+        const answerer = g === 'decline' ? r.holder_user_id : r.requested_by;
+        if (answerer !== me.id) return notFound('Request');
+        if (r.status === 'open') {
+          r.status = g === 'decline' ? 'declined' : 'canceled';
+          r.responded_at = t;
+          audit(org, 'handoff.answered', p.id);
+        }
+        return { status: 200, body: requestRow(r) };
+      }
+      if (e === 'force-takeover') {
+        const denied = need('lease.force_release');
+        if (denied) return denied;
+        const reason = String(body.reason ?? '').trim();
+        if (reason.length < 3 || body.confirm !== true)
+          return err(400, 'VALIDATION_FAILED', 'A reason is required');
+        const l = openLease(org, p.id);
+        if (!l) return err(409, 'PROFILE_NOT_IN_USE', 'Nobody has this profile open');
+        const previous = leaseView(p.id, l);
+        l.state = 'taken_over';
+        l.fencing = ++fencing;
+        fulfil(org, p.id);
+        audit(org, 'lease.taken_over', p.id);
+        return { status: 200, body: { previous, fencing_token: String(l.fencing) } };
+      }
       if (e === 'snapshots') {
         return (
           need('snapshot.read') ??
@@ -755,6 +1041,37 @@ export function demoCloud(opts: {
       return { status: 200, body: view(p) };
     }
     if (c === 'audit-events') return need('audit.read') ?? page(org.audit);
+    if (c === 'handoff-requests') {
+      const mine = q.get('mine') === 'true';
+      return page(
+        org.requests
+          .filter(
+            (x) => x.status === 'open' && (mine ? x.requested_by === me.id : x.holder_user_id === me.id),
+          )
+          .map(requestRow),
+      );
+    }
+    if (c === 'recovery-copies') {
+      const denied = need('backups.manage');
+      if (denied) return denied;
+      return page(
+        org.recovery.map((x) => ({
+          id: x.id,
+          profile_id: x.profile_id,
+          profile_name: org.profiles.find((p) => p.id === x.profile_id)?.name ?? '',
+          lease_id: x.lease_id,
+          created_by: x.created_by,
+          created_by_name: people.get(x.created_by)?.display_name ?? '',
+          device_id: x.device_id,
+          ciphertext_size: 38_000_000,
+          plaintext_size: 91_000_000,
+          platform: 'linux-x64',
+          browser_version: '155.0.8059.39',
+          kept_at: x.kept_at,
+          erase_after: new Date(Date.parse(x.kept_at) + org.policy.trash_days * DAY).toISOString(),
+        })),
+      );
+    }
     // Milestone 07: backup policy, trash and key versions.
     const usedBytes = () => org.snapshots.reduce((n, x) => n + x.ciphertext_size, 0);
     const policyView = () => ({
@@ -861,6 +1178,9 @@ export function demoCloud(opts: {
       const i = links.findIndex((l) => l.local_profile_id === localId);
       if (i >= 0) links.splice(i, 1);
     },
+    linkOf(localId) {
+      return links.find((l) => l.local_profile_id === localId) ?? null;
+    },
     profileName(orgId, orgProfileId) {
       return orgs.get(orgId)?.profiles.find((p) => p.id === orgProfileId)?.name ?? null;
     },
@@ -902,6 +1222,106 @@ export function demoCloud(opts: {
     },
   };
 
+  const team: DemoCloudTeam = {
+    open(orgId, orgProfileId) {
+      const org = orgs.get(orgId);
+      const p = org?.profiles.find((x) => x.id === orgProfileId && !x.deleted);
+      if (!org || !p || !capsOf(org, p).includes('launch'))
+        return { refused: 'NO_ACCESS', holder_name: '', device_name: '', since: null };
+      const cur = org.leases.get(p.id);
+      if (cur && cur.state === 'active' && cur.device_id !== deviceId)
+        return {
+          refused: cur.uncertain ? 'PROFILE_SESSION_UNCERTAIN' : 'PROFILE_IN_USE_ELSEWHERE',
+          holder_name: cur.holder_name,
+          device_name: cur.device_name,
+          since: cur.since,
+        };
+      const note = cur?.state === 'released' ? cur.note : null;
+      org.leases.set(p.id, {
+        id: rid('lse'),
+        holder: me.id,
+        holder_name: me.display_name,
+        device_id: deviceId,
+        device_name: devices[0]?.name ?? 'This computer',
+        state: 'active',
+        uncertain: false,
+        fencing: ++fencing,
+        since: now(),
+        heartbeat_at: now(),
+        run_state: 'starting',
+        note: null,
+      });
+      audit(org, 'lease.acquired', p.id);
+      return { note };
+    },
+    beat(orgId, orgProfileId, runState) {
+      const org = orgs.get(orgId);
+      const l = org?.leases.get(orgProfileId);
+      if (!org || !l || l.device_id !== deviceId) return { state: 'none', requests: [] };
+      if (l.state === 'active') {
+        l.heartbeat_at = now();
+        l.run_state = runState;
+      }
+      return {
+        state: l.state,
+        requests: org.requests
+          .filter((r) => r.profile_id === orgProfileId && r.status === 'open')
+          .map(requestRow),
+      };
+    },
+    release(orgId, orgProfileId, note) {
+      const org = orgs.get(orgId);
+      const l = org?.leases.get(orgProfileId);
+      if (!org || !l || l.device_id !== deviceId || l.state !== 'active') return;
+      l.state = 'released';
+      l.run_state = 'closed';
+      l.note = note ? { text: note, by_user_id: me.id, by_name: me.display_name, at: now() } : null;
+      fulfil(org, orgProfileId);
+      audit(org, 'lease.released', orgProfileId);
+    },
+    capabilities(orgId, orgProfileId) {
+      const org = orgs.get(orgId);
+      const p = org?.profiles.find((x) => x.id === orgProfileId);
+      return org && p ? capsOf(org, p) : [];
+    },
+    teammateAsks(orgId, orgProfileId, note) {
+      const org = orgs.get(orgId);
+      if (!org) return;
+      org.requests.unshift({
+        id: rid('hrq'),
+        profile_id: orgProfileId,
+        requested_by: sam.id,
+        holder_user_id: me.id,
+        note,
+        status: 'open',
+        created_at: now(),
+        responded_at: null,
+        expires_at: new Date(Date.now() + 4 * 3_600_000).toISOString(),
+      });
+    },
+    adminTakesOver(orgId, orgProfileId) {
+      const org = orgs.get(orgId);
+      const l = org?.leases.get(orgProfileId);
+      if (!org || !l || l.state !== 'active') return;
+      l.state = 'taken_over';
+      l.fencing = ++fencing;
+      fulfil(org, orgProfileId);
+      audit(org, 'lease.taken_over', orgProfileId);
+    },
+    keepRecovery(orgId, orgProfileId) {
+      const org = orgs.get(orgId);
+      if (!org) return;
+      org.recovery.unshift({
+        id: rid('snp'),
+        profile_id: orgProfileId,
+        lease_id: org.leases.get(orgProfileId)?.id ?? null,
+        created_by: me.id,
+        device_id: deviceId,
+        kept_at: now(),
+      });
+    },
+  };
+
   const view = (): AccountView => ({
     server_url: server,
     status,
@@ -913,6 +1333,7 @@ export function demoCloud(opts: {
 
   return {
     sync,
+    team,
     async get() {
       return view();
     },

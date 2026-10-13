@@ -10,6 +10,7 @@ import { errorMessage } from './backend/types.ts';
 import { ApiFailure, can, get, send } from './cloud.ts';
 import { Dialog, formatBytes } from './components.tsx';
 import { day, type Notify, relative, when } from './status.tsx';
+import { RecoveryCopiesSection } from './team.tsx';
 
 interface Page<T> {
   items: T[];
@@ -26,6 +27,8 @@ const WAITING: Record<string, string> = {
   LEASE_HELD: 'The profile is in use on another computer. It is tried again later.',
   STORAGE_REFUSED: 'Backup storage refused the transfer. It is tried again later.',
   RATE_LIMITED: 'The server asked to slow down. It is tried again shortly.',
+  LEASE_LOST:
+    'Waiting to confirm this computer still holds the profile. It continues when the connection is back.',
 };
 
 /** Why a job failed, in words (unknown codes fall back to a generic sentence). */
@@ -47,6 +50,11 @@ const FAILED: Record<string, string> = {
   SNAPSHOT_FORMAT_TOO_NEW: 'This backup was made by a newer version of the app. Update the app first.',
   PROFILE_NEVER_OPENED: 'This profile has never been opened, so there is nothing to back up yet.',
   CANCELED: 'Canceled. The previous backup is still the newest.',
+  LEASE_TAKEN_OVER:
+    'An admin took this profile over. This computer’s copy was kept aside; nothing was overwritten.',
+  LEASE_REVOKED:
+    'Access to this profile was removed. This computer’s copy was kept; nothing was overwritten.',
+  LEASE_SUPERSEDED: 'The profile was opened again elsewhere. Nothing was overwritten.',
 };
 
 const PHASE: Record<string, string> = {
@@ -597,6 +605,8 @@ export function OrgBackupsSection(props: {
           </tbody>
         </table>
       )}
+
+      <RecoveryCopiesSection backend={backend} orgId={orgId} role={role} notify={notify} offline={offline} />
 
       <h3 id="org-keys-title">Organization key</h3>
       {keys ? (

@@ -7,7 +7,9 @@
 import {
   ASSIGNABLE_ROLES,
   type AuditEvent,
+  GRANT_CAPABILITIES,
   type Grant,
+  type GrantCapability,
   type Invitation,
   type Member,
   type Organization,
@@ -22,6 +24,7 @@ import { OrgBackupsSection } from './backups.tsx';
 import { ApiFailure, can, get, ROLE_HELP, ROLE_LABEL, send } from './cloud.ts';
 import { Dialog, useDebounced } from './components.tsx';
 import { type Notify, plural, relative, when } from './status.tsx';
+import { TakeoverDialog } from './team.tsx';
 
 type Section =
   | 'profiles'
@@ -183,6 +186,7 @@ function ProfilesSection(props: SectionProps) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [editing, setEditing] = useState<OrgProfile | 'new' | null>(null);
   const [deleting, setDeleting] = useState<OrgProfile | null>(null);
+  const [takingOver, setTakingOver] = useState<OrgProfile | null>(null);
   // Organization profiles already on this computer (linked local profiles), milestone 07.
   const [here, setHere] = useState<Set<string>>(new Set());
   const [linkNonce, setLinkNonce] = useState(0);
@@ -268,8 +272,8 @@ function ProfilesSection(props: SectionProps) {
       </div>
       <p className="muted small">
         Organization profiles are shared settings (name, client, notes) with encrypted backups. Put one on
-        this computer to restore its newest backup into a local profile; it is backed up again after you close
-        it.
+        this computer to restore its newest backup into a local profile. One person at a time works in each:
+        opening it takes it until it is closed and handed off, with its backup saved for the next person.
       </p>
       <div className="row">
         <label className="grow">
@@ -308,6 +312,7 @@ function ProfilesSection(props: SectionProps) {
               <th scope="col">Client</th>
               <th scope="col">Notes</th>
               <th scope="col">Changed</th>
+              <th scope="col">In use</th>
               <th scope="col">This computer</th>
               <th scope="col">
                 <span className="pb-sr-only">Actions</span>
@@ -323,6 +328,21 @@ function ProfilesSection(props: SectionProps) {
                 </td>
                 <td className="notes-cell">{p.notes || <span className="muted">—</span>}</td>
                 <td>{relative(p.updated_at)}</td>
+                <td>
+                  {!p.in_use ? (
+                    <span className="muted">Free</span>
+                  ) : p.in_use.mine ? (
+                    <span className="badge">You · {p.in_use.device_name || 'your computer'}</span>
+                  ) : (
+                    <span
+                      className={`badge${p.in_use.state === 'uncertain' ? ' badge--warn' : ''}`}
+                      title={`Since ${when(p.in_use.since)}`}
+                    >
+                      {p.in_use.holder_name || 'Someone'} · {p.in_use.device_name || 'another computer'}
+                      {p.in_use.state === 'uncertain' ? ' · not closed properly' : ''}
+                    </span>
+                  )}
+                </td>
                 <td>{here.has(p.id) ? 'On this computer' : <span className="muted">Not here</span>}</td>
                 <td>
                   <div className="cell-actions">
@@ -334,6 +354,16 @@ function ProfilesSection(props: SectionProps) {
                         onClick={() => putHere(p)}
                       >
                         Put on this computer<span className="pb-sr-only"> {p.name}</span>
+                      </button>
+                    )}
+                    {p.in_use && !p.in_use.mine && can(role, 'lease.force_release') && (
+                      <button
+                        type="button"
+                        className="pb-button"
+                        disabled={offline}
+                        onClick={() => setTakingOver(p)}
+                      >
+                        Take over…<span className="pb-sr-only"> {p.name}</span>
                       </button>
                     )}
                     {can(role, 'profile.update') && (
@@ -378,6 +408,22 @@ function ProfilesSection(props: SectionProps) {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            list.reload();
+          }}
+        />
+      )}
+      {takingOver?.in_use && (
+        <TakeoverDialog
+          backend={backend}
+          orgId={orgId}
+          profileId={takingOver.id}
+          profileName={takingOver.name}
+          holder={`${takingOver.in_use.holder_name || 'Someone'} on ${takingOver.in_use.device_name || 'another computer'}`}
+          uncertain={takingOver.in_use.state === 'uncertain'}
+          notify={notify}
+          onClose={() => setTakingOver(null)}
+          onDone={() => {
+            setTakingOver(null);
             list.reload();
           }}
         />
@@ -1153,6 +1199,20 @@ function AccessSection(props: SectionProps) {
       notify(errorMessage(err), 'error');
     }
   };
+  const setCaps = async (g: Grant, capabilities: GrantCapability[]) => {
+    try {
+      await send(backend, 'PATCH', `/v1/orgs/${orgId}/grants/${g.id}`, { capabilities });
+      notify(
+        capabilities.includes('launch') || !g.capabilities.includes('launch')
+          ? 'Access changed.'
+          : 'Access changed. If they had one of these profiles open, it is closed in their app now.',
+      );
+      grants.reload();
+    } catch (err) {
+      notify(errorMessage(err), 'error');
+    }
+  };
+  const personRole = limited.find((m) => m.user_id === person)?.role;
   const remove = async (g: Grant) => {
     try {
       await send(backend, 'DELETE', `/v1/orgs/${orgId}/grants/${g.id}`);
@@ -1168,7 +1228,9 @@ function AccessSection(props: SectionProps) {
       <h2 id="org-access-title">Access</h2>
       <p className="muted small">
         Owners and admins see everything. Operators and viewers see only what you give them here: a whole
-        client (including its future profiles) or single profiles.
+        client (including its future profiles) or single profiles. For operators, choose whether they may open
+        the profiles, change their settings and restore their backups. Exporting, sharing and permanent
+        deletion stay with owners and admins.
       </p>
       {limited.length === 0 ? (
         <p className="muted">No operators or viewers yet. Invite people in Invitations.</p>
@@ -1192,15 +1254,43 @@ function AccessSection(props: SectionProps) {
           ) : (
             <ul className="plain stack">
               {grants.data.items.map((g) => (
-                <li key={g.id} className="row">
-                  <span className="grow">
-                    {g.client_id
-                      ? `Client: ${clientName.get(g.client_id) ?? 'a client'} (all its profiles)`
-                      : `Profile: ${profileName.get(g.profile_id ?? '') ?? 'a profile'}`}
-                  </span>
-                  <button type="button" className="pb-button" disabled={offline} onClick={() => remove(g)}>
-                    Remove access
-                  </button>
+                <li key={g.id} className="stack">
+                  <div className="row">
+                    <span className="grow">
+                      {g.client_id
+                        ? `Client: ${clientName.get(g.client_id) ?? 'a client'} (all its profiles)`
+                        : `Profile: ${profileName.get(g.profile_id ?? '') ?? 'a profile'}`}
+                    </span>
+                    <button type="button" className="pb-button" disabled={offline} onClick={() => remove(g)}>
+                      Remove access
+                    </button>
+                  </div>
+                  {personRole === 'viewer' ? (
+                    <p className="muted small">
+                      Viewers can see these profiles but never open, edit or download them.
+                    </p>
+                  ) : (
+                    <fieldset className="plain row" disabled={offline}>
+                      <legend className="pb-sr-only">What this access allows</legend>
+                      {GRANT_CAPABILITIES.map((c) => (
+                        <label key={c} className="choice">
+                          <input
+                            type="checkbox"
+                            checked={g.capabilities.includes(c)}
+                            onChange={(e) =>
+                              setCaps(
+                                g,
+                                e.target.checked
+                                  ? GRANT_CAPABILITIES.filter((x) => x === c || g.capabilities.includes(x))
+                                  : g.capabilities.filter((x) => x !== c),
+                              )
+                            }
+                          />
+                          {CAPABILITY_LABEL[c]}
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1236,6 +1326,12 @@ function AccessSection(props: SectionProps) {
   );
 }
 
+const CAPABILITY_LABEL: Record<GrantCapability, string> = {
+  launch: 'Open',
+  edit: 'Change settings',
+  backup_download: 'Restore backups',
+};
+
 // ----------------------------------------------------------------------------- activity
 const ACTION_TEXT: Record<string, string> = {
   'organization.created': 'created the organization',
@@ -1257,6 +1353,18 @@ const ACTION_TEXT: Record<string, string> = {
   'profile.bulk': 'changed several profiles',
   'profile.exported': 'exported profiles',
   'lease.acquired': 'opened a profile',
+  'lease.released': 'closed and handed off a profile',
+  'lease.revived': 'reconnected to a profile',
+  'lease.taken_over': 'took over a profile',
+  'lease.revoked': 'ended a session (access removed)',
+  'handoff.requested': 'asked for a profile',
+  'handoff.answered': 'answered a request for a profile',
+  'grant.updated': 'changed access',
+  'session.restoring': 'got the newest version of a profile',
+  'session.running': 'started working in a profile',
+  'session.stopping': 'closed a profile',
+  'session.uploading': 'saved a profile’s closing backup',
+  'snapshot.recovery_kept': 'kept a recovery copy of a profile',
   'snapshot.download_authorized': 'downloaded a profile snapshot',
   'workspace.imported': 'copied local profiles in',
   'access.denied': 'was refused an action',

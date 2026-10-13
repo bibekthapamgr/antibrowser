@@ -15,6 +15,10 @@
  * - milestone 07: encrypted backups of linked profiles (progress, version history, restore), conflicts with three
  *   choices that never overwrite, putting an organization profile on this computer, the organization's retention,
  *   trash and key rotation with re-authentication
+ * - milestone 08: shared sessions (one person at a time): who has a profile open, asking for it, requests that never
+ *   close anything, close and hand off with a note (never a password), a forced takeover with a reason and warning,
+ *   a session taken over here (closed, copy kept aside, recovery copy), offline shared opens refused, and what an
+ *   operator's access allows
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -197,6 +201,53 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await p.waitForSelector('#org-keys-title');
     },
   },
+  {
+    name: 'profile-shared-in-use',
+    demo: 'signedin linked inuse',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await p.waitForFunction(() => document.querySelector('.drawer')?.textContent?.includes('In use:'));
+      await p.evaluate(() => document.querySelector('#team-legend')?.scrollIntoView({ block: 'start' }));
+    },
+  },
+  {
+    name: 'profile-handoff-request',
+    demo: 'signedin linked requests',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForFunction(
+        () => document.querySelector('.drawer')?.textContent?.includes('asks for this profile'),
+        { timeout: 10_000 },
+      );
+      await p.evaluate(() => document.querySelector('#team-legend')?.scrollIntoView({ block: 'start' }));
+      if (SHOTS) await new Promise((r) => setTimeout(r, 4500));
+    },
+  },
+  {
+    name: 'profile-takeover-dialog',
+    demo: 'signedin linked inuse',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Take over…');
+      await p.waitForSelector('[role=alertdialog] textarea');
+    },
+  },
+  {
+    name: 'profile-taken-over',
+    demo: 'signedin linked takeover',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForFunction(
+        () => document.querySelector('.drawer')?.textContent?.includes('recovery copy'),
+        { timeout: 10_000 },
+      );
+      await p.evaluate(() => document.querySelector('#team-legend')?.scrollIntoView({ block: 'start' }));
+      if (SHOTS) await new Promise((r) => setTimeout(r, 4500));
+    },
+  },
+  { name: 'org-profiles-in-use', demo: 'signedin inuse', prepare: (p) => openOrg(p) },
   { name: 'welcome', demo: 'fresh' },
   { name: 'profiles-empty', demo: 'rows:0' },
   { name: 'profiles', demo: '' },
@@ -905,9 +956,15 @@ describe('account and organizations (milestone 06)', () => {
     );
     await page.select('form[aria-label="Give access"] select', option);
     await clickButton(page, 'form[aria-label="Give access"]', 'Give access');
-    await page.waitForFunction(() =>
-      document.querySelector('ul.plain')?.textContent?.includes('Client South'),
-    );
+    await page
+      .waitForFunction(() => document.querySelector('ul.plain')?.textContent?.includes('Client South'))
+      .catch(async (e) => {
+        console.error(
+          'Access section when the grant did not appear:',
+          await page.$eval('#main', (m) => (m as HTMLElement).innerText),
+        );
+        throw e;
+      });
     await page.close();
 
     const member = await open('member');
@@ -1065,6 +1122,171 @@ describe('encrypted backups (milestone 07)', () => {
     await page.waitForFunction(() =>
       [...document.querySelectorAll('#main table.records tbody th')].some((t) => t.textContent === '2'),
     );
+    await page.close();
+  });
+});
+
+describe('shared sessions (milestone 08)', () => {
+  const drawerHas = (page: Page, needle: string, timeout = 10_000) =>
+    page.waitForFunction(
+      (t) => document.querySelector('.drawer')?.textContent?.includes(t),
+      { timeout },
+      needle,
+    );
+  const rowShared = (page: Page, name: string) =>
+    page.$$eval(
+      '.trow',
+      (rows, n) =>
+        rows
+          .find((r) => r.querySelector('.trow__name')?.textContent?.trim() === n)
+          ?.querySelector('.col-sync')
+          ?.textContent?.trim() ?? '',
+      name,
+    );
+
+  it('opens a shared profile, shows a request that closes nothing, and hands off with a note', async () => {
+    const page = await open('signedin linked requests');
+    await clickRow(page, 'Shop admin');
+    await drawerHas(page, 'Shared with your organization');
+    await drawerHas(page, 'Nobody has it open');
+    expect(await rowShared(page, 'Shop admin')).toBe('Shared');
+    await clickButton(page, '.drawer', 'Open profile');
+    await drawerHas(page, 'Others see that you have it open');
+    await page.waitForFunction(
+      () => document.querySelector('.trow .col-sync .badge')?.textContent === 'Open here',
+    );
+    // A teammate asks: told, never closed.
+    await toastContains(page, 'Sam Operator asks for “Shop admin”');
+    await drawerHas(page, 'Sam Operator asks for this profile: “Need it for the refund queue”');
+    expect(await page.$eval('.drawer', (d) => d.textContent?.includes('Close profile'))).toBe(true);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+
+    await clickButton(page, '.drawer [role=alert]', 'Close and hand off…');
+    const note = await page.waitForSelector('[role=dialog] textarea');
+    // Built at run time: a note that looks like a password is refused before it is sent.
+    await note?.type(`${['pass', 'word'].join('')}: not-a-real-one`);
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button[type=submit]')].every(
+        (b) => b.disabled,
+      ),
+    );
+    await note?.click({ count: 3 });
+    await page.keyboard.press('Backspace');
+    await note?.type('Refund half done');
+    await clickButton(page, '[role=dialog]', 'Close and hand off');
+    await toastContains(page, 'handed off once its backup is saved');
+    await drawerHas(page, 'Handing off');
+    await toastContains(page, '“Shop admin” is saved and free for the next person');
+    await drawerHas(page, 'Nobody has it open');
+    expect(await rowShared(page, 'Shop admin')).toBe('Shared');
+    await page.close();
+  });
+
+  it('someone else has it: opening is refused, asking is offered, and an admin takes over with a reason', async () => {
+    const page = await open('signedin linked inuse');
+    await clickRow(page, 'Shop admin');
+    await drawerHas(page, 'In use: open by Sam Operator on Sam’s Windows laptop');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'Someone else has this profile open');
+    await clickButton(page, '.drawer', 'Ask for it…');
+    await clickButton(page, '[role=dialog]', 'Send request');
+    await toastContains(page, 'Asked Sam Operator');
+    await drawerHas(page, 'Waiting for an answer');
+
+    await clickButton(page, '.drawer', 'Take over…');
+    await page.waitForSelector('[role=alertdialog] textarea');
+    const takeDisabled = () =>
+      page.$$eval('[role=alertdialog] button[type=submit]', (bs) => (bs[0] as HTMLButtonElement).disabled);
+    expect(await takeDisabled()).toBe(true);
+    await page.type('[role=alertdialog] textarea', 'Sam is away and refunds are due today');
+    expect(await takeDisabled()).toBe(true);
+    await page.click('[role=alertdialog] input[type=checkbox]');
+    expect(await takeDisabled()).toBe(false);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await clickButton(page, '[role=alertdialog]', 'Take over');
+    await toastContains(page, 'Taken over.');
+    await drawerHas(page, 'Nobody has it open');
+    await clickButton(page, '.drawer', 'Open profile');
+    await drawerHas(page, 'Others see that you have it open');
+    await page.close();
+  });
+
+  it('taken over here: the profile closes, this copy is kept aside and becomes a recovery copy', async () => {
+    const page = await open('signedin linked takeover');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'An admin took over “Shop admin”');
+    await drawerHas(page, 'uploaded as a recovery copy');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('.drawer button')].some((b) => b.textContent === 'Open profile'),
+    );
+    await page.waitForFunction(
+      () => document.querySelector('.trow .col-sync .badge')?.textContent === 'Taken over',
+    );
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'Dismiss the notice first');
+    await clickButton(page, '.drawer', 'Dismiss');
+    await drawerHas(page, 'Nobody has it open');
+    await openOrg(page, 'Backups');
+    await page.waitForSelector('#org-recovery-title');
+    await clickButton(page, '#main', 'Restore as a new profile from North shop admin');
+    await toastContains(page, 'Restoring the recovery copy');
+    await page.close();
+  });
+
+  it('a shared profile does not open offline; local profiles still do', async () => {
+    const page = await open('signedin linked teamoffline');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'only when this computer can reach');
+    await page.close();
+  });
+
+  it('organization profiles show who has each one open, and access says what operators may do', async () => {
+    const page = await open('signedin inuse');
+    await openOrg(page, 'Profiles');
+    await page.waitForFunction(() =>
+      document.querySelector('table.records')?.textContent?.includes('Sam Operator · Sam’s Windows laptop'),
+    );
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('#main button')].some(
+        (b) => b.textContent === 'Take over… North shop admin',
+      ),
+    );
+    await clickButton(page, '.org-nav', 'Access');
+    await page.waitForSelector('#org-access-title');
+    const sam = await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll<HTMLOptionElement>('#main select option')].find((o) =>
+          o.textContent?.includes('Sam Operator'),
+        )?.value,
+      { timeout: 10_000 },
+    );
+    await page.select('#main select', (await sam.jsonValue()) as string);
+    const boxes = await page.waitForFunction(
+      () => {
+        const labels = [...document.querySelectorAll('#main .choice')];
+        return labels.length === 3
+          ? labels.map((l) => [l.textContent?.trim(), l.querySelector('input')?.checked])
+          : null;
+      },
+      { timeout: 10_000 },
+    );
+    expect(await boxes.jsonValue()).toEqual([
+      ['Open', true],
+      ['Change settings', false],
+      ['Restore backups', true],
+    ]);
+    const labels = await page.$$('#main .choice input');
+    await labels[1]?.click();
+    await toastContains(page, 'Access changed.');
+    await page.waitForFunction(
+      () => document.querySelectorAll<HTMLInputElement>('#main .choice input')[1]?.checked === true,
+    );
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     await page.close();
   });
 });

@@ -434,7 +434,8 @@ describe('forced takeover', () => {
       base_version: 0,
       fencing_token: l.token,
     });
-    expect(init.json().code).toBe('LEASE_NOT_HELD');
+    // A stale token says how its lease ended, so the device stops instead of waiting.
+    expect(init.json()).toMatchObject({ code: 'FENCING_TOKEN_STALE', safe_details: { state: 'taken_over' } });
     // The request was answered; anyone allowed can open it now.
     const answered = await h.app.inject({
       method: 'GET',

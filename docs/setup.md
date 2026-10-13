@@ -140,6 +140,10 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 -L 8333:127.0.0.1:8333 root
 ```
 Backups upload and download straight to storage through signed links for `http://127.0.0.1:8333`, so port 8333 must
 be tunnelled too; without it the app shows "Waiting for the connection to backup storage".
+Milestone 08 (shared sessions) adds migration `0005_team_sessions.sql`; updating the server with `vps-setup.sh` applies
+it and runs the session tests. Shared profiles open only while the app reaches the API, so keep the tunnel up while
+working in them: if it drops, the app closes the profile after 40 seconds and finishes its handoff when the tunnel is
+back ([recovery playbook](team/recovery-playbook.md)).
 The server runs with `APP_ENV=dev` and development tokens, so the API must stay private (bound to `127.0.0.1`, reached
 through the SSH tunnel).
 

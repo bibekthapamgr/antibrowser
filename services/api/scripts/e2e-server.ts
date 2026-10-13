@@ -75,6 +75,23 @@ const grant = await app.inject({
 });
 if (grant.statusCode !== 201) throw new Error(`grant: ${grant.statusCode} ${grant.body}`);
 
+// Milestone 08: a second profile for the shared-session contention scenario, also shared with the operator.
+const teamCreated = await app.inject({
+  method: 'POST',
+  url: `/v1/orgs/${acme.id}/profiles`,
+  headers: { authorization: `Bearer ${owner}` },
+  payload: { name: `e2e sessions ${new Date().toISOString()}` },
+});
+if (teamCreated.statusCode !== 201) throw new Error(`profile: ${teamCreated.statusCode} ${teamCreated.body}`);
+const teamProfile = (teamCreated.json() as { id: string }).id;
+const teamGrant = await app.inject({
+  method: 'POST',
+  url: `/v1/orgs/${acme.id}/grants`,
+  headers: { authorization: `Bearer ${owner}` },
+  payload: { user_id: FIXTURES.users.acmeOperator.id, profile_id: teamProfile },
+});
+if (teamGrant.statusCode !== 201) throw new Error(`grant: ${teamGrant.statusCode} ${teamGrant.body}`);
+
 writeFileSync(
   out,
   JSON.stringify(
@@ -82,6 +99,9 @@ writeFileSync(
       base_url: `http://127.0.0.1:${port}`,
       org: acme.id,
       profile,
+      team_profile: teamProfile,
+      team_grant: (teamGrant.json() as { id: string }).id,
+      operator_user: FIXTURES.users.acmeOperator.id,
       owner: { token: owner, device: FIXTURES.devices.acmeOwnerLaptop.id },
       operator: { token: operator, device: FIXTURES.devices.acmeOperatorMac.id },
       outsider: { token: await token('betaOwner'), org: beta.id },

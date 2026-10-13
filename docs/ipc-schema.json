@@ -329,6 +329,7 @@
             "network",
             "privacy",
             "sync_status",
+            "team_phase",
             "version",
             "created_at",
             "updated_at",
@@ -632,9 +633,30 @@
               "additionalProperties": false
             },
             "sync_status": {
-              "type": "string",
-              "const": "local_only",
-              "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+              "enum": [
+                "local_only",
+                "shared"
+              ],
+              "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+            },
+            "team_phase": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "opening",
+                    "running",
+                    "closing",
+                    "handing_off",
+                    "pending",
+                    "lost",
+                    "taken_over",
+                    "revoked"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "version": {
               "type": "integer",
@@ -847,6 +869,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -1150,9 +1173,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",
@@ -1508,6 +1552,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -1811,9 +1856,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",
@@ -2104,6 +2170,7 @@
               "network",
               "privacy",
               "sync_status",
+              "team_phase",
               "version",
               "created_at",
               "updated_at",
@@ -2407,9 +2474,30 @@
                 "additionalProperties": false
               },
               "sync_status": {
-                "type": "string",
-                "const": "local_only",
-                "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+                "enum": [
+                  "local_only",
+                  "shared"
+                ],
+                "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+              },
+              "team_phase": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "opening",
+                      "running",
+                      "closing",
+                      "handing_off",
+                      "pending",
+                      "lost",
+                      "taken_over",
+                      "revoked"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "version": {
                 "type": "integer",
@@ -3655,6 +3743,7 @@
                 "network",
                 "privacy",
                 "sync_status",
+                "team_phase",
                 "version",
                 "created_at",
                 "updated_at",
@@ -3958,9 +4047,30 @@
                   "additionalProperties": false
                 },
                 "sync_status": {
-                  "type": "string",
-                  "const": "local_only",
-                  "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+                  "enum": [
+                    "local_only",
+                    "shared"
+                  ],
+                  "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+                },
+                "team_phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "opening",
+                        "running",
+                        "closing",
+                        "handing_off",
+                        "pending",
+                        "lost",
+                        "taken_over",
+                        "revoked"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "version": {
                   "type": "integer",
@@ -5340,6 +5450,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -5643,9 +5754,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",
@@ -8141,6 +8273,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -8444,9 +8577,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",
@@ -11262,6 +11416,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -11565,9 +11720,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",
@@ -13120,6 +13296,7 @@
           "network",
           "privacy",
           "sync_status",
+          "team_phase",
           "version",
           "created_at",
           "updated_at",
@@ -13423,9 +13600,30 @@
             "additionalProperties": false
           },
           "sync_status": {
-            "type": "string",
-            "const": "local_only",
-            "description": "Organization backup state (milestone 07) is per profile: get_sync_status."
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "type": "integer",

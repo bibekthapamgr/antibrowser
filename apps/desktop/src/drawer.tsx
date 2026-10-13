@@ -15,6 +15,7 @@ import { Dialog } from './components.tsx';
 import { NetworkCell, NetworkSection, PrivacySection } from './network.tsx';
 import { nameKey, secretHint } from './notes.ts';
 import { day, LAST_ERROR, type Notify, primaryAction, StatusText, when, withClient } from './status.tsx';
+import { TeamSection } from './team.tsx';
 
 const PERMISSIONS: [keyof ProfileView['permissions'], string][] = [
   ['camera', 'Camera'],
@@ -351,6 +352,15 @@ export function ProfileDrawer(props: {
         </fieldset>
       )}
 
+      {!trashed && p.sync_status === 'shared' && (
+        <TeamSection
+          backend={backend}
+          profile={p}
+          refreshKey={props.refreshKey}
+          notify={notify}
+          onOpen={() => props.onToggle(p)}
+        />
+      )}
       {!trashed && (
         <BackupSection backend={backend} profile={p} refreshKey={props.refreshKey} notify={notify} />
       )}

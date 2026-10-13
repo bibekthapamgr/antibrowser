@@ -97,7 +97,11 @@ function backupOf(deps: Deps) {
 
 const toB64 = (b: Buffer) => b.toString('base64');
 
-/** The caller must hold the profile's live lease with this fencing token (from this device when signed in). */
+/**
+ * The caller must hold the profile's live lease with this fencing token (from this device when signed in). A token
+ * that is not the current one is refused as FENCING_TOKEN_STALE with how its lease ended (taken_over, revoked,
+ * released, superseded), so a device that lost a session stops instead of waiting (milestone 08).
+ */
 async function requireLease(c: pg.PoolClient, access: TenantAccess, profileId: string, token: string) {
   const lease = await c.query<{
     fencing_token: string;
@@ -106,17 +110,22 @@ async function requireLease(c: pg.PoolClient, access: TenantAccess, profileId: s
     live: boolean;
   }>(
     `select fencing_token::text as fencing_token, holder_user_id, holder_device_id,
-            (released_at is null and expires_at > now()) as live
+            (state = 'active' and expires_at > now()) as live
        from profile_leases where org_id = $1 and profile_id = $2`,
     [access.orgId, profileId],
   );
   const l = lease.rows[0];
-  if (!l?.live) throw new ApiError('LEASE_NOT_HELD', 'Acquire the profile lease first');
-  if (l.fencing_token !== token) {
-    throw new ApiError('FENCING_TOKEN_STALE', 'Another device took the lease since', {
-      current_fencing_token: l.fencing_token,
+  if (l && l.fencing_token !== token) {
+    const ended = await c.query<{ end_state: string | null }>(
+      `select end_state from lease_history
+        where org_id = $1 and profile_id = $2 and fencing_token = $3::bigint`,
+      [access.orgId, profileId, /^\d{1,19}$/.test(token) ? token : '0'],
+    );
+    throw new ApiError('FENCING_TOKEN_STALE', 'This device no longer holds the profile', {
+      state: ended.rows[0]?.end_state ?? 'superseded',
     });
   }
+  if (!l?.live) throw new ApiError('LEASE_NOT_HELD', 'Acquire the profile lease first');
   if (l.holder_user_id !== access.userId || (access.deviceId && l.holder_device_id !== access.deviceId)) {
     throw new ApiError('LEASE_NOT_HELD', 'The lease is held by another device');
   }

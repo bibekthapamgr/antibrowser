@@ -126,6 +126,10 @@ pub struct LocalProfile {
     pub last_error: Option<String>,
     pub last_backup_at: Option<String>,
     pub backup_runtime_version: Option<String>,
+    /// Linked to an organization profile (milestone 07); opens through a session lease (milestone 08).
+    pub linked: bool,
+    /// The phase of this computer's shared session of it, if any (milestone 08).
+    pub team_phase: Option<String>,
 }
 
 /// A profile to create. Browser storage always starts empty: only configuration is ever copied.
@@ -795,13 +799,16 @@ pub(crate) const SELECT_PROFILE: &str =
        p.favourite, p.archived_at, te.trashed_at, te.purge_after, p.template_id, px.name,
        (select json_group_array(json_array(t.id, t.name)) from profile_tags pt join tags t on t.id = pt.tag_id
           where pt.profile_id = p.id) as tags,
-       ns.proxy_id, coalesce(ns.fail_closed, 1), p.privacy_json, coalesce(ns.config_version, 0)
+       ns.proxy_id, coalesce(ns.fail_closed, 1), p.privacy_json, coalesce(ns.config_version, 0),
+       ol.local_profile_id is not null, ts.phase
      from profiles p
      left join clients_local c on c.id = p.client_id
      left join trash_entries te on te.profile_id = p.id
      left join profile_network_settings ns on ns.profile_id = p.id
      left join proxy_configs px on px.id = ns.proxy_id
-     left join process_runs r on r.profile_id = p.id and r.ended_at is null";
+     left join process_runs r on r.profile_id = p.id and r.ended_at is null
+     left join org_profile_links ol on ol.local_profile_id = p.id
+     left join team_sessions ts on ts.local_profile_id = p.id";
 
 pub(crate) fn row_to_profile(
     row: &rusqlite::Row<'_>,
@@ -909,6 +916,8 @@ pub(crate) fn row_to_profile(
         last_error: row.get(24)?,
         last_backup_at: row.get(25)?,
         backup_runtime_version: row.get(26)?,
+        linked: row.get::<_, i64>(38)? == 1,
+        team_phase: row.get(39)?,
     }))
 }
 

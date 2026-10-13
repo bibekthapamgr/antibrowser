@@ -145,8 +145,12 @@ pub struct ProfileView {
     pub fail_closed: bool,
     pub network: NetworkView,
     pub privacy: pb_runtime::PrivacyConfig,
-    /// Cloud sync arrives in milestone 07: always `local_only` for now.
+    /// `local_only`, or `shared` when linked to an organization profile (backed up there, opened through a session
+    /// lease).
     pub sync_status: &'static str,
+    /// This computer's shared session of it (milestone 08): opening, running, closing, handing_off, pending, lost,
+    /// taken_over, revoked.
+    pub team_phase: Option<String>,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -362,7 +366,8 @@ impl AppState {
             fail_closed: p.fail_closed,
             network,
             privacy: p.privacy,
-            sync_status: "local_only",
+            sync_status: if p.linked { "shared" } else { "local_only" },
+            team_phase: p.team_phase,
             version: p.version,
             created_at: p.created_at,
             updated_at: p.updated_at,

@@ -1,4 +1,4 @@
-# Security model (draft, milestones 01–07)
+# Security model (draft, milestones 01–08)
 
 This document states what the product protects, what it does not, and the disclosures customers must see. Milestone 12 turns it into a reviewed threat model.
 
@@ -7,8 +7,8 @@ This document states what the product protects, what it does not, and the disclo
 |---|---|---|
 | Tenant data in the API | Server-derived membership; non-members and out-of-reach ids get the same 404 as nonexistent ids (also in bulk, search and export); five roles with client/profile grants, deny by default (06, [permission matrix](permission-matrix.md)); row-level security on every tenant table with transaction-local context; composite same-organization foreign keys; response schemas strip unexpected fields; least-privilege DB roles; [tenant isolation report](identity/tenant-isolation-report.md) | Pen test (12) |
 | Identity and sessions (06) | OIDC Authorization Code + PKCE in the system browser (Keycloak reference); ID tokens verified (signature, issuer, audience, age, nonce) and used once; users matched by issuer + subject; device-bound API sessions: 10-minute access tokens checked against the database on every request, rotating refresh tokens with reuse detection, kept only in the OS keychain; device revocation and sign-out effective at the next request; recent sign-in for ownership transfer; rate limits on sign-in, refresh and invitations; security audit of changes and denials ([threat review](identity/authentication-threat-review.md)) | MFA policy at the provider; pen test (12) |
-| Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them; backups and snapshots only after a verified clean shutdown, with the profile held (busy + OS lock) while it is read, and opening it cancels that step | Lease-controlled opening of shared profiles (08) |
-| Manager UI → native code | 68 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
+| Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them; backups and snapshots only after a verified clean shutdown, with the profile held (busy + OS lock) while it is read, and opening it cancels that step. Shared profiles open only with the organization's session lease (08) | — |
+| Manager UI → native code | 74 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
 | External links and deep links | Only `https://github.com/…` help links open, and only in the system browser; deep links accepted only for the auth-callback shape bound to a one-time state; the provider's `iss` must match (RFC 9207) before a code is exchanged with the in-memory PKCE verifier | — |
 | Local database | WAL + foreign keys; all pending migrations in one transaction; a copy is taken before upgrading; a failed upgrade keeps the previous database and shows recovery actions | Encrypted local secrets (07) |
 | Browser runtime | Only the runtime in the Ed25519-signed manifest (owner key, verified against compiled-in public keys); download prefix compiled in; https only, size-capped; SHA-256 + size checked before extraction, mismatch → quarantine; extraction refuses absolute paths, `..`, escaping links, writes through links and zip bombs; executable and macOS code signature checked; free-space check; journal for interrupted installs. No executable path is accepted from the UI or settings in release builds | Over-the-air manifest updates and key revocation (12); redistributable runtime before customers (ADR-0010) |
@@ -24,6 +24,7 @@ This document states what the product protects, what it does not, and the disclo
 | Organization backups (07) | Sealed on the device before upload: zstd, then AES-256-GCM in the STREAM construction (RustCrypto), 1 MiB chunks; the header (organization, profile, snapshot, key version, nonce prefix) is the associated data of every chunk; a fresh data key per snapshot, wrapped by the organization key version, wrapped by the root key ([ADR-0014](adr/0014-encrypted-snapshots-and-sync.md)). Uploads need the profile lease (fencing token), `snapshot.commit` and the current head version; signed URLs for one part of one upload, 15 minutes; the worker checks size, sealed header and SHA-256 before a compare-and-set commit (one winner, never last-write-wins). Restores need `snapshot.restore` (audited, rate limited); size and SHA-256 checked before decrypting; archive safety checks; unpacked into a fresh folder and switched with the previous data kept as evidence. Retention, quota, 30-day trash, key rotation and destruction ([crypto review](sync/crypto-design-review.md)) | Managed KMS/HSM provider and independent crypto review (12/14) |
 | Backup root key (07) | `local` provider: a file owned by the API user, mode 600, checked at start-up; repository fixture keys refused outside dev/test; rotation re-wraps organization keys and the old key can be retired only when it wraps nothing (`scripts/deploy/root-key.sh`); offline copy mandatory ([runbook](sync/key-recovery-runbook.md)) | Managed KMS/HSM (12/14) |
 | Local last-good copies (03, 07) | Sealed with the device key (`kind local-backup`, key fingerprint in the header); a reset keychain is reported as "key not available", never as damage; without a usable keychain they stay plain copies as in 03 | — |
+| Shared sessions (08) | One authoritative lease per profile in PostgreSQL with a monotonic fencing token and expiry on the database clock ([ADR-0015](adr/0015-team-sessions-and-handoff.md)); an expired session is *uncertain* and blocks others until its device confirms or an admin takes over (never a second writer on expiry alone); takeovers and revocations allocate a new token, so every later write from the old device is refused (`FENCING_TOKEN_STALE` with how it ended), including commits already being verified; recovery copies are kept separately, never the head, restorable only as a separate profile by owners and admins; grants carry launch/edit/backup-download capabilities, viewers none, export and sharing never grantable; the lease id and token live in the shell (SQLite, never in the window or logs); handoff and request notes refused when they look like secrets | Remote wipe is out of scope (device management) |
 | Logs | Authorization, cookie and idempotency headers redacted; invitation tokens masked in logged URLs; errors carry codes, not stack traces or SQL | OpenTelemetry pipeline with redaction (13) |
 
 ## Required disclosures (must appear in docs and UI where relevant)
@@ -90,8 +91,26 @@ This document states what the product protects, what it does not, and the disclo
 - Storage sees object sizes and timing; compression makes the size follow the profile's content coarsely.
 - Strings derived from keys in Node.js (base64 in JSON) are not zeroized; the desktop drops its JSON copy right after
   parsing.
-- Who may open a shared profile, and handing it over, are milestone 08; until then uploads are fenced but opening is
-  not.
+- (Closed in milestone 08: opening a shared profile is lease-controlled.)
+
+## Milestone 08 boundary tests
+- API (`services/api/test/sessions.test.ts`, 20 scenarios; `authorization.test.ts`; `cross-tenant.test.ts` for every
+  new route): simultaneous acquisition, capabilities and viewers, entitlement and runtime refusals, database-clock
+  expiry and uncertain sessions, revival, same-device replacement, notes that look like secrets, requests that never
+  end a session, takeover by admins only (and of uncertain sessions), stale tokens on init, commit and verification,
+  recovery copies (never the head, admins only), revocation by grant, capability, role, membership and device.
+- Desktop (`apps/desktop/src-tauri/tests/team.rs`, `tests/sync.rs`): contention, repeated clicks, offline opens,
+  packet loss, delayed heartbeats, app restart and crash, killed mid-open, stale upload after takeover, revocation,
+  unsynced copy kept aside, `edit` guard. Window allow-list: opening, heartbeat and release are refused to the window.
+- Real API with two computers (`crates/sync/tests/real_api.rs`, CI): simultaneous opens, request, handoff note,
+  takeover with a stale upload kept as a recovery copy, removed access, the audit trail.
+
+## Known gaps after milestone 08
+- A takeover cannot stop website activity already happening in the old browser; removed access does not wipe data on
+  that computer (kept aside there).
+- Opening shared profiles needs the server; an unreachable holder blocks others until an admin takes over.
+- Fencing tokens and lease ids are not secrets on their own (they need the holder's session), but they are kept out of
+  the window and logs anyway.
 
 ## Milestone 04 boundary tests
 - Storage (`crates/storage/src/tests_m04.rs`): folded-name uniqueness, filter validation, bulk across workspaces counts as not found, undo only where the version is unchanged, trash retention, `import_ref` uniqueness.

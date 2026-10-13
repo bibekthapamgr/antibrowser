@@ -34,6 +34,7 @@ import {
   StatusText,
   withClient,
 } from './status.tsx';
+import { SharedCell } from './team.tsx';
 
 const ROW_HEIGHT = 48;
 const PAGE = 200;
@@ -624,7 +625,7 @@ export function ProfilesScreen(props: {
               Proxy
             </span>
             <span className="col-sync" aria-hidden="true">
-              Sync
+              Shared
             </span>
             <span aria-hidden="true" />
           </div>
@@ -945,7 +946,9 @@ function ProfileRow(props: {
       <Cell className="col-proxy">
         <NetworkCell p={p} />
       </Cell>
-      <Cell className="col-sync muted small">Local</Cell>
+      <Cell className="col-sync">
+        <SharedCell p={p} />
+      </Cell>
       <Cell className="trow__actions">
         <button
           type="button"

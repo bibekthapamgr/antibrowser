@@ -9,7 +9,8 @@
  * that closed unexpectedly, with a backup), `stuck` (closing times out and offers a force close), `noruntime` (the
  * browser is not installed yet), `bigimport` (the import file has 10,000 rows), `unsafeimport` (the import file is
  * an unsafe archive), `proxydown` (the first proxy does not answer), `nologin` (a proxy's saved login is missing from
- * the keychain), `win` (Windows: the time zone setting is unavailable).
+ * the keychain), `win` (Windows: the time zone setting is unavailable). Organization modes: demo-cloud.ts,
+ * demo-sync.ts and demo-team.ts.
  */
 import type {
   BulkAction,
@@ -39,6 +40,7 @@ import type {
 import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
 import { demoCloud } from './demo-cloud.ts';
 import { demoSync } from './demo-sync.ts';
+import { demoTeam } from './demo-team.ts';
 import type {
   AppView,
   Backend,
@@ -490,6 +492,9 @@ export function demoBackend(mode = ''): Backend {
       ? { status: 'failing', last_error: 'PROXY_UNREACHABLE', direct_connections: 0, restart_required }
       : { status: 'bypassing', last_error: 'PROXY_UNREACHABLE', direct_connections: 3, restart_required };
   };
+  /** Shared sessions (milestone 08) and organization links; set once the demo server exists. */
+  let teamHooks: ReturnType<typeof demoTeam> | null = null;
+  let linkHook: ((pid: string) => boolean) | null = null;
   const view = (r: Rec): ProfileView => {
     const { tag_ids, import_ref: _ref, launched_key: _launched, ...rest } = r;
     const c = clients.find((x) => x.id === r.client_id);
@@ -497,6 +502,8 @@ export function demoBackend(mode = ''): Backend {
       ...rest,
       proxy_label: proxies.find((x) => x.id === r.proxy_id)?.name ?? null,
       network: networkOf(r),
+      sync_status: linkHook?.(r.id) ? 'shared' : 'local_only',
+      team_phase: teamHooks?.phase(r.id) ?? null,
       client_name: c?.name ?? null,
       client_colour: c?.colour ?? null,
       tags: tag_ids
@@ -524,6 +531,7 @@ export function demoBackend(mode = ''): Backend {
       privacy: { ...DEFAULT_PRIVACY },
       launched_key: null,
       sync_status: 'local_only',
+      team_phase: null,
       version: 1,
       created_at: now(),
       updated_at: now(),
@@ -739,6 +747,8 @@ export function demoBackend(mode = ''): Backend {
       launched_key: null,
       ...(outcome === 'clean' ? { last_clean_shutdown_at: now(), crash_count: 0 } : {}),
     });
+    // A shared session hands off (or waits for a decision); other linked profiles back up automatically.
+    if (teamHooks?.closed(pid, outcome === 'clean')) return;
     if (outcome === 'clean') syncHooks?.afterCleanClose(pid);
   };
   const launchOps = new Map<string, Operation>();
@@ -1272,8 +1282,31 @@ export function demoBackend(mode = ''): Backend {
     },
     emit: (p) => emit('sync', p),
     changed: () => changed(),
+    teamPhase: (pid) => teamHooks?.phase(pid) ?? null,
   });
   syncHooks = sync;
+  const team = demoTeam({
+    mode,
+    cloud: cloud.team,
+    linkOf: (pid) => cloud.sync.linkOf(pid),
+    isOpen: (pid) => {
+      const r = recs.find((x) => x.id === pid);
+      return !!r && isOpen(r);
+    },
+    stop: (pid) => {
+      void backend.profiles.stop(pid).catch(() => undefined);
+    },
+    closingBackup: (pid) => sync.closingBackup(pid),
+    createCopy: (name) => {
+      const r = addProfile(name, null, requireWs());
+      changed();
+      return view(r);
+    },
+    emit: (p) => emit('team', p),
+    changed: () => changed(),
+  });
+  teamHooks = team;
+  linkHook = (pid) => !!cloud.sync.linkOf(pid);
   if (mode.includes('linked')) {
     const first = recs.find((r) => !r.trashed_at && !r.archived_at);
     const target = cloud.sync.firstProfile();
@@ -1290,10 +1323,11 @@ export function demoBackend(mode = ''): Backend {
     kind: 'demo',
     account: cloud,
     sync,
+    team,
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.7.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: '0.8.0-demo', platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
@@ -1390,6 +1424,7 @@ export function demoBackend(mode = ''): Backend {
       async update(pid: string, c: ProfileUpdate) {
         const ws = requireWs();
         const p = find(pid);
+        teamHooks?.guardEdit(pid, !!(c.startUrls || c.camera || c.microphone || c.location || c.privacy));
         if (p.workspace_id !== ws) throw E.UNKNOWN_PROFILE;
         if (p.version !== c.expectedVersion) {
           throw {
@@ -1591,6 +1626,16 @@ export function demoBackend(mode = ''): Backend {
         if (px?.login_missing) throw E.PROXY_CREDENTIALS_MISSING;
         if (px && addressClass(px.host) === 'private' && !settings['proxies.allow_private_addresses']?.value)
           throw E.PROXY_PRIVATE_ADDRESS;
+        // Milestone 08: an organization profile opens only with its session lease.
+        const refused = teamHooks?.open(pid) ?? null;
+        if (refused) {
+          const op = startOp('launch_profile', pid);
+          setTimeout(
+            () => finish(op, { status: 'failed', error_code: refused.code, message: refused.message }),
+            250,
+          );
+          return { operation_id: op.operation_id };
+        }
         const op = startOp('launch_profile', pid);
         launchOps.set(pid, op);
         set(pid, {
@@ -1615,6 +1660,7 @@ export function demoBackend(mode = ''): Backend {
         setTimeout(() => {
           set(pid, { state: 'running', ready: true, window_open: true, runtime_version: RUNTIME_VERSION });
           launchOps.delete(pid);
+          teamHooks?.opened(pid);
           finish(op, { status: 'succeeded', progress: 1 });
         }, 700);
         return { operation_id: op.operation_id };
@@ -2263,7 +2309,7 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.7.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: { version: '0.8.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
             schema_version: 6,

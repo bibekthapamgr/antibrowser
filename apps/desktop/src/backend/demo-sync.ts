@@ -38,8 +38,12 @@ export function demoSync(deps: {
   create: (name: string, workspaceId: string | null) => ProfileView;
   emit: (p: EventPayload<'sync'>) => void;
   changed: () => void;
+  /** The phase of this computer's shared session of a profile (milestone 08), if any. */
+  teamPhase?: (id: string) => string | null;
 }): SyncRepository & {
   afterCleanClose(id: string): void;
+  /** A shared session's closing backup (milestone 08): how it ended, or `waiting` for the connection. */
+  closingBackup(id: string): Promise<'committed' | 'conflict' | 'waiting' | 'canceled' | 'failed'>;
   restoring(id: string): boolean;
   seed(id: string, syncedVersion: number): void;
 } {
@@ -245,6 +249,17 @@ export function demoSync(deps: {
     async backupNow(id) {
       const link = await requireLink(id);
       const s = stateOf(id);
+      const phase = deps.teamPhase?.(id) ?? null;
+      if (phase)
+        throw ['taken_over', 'revoked'].includes(phase)
+          ? err(
+              'SESSION_ENDED',
+              "This profile's session here ended (taken over, or access removed). Dismiss the notice first.",
+            )
+          : err(
+              'TEAM_SESSION_ACTIVE',
+              'The session is still active. Close and hand off the profile, or give the handoff up.',
+            );
       if (s.conflict_head !== null)
         throw err(
           'SYNC_CONFLICT_OPEN',
@@ -313,6 +328,17 @@ export function demoSync(deps: {
       const p = deps.create(name, null);
       void restore(p.id, orgId, orgProfileId, null, true, false);
       return p;
+    },
+    async closingBackup(id) {
+      const link = await requireLink(id);
+      const s = stateOf(id);
+      s.dirty = true;
+      if (running(s) && s.job?.kind === 'upload' && s.progress.waiting_for) s.progress.waiting_for = null;
+      await upload(id, link);
+      if (s.job?.state === 'committed') return 'committed';
+      if (s.job?.state === 'conflict') return 'conflict';
+      if (s.job?.state === 'canceled') return 'canceled';
+      return s.progress.waiting_for ? 'waiting' : 'failed';
     },
     afterCleanClose(id) {
       const s = stateOf(id);

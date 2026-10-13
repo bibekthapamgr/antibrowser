@@ -41,6 +41,7 @@ import type {
   Started,
   SyncStatus,
   TagRef,
+  TeamStatus,
   Template,
   Workspace,
 } from '@pb/contracts/ipc';
@@ -87,6 +88,10 @@ export type {
   SyncStatus,
   Tag,
   TagRef,
+  TeamNote,
+  TeamPhase,
+  TeamRequest,
+  TeamStatus,
   Template,
   Workspace,
 } from '@pb/contracts/ipc';
@@ -273,10 +278,34 @@ export interface SyncRepository {
   restoreHere(orgId: string, orgProfileId: string, name: string): Promise<ProfileView>;
 }
 
+/**
+ * Shared sessions of organization profiles (milestone 08). Opening goes through `profiles.launch` (a linked profile
+ * takes the session lease first); this repository follows the session on this computer and ends it. Requests to a
+ * teammate, who has a profile open, and forced takeovers go through `account.request` (allow-listed API paths).
+ */
+export interface TeamRepository {
+  status(profileId: string): Promise<TeamStatus>;
+  /** Close and hand off: the browser closes, the closing backup uploads, the lease is released with the note. */
+  close(profileId: string, note: string | null): Promise<TeamStatus>;
+  /** Give the handoff up: the newest backup stays as it was, this computer keeps its copy (unsynced). */
+  abort(profileId: string): Promise<TeamStatus>;
+  retry(profileId: string): Promise<TeamStatus>;
+  /** Clears the notice of a session that ended (taken over, access removed). */
+  dismiss(profileId: string): Promise<TeamStatus>;
+  /** Owners and admins: a recovery copy restored as a new, unlinked local profile. */
+  restoreRecoveryCopy(
+    orgId: string,
+    orgProfileId: string,
+    snapshotId: string,
+    name: string,
+  ): Promise<ProfileView>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   account: AccountRepository;
   sync: SyncRepository;
+  team: TeamRepository;
   workspaces: WorkspaceRepository;
   profiles: ProfileRepository;
   library: LibraryRepository;

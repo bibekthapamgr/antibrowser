@@ -42,8 +42,8 @@ milestone 06 route (`/v1/orgs/{org}/profiles/{id}/…`), so tenant resolution ha
 2. **Sign-ins do not move between computers.** Website data comes back on another computer; cookies protected by
    the OS (Windows DPAPI, macOS Keychain) do not, so the app says "Sign-in may be required on websites". Same-computer
    restores keep sign-ins.
-3. **No team handoff yet.** A profile can be put on several computers; uploads are fenced (one winner, the others get
-   a conflict), but who may *open* a shared profile and handing it over are milestone 08.
+3. **Team handoff (milestone 08).** Opening a shared profile takes its session lease; its closing backup uploads under
+   that lease and the next person gets it ([team/README.md](../team/README.md)). Uploads stay fenced (one winner).
 4. **Root key in a file** on the server (`local` provider). A managed KMS/HSM and an independent review are paid
    launch gates. Losing the file without an offline copy loses every organization backup.
 5. **Uploads need the storage port.** On the test server the app reaches storage through the SSH tunnel on port 8333.

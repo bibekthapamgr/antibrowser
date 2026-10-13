@@ -146,6 +146,35 @@ export function App({ backend }: { backend: Backend }) {
       setRefreshKey((k) => k + 1);
       setApp((a) => (a ? { ...a, running_count: p.running } : a));
     });
+    // Milestone 08: shared sessions move on in the background; the list and drawer follow, and the person is told
+    // about what needs them (a request, a lost connection, a takeover) or is done (handoff ready).
+    const offTeam = backend.on('team', (e) => {
+      setRefreshKey((k) => k + 1);
+      const say = (text: (name: string) => string, tone?: 'error') =>
+        void backend.profiles
+          .status(e.profile_id)
+          .then((s) => notify(text(`“${s.profile.name}”`), tone))
+          .catch(() => notify(text('A shared profile'), tone));
+      if (e.kind === 'requests') {
+        const who = e.requests?.[e.requests.length - 1]?.requested_by_name || 'A teammate';
+        say(
+          (n) => `${who} asks for ${n}. Close and hand it off when you are ready; nothing closes by itself.`,
+        );
+      } else if (e.kind === 'handoff_ready') say((n) => `${n} is saved and free for the next person.`);
+      else if (e.kind === 'phase' && e.phase === 'lost')
+        say(
+          (n) =>
+            `Connection lost: ${n} was closed so nobody’s work is overwritten. Its backup continues when you are online.`,
+          'error',
+        );
+      else if (e.kind === 'phase' && e.phase === 'taken_over')
+        say((n) => `An admin took over ${n}. It was closed here; your copy was kept aside.`, 'error');
+      else if (e.kind === 'phase' && e.phase === 'revoked')
+        say(
+          (n) => `Your access to ${n} was removed. It was closed; the data on this computer was kept.`,
+          'error',
+        );
+    });
     const offQuit = backend.on('quit-requested', (p) => setQuit(p));
     const offWarning = backend.on('warning', (w) => {
       if (w.code === 'LOW_DISK_SPACE')
@@ -176,6 +205,7 @@ export function App({ backend }: { backend: Backend }) {
     return () => {
       offOp();
       offChanged();
+      offTeam();
       offQuit();
       offWarning();
     };
