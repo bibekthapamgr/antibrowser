@@ -22,6 +22,9 @@ BRANCH="${PB_BRANCH:-main}"
 API_PORT="${PB_API_PORT:-8080}"
 RUN_TESTS=1
 [[ "${1:-}" == "--skip-tests" ]] && RUN_TESTS=0
+SELF=$(readlink -f "$0")
+# Work from / : commands run as the pb user (git, pnpm) fail when the caller's directory is not readable to pb.
+cd /
 
 APP_USER=pb
 APP_HOME=/home/$APP_USER
@@ -45,7 +48,7 @@ randhex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
 # ----------------------------------------------------------------------------- preflight
 step "Preflight"
-[[ $EUID -eq 0 ]] || die "run as root (sudo bash $0)"
+[[ $EUID -eq 0 ]] || die "run as root (sudo bash $SELF)"
 [[ -r /etc/os-release ]] || die "cannot detect the operating system"
 . /etc/os-release
 case "${ID} ${ID_LIKE:-}" in
@@ -153,7 +156,7 @@ if ! as_pb git ls-remote --heads "$REPO" "$BRANCH" >/dev/null 2>&1; then
   echo
   cat "$APP_HOME/.ssh/id_ed25519.pub"
   echo
-  echo " Then run this script again:  bash $0"
+  echo " Then run this script again:  bash $SELF"
   echo "======================================================================================"
   exit 0
 fi
@@ -222,7 +225,7 @@ fi
 # ----------------------------------------------------------------------------- services
 step "Services (systemd)"
 if ! systemctl is-active --quiet pb-api && port_in_use "$API_PORT"; then
-  die "port $API_PORT is already in use on this server. Re-run with PB_API_PORT=<free port> bash $0"
+  die "port $API_PORT is already in use on this server. Re-run with PB_API_PORT=<free port> bash $SELF"
 fi
 unit() {  # name, description, workdir, entry
   cat > "/etc/systemd/system/$1.service" <<EOF

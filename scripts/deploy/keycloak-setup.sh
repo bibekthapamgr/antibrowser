@@ -48,6 +48,7 @@ OIDC_ENV=$ENV_DIR/oidc.env
 DROPIN=/etc/systemd/system/pb-api.service.d/oidc.conf
 NODE=/opt/node/bin/node
 SELF=$(readlink -f "$0")
+cd /  # independent of the caller's directory
 
 step() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
