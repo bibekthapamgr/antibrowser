@@ -43,10 +43,15 @@ jobs:
 
       - name: vps-setup.sh
         run: |
-          scripts/ci/annotate.sh "vps-setup.sh" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
+          scripts/ci/annotate.sh "vps-setup.sh" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests \
+            | tee "$RUNNER_TEMP/vps-setup.log"
           # It ends successfully (asking for a deploy key) when it cannot read the repository; that is not a deployment.
           if ! sudo test -f /etc/project-browser/api.env || ! systemctl is-active --quiet pb-api; then
-            echo "::error title=vps-setup.sh::stopped before deploying (repository $PB_REPO not readable?)"; exit 1
+            tail=$(sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/vps-setup.log" | tail -12 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=vps-setup.sh stopped before deploying::$tail"
+            probe=$(sudo runuser -u pb -- env HOME=/home/pb git ls-remote --heads "$PB_REPO" "$PB_BRANCH" 2>&1 | tail -4 | awk '{printf "%s%%0A", $0}')
+            echo "::error title=git ls-remote as pb::$probe"
+            exit 1
           fi
 
       - name: keycloak-setup.sh (first run, creates the owner account)
