@@ -38,6 +38,9 @@ export const PERMISSIONS = [
   'lease.force_release',
   'grants.manage',
   'audit.read',
+  // Milestone 09: client tasks (create and edit what one can see) and the browser extension policy.
+  'tasks.write',
+  'extensions.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -58,6 +61,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'snapshot.read',
     'snapshot.commit',
     'snapshot.restore',
+    'tasks.write',
   ],
   viewer: ['org.read', 'clients.read', 'profile.read'],
   billing: ['org.read', 'billing.read'],

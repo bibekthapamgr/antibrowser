@@ -16,6 +16,7 @@ import { type Authenticator, createAuthenticator, type Principal } from './auth.
 import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
 import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
+import { agencyRoutes } from './routes/agency.ts';
 import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
 import { backupRoutes } from './routes/backups.ts';
@@ -257,6 +258,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       profileRoutes(scoped, deps);
       leaseRoutes(scoped, deps);
       sessionRoutes(scoped, deps);
+      agencyRoutes(scoped, deps);
       snapshotRoutes(scoped, deps);
       backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);

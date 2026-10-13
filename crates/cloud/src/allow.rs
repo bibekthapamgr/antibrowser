@@ -4,11 +4,13 @@
 //! the window). Milestone 07 adds read-only backup history and the backup policy, trash and key administration.
 //! Milestone 08 adds who has a profile open, access requests, forced takeover, grant capabilities and recovery copies;
 //! opening, heartbeats and release stay with the shell (it holds the session's lease and fencing token).
+//! Milestone 09 adds client dashboards, tasks, shared bookmarks, the extension policy and the extension inventory; the
+//! shell itself reports each profile's installed extensions.
 
 use crate::http::Method;
 
-/// One allowed request shape. Path templates use `{org}`, `{usr}`, `{dev}`, `{inv}`, `{cli}`, `{grt}`, `{prf}`, `{hrq}`
-/// for opaque ids and `{token}` for an invitation token.
+/// One allowed request shape. Path templates use `{org}`, `{usr}`, `{dev}`, `{inv}`, `{cli}`, `{grt}`, `{prf}`, `{hrq}`,
+/// `{tsk}`, `{bkm}` for opaque ids and `{token}` for an invitation token.
 struct Rule {
     method: Method,
     template: &'static str,
@@ -99,6 +101,25 @@ const RULES: &[Rule] = &[
     live(Method::Get, "/v1/orgs/{org}/handoff-requests"),
     rule(Method::Post, "/v1/orgs/{org}/profiles/{prf}/force-takeover"),
     rule(Method::Get, "/v1/orgs/{org}/recovery-copies"),
+    // Milestone 09: client dashboard (live: who has profiles open), tasks, bookmarks and the extension policy.
+    live(Method::Get, "/v1/orgs/{org}/clients/{cli}/dashboard"),
+    rule(Method::Get, "/v1/orgs/{org}/clients/{cli}/tasks"),
+    rule(Method::Post, "/v1/orgs/{org}/clients/{cli}/tasks"),
+    rule(Method::Patch, "/v1/orgs/{org}/clients/{cli}/tasks/{tsk}"),
+    rule(Method::Delete, "/v1/orgs/{org}/clients/{cli}/tasks/{tsk}"),
+    rule(Method::Get, "/v1/orgs/{org}/clients/{cli}/bookmarks"),
+    rule(Method::Post, "/v1/orgs/{org}/clients/{cli}/bookmarks"),
+    rule(
+        Method::Patch,
+        "/v1/orgs/{org}/clients/{cli}/bookmarks/{bkm}",
+    ),
+    rule(
+        Method::Delete,
+        "/v1/orgs/{org}/clients/{cli}/bookmarks/{bkm}",
+    ),
+    rule(Method::Get, "/v1/orgs/{org}/extension-policy"),
+    rule(Method::Put, "/v1/orgs/{org}/extension-policy"),
+    rule(Method::Get, "/v1/orgs/{org}/extension-inventory"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -128,6 +149,8 @@ fn segment_matches(template: &str, segment: &str) -> bool {
         "{grt}" => is_id("grt", segment),
         "{prf}" => is_id("prf", segment),
         "{hrq}" => is_id("hrq", segment),
+        "{tsk}" => is_id("tsk", segment),
+        "{bkm}" => is_id("bkm", segment),
         "{token}" => is_token(segment),
         literal => literal == segment,
     }
@@ -187,6 +210,7 @@ pub fn check(
             "client_id" => is_id("cli", v),
             "user_id" => is_id("usr", v),
             "mine" => v == "true" || v == "false",
+            "status" => matches!(v.as_str(), "open" | "done" | "all"),
             _ => false,
         };
         if !ok || method != Method::Get || pairs.iter().any(|(pk, _): &(&str, &str)| *pk == k) {
@@ -236,6 +260,9 @@ mod tests {
     const PRF: &str = "prf_01J9ZSEED0A010000000000000";
     const HRQ: &str = "hrq_01J9ZSEED0A010000000000000";
     const LSE: &str = "lse_01J9ZSEED0A010000000000000";
+    const CLI: &str = "cli_01J9ZSEED0AN00000000000000";
+    const TSK: &str = "tsk_01J9ZSEED0A010000000000000";
+    const BKM: &str = "bkm_01J9ZSEED0A010000000000000";
 
     fn q(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -299,9 +326,46 @@ mod tests {
                 format!("/v1/orgs/{ORG}/profiles/{PRF}/force-takeover"),
             ),
             ("GET", format!("/v1/orgs/{ORG}/recovery-copies")),
+            // Milestone 09.
+            ("GET", format!("/v1/orgs/{ORG}/clients/{CLI}/tasks")),
+            ("POST", format!("/v1/orgs/{ORG}/clients/{CLI}/tasks")),
+            ("PATCH", format!("/v1/orgs/{ORG}/clients/{CLI}/tasks/{TSK}")),
+            (
+                "DELETE",
+                format!("/v1/orgs/{ORG}/clients/{CLI}/tasks/{TSK}"),
+            ),
+            ("GET", format!("/v1/orgs/{ORG}/clients/{CLI}/bookmarks")),
+            ("POST", format!("/v1/orgs/{ORG}/clients/{CLI}/bookmarks")),
+            (
+                "PATCH",
+                format!("/v1/orgs/{ORG}/clients/{CLI}/bookmarks/{BKM}"),
+            ),
+            (
+                "DELETE",
+                format!("/v1/orgs/{ORG}/clients/{CLI}/bookmarks/{BKM}"),
+            ),
+            ("GET", format!("/v1/orgs/{ORG}/extension-policy")),
+            ("PUT", format!("/v1/orgs/{ORG}/extension-policy")),
+            ("GET", format!("/v1/orgs/{ORG}/extension-inventory")),
         ] {
             assert!(check(method, &path, &[], None).is_ok(), "{method} {path}");
         }
+        let dashboard = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/clients/{CLI}/dashboard"),
+            &[],
+            None,
+        );
+        assert_eq!(dashboard.map(|a| a.cache_key), Ok(None));
+        assert!(
+            check(
+                "GET",
+                &format!("/v1/orgs/{ORG}/clients/{CLI}/tasks"),
+                &q(&[("status", "all")]),
+                None
+            )
+            .is_ok()
+        );
 
         let patch = check(
             "PATCH",
@@ -350,6 +414,12 @@ mod tests {
             ("GET", "/v1/orgs/acme/profiles".into()),
             ("GET", format!("/v1/orgs/{ORG}/profiles/../../auth/config")),
             ("PUT", format!("/v1/orgs/{ORG}")),
+            // The shell reports installed extensions itself (with its own device id).
+            (
+                "PUT",
+                format!("/v1/orgs/{ORG}/profiles/{PRF}/extension-report"),
+            ),
+            ("PATCH", format!("/v1/orgs/{ORG}/clients/{CLI}/tasks/{BKM}")),
             ("GET", format!("/v1/orgs/{ORG}/profiles/{PRF}/extra")),
             ("DELETE", format!("/v1/orgs/{ORG}")),
         ] {
@@ -372,6 +442,7 @@ mod tests {
             q(&[("q", "a"), ("q", "b")]),
             q(&[("q", "line\nbreak")]),
             q(&[("mine", "yes")]),
+            q(&[("status", "closed")]),
         ] {
             assert_eq!(
                 check("GET", &list, &bad, None).err(),

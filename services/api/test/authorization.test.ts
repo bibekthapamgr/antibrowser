@@ -43,7 +43,7 @@ interface Op {
   /** Status when allowed. */
   ok: number;
   request: (role: Role) => {
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
     url: string;
     payload?: unknown;
     headers?: Record<string, string>;
@@ -344,6 +344,75 @@ const OPS: Op[] = [
     scoped: false,
     ok: 200,
     request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/audit-events` }),
+  },
+  // Milestone 09: client dashboard, tasks, bookmarks and the extension policy.
+  {
+    name: 'read a granted client dashboard',
+    permission: 'clients.read',
+    scoped: true,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/clients/${north}/dashboard` }),
+  },
+  {
+    name: 'list the tasks of a granted client',
+    permission: 'clients.read',
+    scoped: true,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/clients/${north}/tasks` }),
+  },
+  {
+    name: 'add a task to a granted profile',
+    permission: 'tasks.write',
+    scoped: true,
+    ok: 201,
+    request: (role) => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/clients/${north}/tasks`,
+      payload: { title: `matrix ${role}`, profile_id: shop },
+    }),
+  },
+  {
+    name: 'list the bookmarks of a granted client',
+    permission: 'clients.read',
+    scoped: true,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/clients/${north}/bookmarks` }),
+  },
+  {
+    name: 'add a bookmark to a granted client',
+    permission: 'clients.manage',
+    scoped: true,
+    ok: 201,
+    request: (role) => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/clients/${north}/bookmarks`,
+      payload: { title: `matrix ${role}`, url: 'https://matrix.example/' },
+    }),
+  },
+  {
+    name: 'read the extension policy',
+    permission: 'org.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/extension-policy` }),
+  },
+  {
+    name: 'change the extension policy (stale version)',
+    permission: 'extensions.manage',
+    scoped: false,
+    ok: 409,
+    request: () => ({
+      method: 'PUT',
+      url: `/v1/orgs/${acme.id}/extension-policy`,
+      payload: { mode: 'warn', extensions: [], expected_version: 999 },
+    }),
+  },
+  {
+    name: 'read the extension inventory',
+    permission: 'extensions.manage',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/extension-inventory` }),
   },
 ];
 

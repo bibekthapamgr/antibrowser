@@ -35,6 +35,9 @@ export const ID_PREFIXES = {
   // Milestone 08: session leases and handoff requests.
   lease: 'lse',
   handoffRequest: 'hrq',
+  // Milestone 09: client tasks and shared bookmarks.
+  task: 'tsk',
+  bookmark: 'bkm',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

@@ -39,6 +39,14 @@ export const EVENT_TYPES = [
   'handoff.answered',
   'grant.updated',
   'snapshot.recovery_kept',
+  // Milestone 09
+  'task.created',
+  'task.updated',
+  'task.deleted',
+  'bookmark.created',
+  'bookmark.updated',
+  'bookmark.deleted',
+  'extension_policy.updated',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

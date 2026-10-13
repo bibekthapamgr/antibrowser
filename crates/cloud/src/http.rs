@@ -18,6 +18,7 @@ pub enum Method {
     Get,
     Post,
     Patch,
+    Put,
     Delete,
 }
 
@@ -27,6 +28,7 @@ impl Method {
             "GET" => Some(Self::Get),
             "POST" => Some(Self::Post),
             "PATCH" => Some(Self::Patch),
+            "PUT" => Some(Self::Put),
             "DELETE" => Some(Self::Delete),
             _ => None,
         }
@@ -36,6 +38,7 @@ impl Method {
             Self::Get => "GET",
             Self::Post => "POST",
             Self::Patch => "PATCH",
+            Self::Put => "PUT",
             Self::Delete => "DELETE",
         }
     }
@@ -158,11 +161,11 @@ impl Http {
                 }
                 req.call()
             }
-            Method::Post | Method::Patch => {
-                let mut req = if method == Method::Post {
-                    self.agent.post(url.as_str())
-                } else {
-                    self.agent.patch(url.as_str())
+            Method::Post | Method::Patch | Method::Put => {
+                let mut req = match method {
+                    Method::Post => self.agent.post(url.as_str()),
+                    Method::Put => self.agent.put(url.as_str()),
+                    _ => self.agent.patch(url.as_str()),
                 };
                 req = req.header("accept", "application/json");
                 if let Some(a) = &auth {

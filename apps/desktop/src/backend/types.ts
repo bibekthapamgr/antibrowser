@@ -228,7 +228,7 @@ export interface NetworkRepository {
 }
 
 export interface CloudRequest {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   /** An allow-listed API path, e.g. `/v1/orgs/<id>/profiles`. */
   path: string;
   query?: [string, string][];

@@ -1108,7 +1108,7 @@ export const COMMANDS = {
   sign_out: { args: Type.Object({}), result: AccountView },
   cloud_request: {
     args: Type.Object({
-      method: Type.Enum(['GET', 'POST', 'PATCH', 'DELETE']),
+      method: Type.Enum(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']),
       path: Type.String({ maxLength: 200, pattern: '^/v1/' }),
       query: Type.Optional(Type.Array(Type.Tuple([Type.String(), Type.String()]), { maxItems: 10 })),
       body: Type.Optional(Type.Record(Type.String(), Type.Unknown())),

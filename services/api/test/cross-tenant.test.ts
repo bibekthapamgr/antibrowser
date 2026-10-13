@@ -28,6 +28,8 @@ const MISSING = {
   operation: fx('syn', 'ZZZZ'),
   lease: fx('lse', 'ZZZZ'),
   request: fx('hrq', 'ZZZZ'),
+  task: fx('tsk', 'ZZZZ'),
+  bookmark: fx('bkm', 'ZZZZ'),
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -41,6 +43,8 @@ const FOREIGN: Ids = {
   operation: '',
   lease: '',
   request: '',
+  task: '',
+  bookmark: '',
 };
 
 let h: Harness;
@@ -64,6 +68,10 @@ async function betaState(): Promise<string> {
     'organization_key_versions o where o.org_id = $1',
     'lease_history o where o.org_id = $1',
     'handoff_requests o where o.org_id = $1',
+    'client_tasks o where o.org_id = $1',
+    'client_bookmarks o where o.org_id = $1',
+    'extension_policies o where o.org_id = $1',
+    'extension_reports o where o.org_id = $1',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -131,6 +139,65 @@ beforeAll(async () => {
      values ($1, $2, $3, $4, $4, '', 'open', now() + interval '1 hour') on conflict do nothing`,
     [FOREIGN.request, beta.id, FOREIGN.profile, FIXTURES.users.betaOwner.id],
   );
+  // Milestone 09: a beta task, bookmark, extension rule and extension report.
+  const task = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/clients/${FOREIGN.client}/tasks`,
+    headers: betaOwner,
+    payload: { title: 'Beta task', profile_id: FOREIGN.profile },
+  });
+  expect(task.statusCode, task.body).toBe(201);
+  FOREIGN.task = task.json().id;
+  const bookmark = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/clients/${FOREIGN.client}/bookmarks`,
+    headers: betaOwner,
+    payload: { title: 'Beta desk', url: 'https://desk.beta.example/' },
+  });
+  expect(bookmark.statusCode, bookmark.body).toBe(201);
+  FOREIGN.bookmark = bookmark.json().id;
+  const policy = await h.app.inject({
+    method: 'GET',
+    url: `/v1/orgs/${beta.id}/extension-policy`,
+    headers: betaOwner,
+  });
+  const rule = { name: 'Beta tool', decision: 'allowed', source: 'web_store', approved_version_range: null };
+  expect(
+    (
+      await h.app.inject({
+        method: 'PUT',
+        url: `/v1/orgs/${beta.id}/extension-policy`,
+        headers: betaOwner,
+        payload: {
+          mode: 'warn',
+          expected_version: policy.json().version,
+          extensions: [{ ...rule, extension_id: 'b'.repeat(32), permissions: [] }],
+        },
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(
+    (
+      await h.app.inject({
+        method: 'PUT',
+        url: `/v1/orgs/${beta.id}/profiles/${FOREIGN.profile}/extension-report`,
+        headers: betaOwner,
+        payload: {
+          device_id: FIXTURES.devices.betaOwnerLaptop.id,
+          extensions: [
+            {
+              id: 'b'.repeat(32),
+              name: 'Beta tool',
+              version: '1',
+              source: 'web_store',
+              enabled: true,
+              permissions: [],
+            },
+          ],
+        },
+      })
+    ).statusCode,
+  ).toBe(204);
 });
 afterAll(async () => {
   await h.close();
@@ -146,7 +213,7 @@ async function snapshotOf(org: string, profile: string, device: string, headers:
 
 interface Req {
   name: string;
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   url: string;
   payload?: object;
   headers?: Record<string, string>;
@@ -318,6 +385,54 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
     { name: 'key versions', method: 'GET', url: `${base}/keys` },
     { name: 'rotate key', method: 'POST', url: `${base}/keys/rotate` },
     { name: 'audit log', method: 'GET', url: `${base}/audit-events` },
+    // Milestone 09: client dashboard, tasks, bookmarks and the extension policy.
+    { name: 'client dashboard', method: 'GET', url: `${base}/clients/${ids.client}/dashboard` },
+    { name: 'list tasks', method: 'GET', url: `${base}/clients/${ids.client}/tasks` },
+    {
+      name: 'add task',
+      method: 'POST',
+      url: `${base}/clients/${ids.client}/tasks`,
+      payload: { title: 'x', profile_id: ids.profile, assignee_id: ids.user },
+    },
+    {
+      name: 'edit task',
+      method: 'PATCH',
+      url: `${base}/clients/${ids.client}/tasks/${ids.task}`,
+      payload: { title: 'x', expected_version: 1 },
+    },
+    { name: 'delete task', method: 'DELETE', url: `${base}/clients/${ids.client}/tasks/${ids.task}` },
+    { name: 'list bookmarks', method: 'GET', url: `${base}/clients/${ids.client}/bookmarks` },
+    {
+      name: 'add bookmark',
+      method: 'POST',
+      url: `${base}/clients/${ids.client}/bookmarks`,
+      payload: { title: 'x', url: 'https://x.example/' },
+    },
+    {
+      name: 'edit bookmark',
+      method: 'PATCH',
+      url: `${base}/clients/${ids.client}/bookmarks/${ids.bookmark}`,
+      payload: { title: 'x', expected_version: 1 },
+    },
+    {
+      name: 'delete bookmark',
+      method: 'DELETE',
+      url: `${base}/clients/${ids.client}/bookmarks/${ids.bookmark}`,
+    },
+    { name: 'extension policy', method: 'GET', url: `${base}/extension-policy` },
+    {
+      name: 'change extension policy',
+      method: 'PUT',
+      url: `${base}/extension-policy`,
+      payload: { mode: 'enforce', extensions: [], expected_version: 1 },
+    },
+    {
+      name: 'report extensions',
+      method: 'PUT',
+      url: `${p}/extension-report`,
+      payload: { device_id: FIXTURES.devices.acmeOwnerLaptop.id, extensions: [] },
+    },
+    { name: 'extension inventory', method: 'GET', url: `${base}/extension-inventory` },
     {
       name: 'import local workspace',
       method: 'POST',
@@ -352,6 +467,8 @@ describe('coverage', () => {
       operation: '{operationId}',
       lease: '{leaseId}',
       request: '{requestId}',
+      task: '{taskId}',
+      bookmark: '{bookmarkId}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),
@@ -392,6 +509,8 @@ describe('another organization’s ids inside our own organization', () => {
       operation: acmeOperation,
       lease: MISSING.lease,
       request: MISSING.request,
+      task: MISSING.task,
+      bookmark: MISSING.bookmark,
       [kind]: value,
     } as Ids);
 
@@ -405,6 +524,8 @@ describe('another organization’s ids inside our own organization', () => {
     'operation',
     'lease',
     'request',
+    'task',
+    'bookmark',
   ] as const) {
     it(`${kind} ids answer like nonexistent ids on every endpoint that takes one`, async () => {
       const before = await betaState();

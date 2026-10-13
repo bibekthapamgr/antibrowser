@@ -6,6 +6,7 @@
   "description": "Shared API, event and identifier contracts (milestone 01). Changes require an ADR.",
   "exports": {
     ".": "./src/index.ts",
+    "./agency": "./src/agency.ts",
     "./ipc": "./src/ipc.ts",
     "./notes": "./src/notes.ts",
     "./resources": "./src/resources.ts"

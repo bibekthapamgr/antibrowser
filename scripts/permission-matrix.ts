@@ -74,10 +74,17 @@ ${capabilityRows.join('\n')}
 - **operator**: uses granted profiles as their grants allow: open them (\`launch\`, including the closing backup), edit
   their configuration (\`edit\`: name, notes; never moving them to another client) and restore backups
   (\`backup_download\`). Cannot create, delete, bulk-change or export profiles, or grant access.
+  Adds and edits tasks of clients and profiles they reach (\`tasks.write\`, milestone 09): tasks on their profiles, or on
+  the whole client with a whole-client grant; assigns tasks only to themselves and deletes only tasks they created.
 - **viewer**: sees granted metadata only; cannot open profiles, read snapshots (logged-in sessions) or export.
 - **billing**: subscription data only (milestone 11); no client or profile access at all.
 - \`lease.force_release\`: forced takeover of a session (owners and admins, reason required, audited; milestone 08).
 - \`profile.export\` additionally needs a sign-in within the last 10 minutes (milestone 08).
+- \`extensions.manage\`: the organization's browser extension policy and the inventory of reported extensions
+  (milestone 09, [extension policy](agency/extension-policy.md)). Every member reads the policy (\`org.read\`), because
+  their app applies it.
+- Client dashboards, tasks and bookmarks inherit the reach: a dashboard counts only profiles the caller can see; who works
+  on a client and its recent activity are shown to holders of \`grants.manage\` and \`audit.read\` only (milestone 09).
 - \`billing.*\` are reserved for milestone 11; no endpoint uses them yet.
 `;
 writeFileSync(join(import.meta.dirname, '..', 'docs', 'permission-matrix.md'), md);
