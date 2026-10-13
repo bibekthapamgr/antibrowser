@@ -840,11 +840,21 @@ impl AppState {
     }
 
     /// Who and what a bulk action would touch, grouped by client, for the confirmation dialog.
-    pub fn selection_summary(&self, ids: &[ProfileId]) -> Result<SelectionSummary, IpcError> {
-        if ids.len() > SELECTION_MAX {
+    pub fn selection_summary(
+        &self,
+        selection: crate::manage::Selection,
+    ) -> Result<SelectionSummary, IpcError> {
+        let store = self.store()?;
+        let requested = match &selection {
+            crate::manage::Selection::Ids { ids } => ids.len(),
+            crate::manage::Selection::Filter { expected_total, .. } => *expected_total as usize,
+        };
+        if requested > SELECTION_MAX {
             return Err(ipc::SELECTION_TOO_LARGE);
         }
-        let store = self.store()?;
+        let ws = self.active_workspace(&store)?.ok_or(ipc::NO_WORKSPACE)?;
+        let ids = self.resolve_selection(&store, &ws, selection)?;
+        let ids = &ids;
         let rows = store.selection_rows(ids)?;
         let mut groups: BTreeMap<(Option<String>, Option<String>), Vec<String>> = BTreeMap::new();
         for r in &rows {

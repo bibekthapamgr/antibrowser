@@ -261,7 +261,15 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
   },
   { name: 'settings', demo: '', nav: 'Settings' },
   { name: 'downloads', demo: '', nav: 'Downloads and updates' },
-  { name: 'diagnostics', demo: '', nav: 'Diagnostics' },
+  {
+    name: 'diagnostics',
+    demo: '',
+    nav: 'Health',
+    prepare: async (p) => {
+      await clickButton(p, '.org-nav', 'Diagnostics');
+      await p.waitForSelector('#diag-title');
+    },
+  },
   { name: 'crash-recovery', demo: 'crash' },
   { name: 'database-recovery', demo: 'migration' },
   {
@@ -330,6 +338,97 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await p.waitForSelector('[role=alertdialog]');
     },
   },
+  // Milestone 09: health, resources, extensions, palette, notifications, dashboards and confirmations.
+  { name: 'health', demo: 'signedin', nav: 'Health', prepare: (p) => healthReady(p) },
+  {
+    name: 'health-resources',
+    demo: 'running',
+    nav: 'Health',
+    prepare: async (p) => {
+      await clickButton(p, '.org-nav', 'Resources');
+      await p.waitForSelector('table.records');
+    },
+  },
+  {
+    name: 'health-extensions',
+    demo: 'extupdate',
+    nav: 'Health',
+    prepare: async (p) => {
+      await clickButton(p, '.org-nav', 'Extensions');
+      await p.waitForFunction(() =>
+        document.querySelector('main')?.textContent?.includes('Mark as reviewed'),
+      );
+    },
+  },
+  {
+    name: 'diagnostics-preview',
+    demo: '',
+    nav: 'Health',
+    prepare: async (p) => {
+      await clickButton(p, '.org-nav', 'Diagnostics');
+      await clickButton(p, 'main', 'Preview and save report…');
+      await p.waitForSelector('[role=dialog] textarea');
+    },
+  },
+  {
+    name: 'command-palette',
+    demo: '',
+    prepare: async (p) => {
+      await p.keyboard.down('Control');
+      await p.keyboard.press('k');
+      await p.keyboard.up('Control');
+      await p.waitForSelector('[role=combobox]');
+      await p.keyboard.type('shop');
+      await p.waitForFunction(() =>
+        document.querySelector('[role=listbox]')?.textContent?.includes('Open Shop admin'),
+      );
+    },
+  },
+  {
+    name: 'notifications',
+    demo: 'extupdate',
+    prepare: async (p) => {
+      await p.waitForFunction(() => document.querySelector('.notices-button')?.textContent?.includes('(1)'));
+      await p.click('.notices-button');
+      await p.waitForSelector('.notice-list');
+    },
+  },
+  {
+    name: 'client-overview',
+    demo: '',
+    prepare: async (p) => {
+      await clickFolder(p, 'Client North');
+      await clickButton(p, '.toolbar', 'Client overview');
+      await p.waitForSelector('#co-dl');
+    },
+  },
+  {
+    name: 'bulk-confirmation',
+    demo: '',
+    prepare: async (p) => {
+      await p.focus('[role=grid]');
+      await p.keyboard.press('Space');
+      await p.keyboard.press('ArrowDown');
+      await p.keyboard.press('Space');
+      await clickButton(p, '.bulk-bar', 'Move 2 to trash');
+      await p.waitForFunction(() =>
+        document.querySelector('[role=alertdialog]')?.textContent?.includes('Client'),
+      );
+    },
+  },
+  {
+    name: 'launch-memory-check',
+    demo: 'lowmem',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForFunction(() =>
+        document.querySelector('[role=alertdialog]')?.textContent?.includes('Memory may run short'),
+      );
+    },
+  },
+  { name: 'org-client-dashboard', demo: 'signedin', prepare: (p) => openDashboard(p) },
+  { name: 'org-extensions', demo: 'signedin', prepare: (p) => openOrg(p, 'Extensions') },
   { name: 'proxies', demo: '', nav: 'Proxies' },
   {
     name: 'proxy-add',
@@ -412,6 +511,20 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     },
   },
 ];
+
+/** Waits until the health cards are shown (and the first server check finished). */
+async function healthReady(page: Page) {
+  await page.waitForSelector('.health-grid');
+  await page.waitForFunction(() => !document.querySelector('.health-card button[disabled]'));
+}
+
+/** Organization → Clients → the dashboard of Client North. */
+async function openDashboard(page: Page) {
+  await openOrg(page, 'Clients');
+  await clickButton(page, 'main', 'Dashboard of Client North');
+  await page.waitForSelector('#cd-title');
+  await page.waitForFunction(() => !document.querySelector('main p[role=status]'));
+}
 
 async function clickRow(page: Page, name: string) {
   const rows = await page.$$('.trow');
@@ -626,6 +739,11 @@ describe('profile management (milestone 04)', () => {
     await page.waitForSelector('.bulk-bar');
     expect(await text(page, '.bulk-bar__count')).toMatch(/^2 selected of 3/);
     await clickButton(page, '.bulk-bar', 'Archive 2');
+    // The confirmation names the clients and profiles (milestone 09).
+    await page.waitForFunction(() =>
+      document.querySelector('[role=alertdialog]')?.textContent?.includes('Client North'),
+    );
+    await clickButton(page, '[role=alertdialog]', 'Archive');
     await page.waitForSelector('.undo-bar');
     expect(await text(page, '.undo-bar')).toContain('Archived 2 profiles.');
     await rowCount(page, 1);
@@ -872,6 +990,10 @@ describe('proxies and privacy (milestone 05)', () => {
     await clickButton(page, '.bulk-bar', 'Set proxy…');
     await page.waitForSelector('[role=dialog] select');
     await clickButton(page, '[role=dialog]', 'Set proxy');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=alertdialog]')?.textContent?.includes('2 profiles'),
+    );
+    await clickButton(page, '[role=alertdialog]', 'Set a different proxy');
     // Shop admin already uses the first proxy, so one profile changes and one already matched.
     await toastContains(page, 'Set the proxy of 1 profile.');
     await toastContains(page, '1 profile already matched.');
@@ -973,7 +1095,7 @@ describe('account and organizations (milestone 06)', () => {
     expect(rows).toContain('North shop admin');
     expect(rows).not.toContain('South support desk');
     const buttons = await member.$$eval('.org-nav button', (bs) => bs.map((b) => b.textContent?.trim()));
-    expect(buttons).toEqual(['Profiles', 'Clients', 'Settings']);
+    expect(buttons).toEqual(['Profiles', 'Clients', 'Extensions', 'Settings']);
     expect(await member.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim()))).not.toContain(
       'Add profile',
     );
@@ -1287,6 +1409,195 @@ describe('shared sessions (milestone 08)', () => {
     );
     const violations = await axeSerious(page);
     expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+});
+
+describe('agency workspace and technical health (milestone 09)', () => {
+  it('health cards say when each thing was checked, and a check can run again', async () => {
+    const page = await open('signedin');
+    await goTo(page, 'Health');
+    await healthReady(page);
+    const cards = await page.$$eval('.health-card h2', (hs) => hs.map((h) => h.textContent?.trim()));
+    expect(cards).toEqual([
+      'Server connection',
+      'Proxies',
+      'Browser',
+      'Backups',
+      'Sync conflicts',
+      'Disk space',
+      'Open profiles and sessions',
+      'Extensions',
+      'Memory',
+    ]);
+    // Status is written out, never colour alone; the server was checked when the page opened.
+    const server = await text(page, '.health-card');
+    expect(server).toMatch(/OK/);
+    expect(server).toMatch(/Checked (just now|\d+ min ago)/);
+    const all = (await text(page, '.health-grid')).toLowerCase();
+    for (const word of ['ban', 'suspend', 'risk score']) expect(all).not.toContain(word);
+    await clickButton(page, '.health-card', 'Check again (Server connection)');
+    await page.waitForFunction(() =>
+      document.querySelector('.health-card')?.textContent?.includes('Checked'),
+    );
+    await page.close();
+  });
+
+  it('shows what open profiles use, with the manager counted apart', async () => {
+    const page = await open('running');
+    await goTo(page, 'Health');
+    await clickButton(page, '.org-nav', 'Resources');
+    await page.waitForSelector('table.records');
+    const body = await text(page, 'main');
+    expect(body).toContain('the manager uses');
+    expect(body).toContain('Only browsers this app opened are counted');
+    expect(body).toMatch(/Real use depends on the sites/);
+    await page.close();
+  });
+
+  it('an extension update that asks for more access is a notification until reviewed', async () => {
+    const page = await open('extupdate');
+    await page.waitForFunction(() => document.querySelector('.notices-button')?.textContent?.includes('(1)'));
+    await page.click('.notices-button');
+    await page.waitForFunction(() =>
+      document.querySelector('.notice-list')?.textContent?.includes('asks for more access'),
+    );
+    await clickButton(page, '.notice-list', 'Review');
+    await page.waitForFunction(() =>
+      document.querySelector('main')?.textContent?.includes('Mark as reviewed'),
+    );
+    await clickButton(page, 'main', 'Mark as reviewed (Tab saver)');
+    await toastContains(page, 'Tab saver: marked as reviewed.');
+    await page.close();
+  });
+
+  it('the command palette finds a profile by client and opens it with the keyboard; ? lists shortcuts', async () => {
+    const page = await open('');
+    await page.keyboard.down('Control');
+    await page.keyboard.press('k');
+    await page.keyboard.up('Control');
+    await page.waitForSelector('[role=combobox]');
+    expect((await focused(page)).role).toBe('combobox');
+    await page.keyboard.type('ads qa');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=listbox]')?.textContent?.includes('Open Ads QA (Client South)'),
+    );
+    // Commands first, then profiles: move down to the profile and run it.
+    for (let i = 0; i < 12; i++) {
+      const active = await page.$eval('[role=option][aria-selected=true]', (o) => o.textContent ?? '');
+      if (active.includes('Open Ads QA')) break;
+      await page.keyboard.press('ArrowDown');
+    }
+    await page.keyboard.press('Enter');
+    await toastContains(page, 'Opening Ads QA (Client South)');
+    await page.keyboard.press('?');
+    await page.waitForFunction(
+      () => document.querySelector('[role=dialog] h2')?.textContent === 'Keyboard shortcuts',
+    );
+    await page.keyboard.press('Escape');
+    // Ctrl+4 goes to the fourth screen (Health).
+    await page.keyboard.down('Control');
+    await page.keyboard.press('4');
+    await page.keyboard.up('Control');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Health');
+    await page.close();
+  });
+
+  it('a bulk move to the trash names the clients and profiles first', async () => {
+    const page = await open('');
+    await page.focus('[role=grid]');
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    await clickButton(page, '.bulk-bar', 'Move 2 to trash');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=alertdialog]')?.textContent?.includes('2 profiles'),
+    );
+    const dialog = await text(page, '[role=alertdialog]');
+    expect(dialog).toMatch(/Client (North|South)/);
+    expect(dialog).toContain('Nothing is done on websites');
+    await clickButton(page, '[role=alertdialog]', 'Cancel');
+    expect(await page.$('[role=alertdialog]')).toBeNull();
+    await page.close();
+  });
+
+  it('warns before opening when memory looks short, and opens on confirmation', async () => {
+    const page = await open('lowmem');
+    await clickRow(page, 'Ads QA');
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=alertdialog]')?.textContent?.includes('Memory may run short'),
+    );
+    expect(await text(page, '[role=alertdialog]')).toContain('Real use depends on the sites');
+    await clickButton(page, '[role=alertdialog]', 'Open anyway');
+    await toastContains(page, 'Opening Ads QA (Client South)');
+    await page.close();
+  });
+
+  it('previews the diagnostics report before saving it', async () => {
+    const page = await open('');
+    await goTo(page, 'Health');
+    await clickButton(page, '.org-nav', 'Diagnostics');
+    await clickButton(page, 'main', 'Preview and save report…');
+    await page.waitForSelector('[role=dialog] textarea');
+    const preview = await page.$eval('[role=dialog] textarea', (t) => (t as HTMLTextAreaElement).value);
+    expect(preview).toContain('"error_summary"');
+    expect(preview).not.toMatch(/https?:\/\//);
+    expect(await text(page, '[role=dialog]')).toMatch(/Removed: .*web address/);
+    await clickButton(page, '[role=dialog]', 'Save…');
+    await toastContains(page, 'Diagnostics saved to');
+    await page.close();
+  });
+
+  it('client dashboard: tasks are ticked off and shared bookmarks refuse executable links', async () => {
+    const page = await open('signedin');
+    await openDashboard(page);
+    const stats = await text(page, '.stat-row');
+    expect(stats).toContain('profiles you can see');
+    // A task, then ticked off.
+    await page.type('form[aria-label="Add a task"] input', 'Reply to the supplier');
+    await clickButton(page, 'form[aria-label="Add a task"]', 'Add task');
+    await toastContains(page, 'Task “Reply to the supplier” added.');
+    const box = await page.waitForFunction(() =>
+      [...document.querySelectorAll('.task')]
+        .find((t) => t.textContent?.includes('Reply to the supplier'))
+        ?.querySelector('input[type=checkbox]'),
+    );
+    await (box.asElement() as unknown as { click(): Promise<void> }).click();
+    await toastContains(page, 'Ticked off “Reply to the supplier”.');
+    // Bookmarks: javascript: is refused with an explanation; https is added.
+    const form = 'form[aria-label="Add a bookmark"]';
+    await page.type(`${form} input[maxlength="120"]`, 'Trick');
+    await page.type(`${form} input[type=url]`, 'javascript:alert(document.cookie)');
+    await clickButton(page, form, 'Add bookmark');
+    await page.waitForFunction(() =>
+      document.querySelector('#bk-problem')?.textContent?.includes('Only http'),
+    );
+    await page.$eval(`${form} input[type=url]`, (i) => {
+      (i as HTMLInputElement).value = '';
+    });
+    await page.click(`${form} input[type=url]`, { clickCount: 3 });
+    await page.keyboard.press('Backspace');
+    await page.type(`${form} input[type=url]`, 'https://support.shop.example/');
+    await clickButton(page, form, 'Add bookmark');
+    await toastContains(page, 'Bookmark “Trick” added.');
+    await page.waitForFunction(() =>
+      document.querySelector('.bookmark-list')?.textContent?.includes('support.shop.example'),
+    );
+    await page.close();
+  });
+
+  it('owners block a reported extension in the organization policy', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Extensions');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Coupon finder'));
+    expect(await text(page, 'main')).toContain('Not on your organization’s list');
+    await clickButton(page, 'main', 'Block Coupon finder');
+    await clickButton(page, 'main', 'Save policy');
+    await toastContains(page, 'Extension policy saved.');
+    await page.waitForFunction(() =>
+      document.querySelector('main')?.textContent?.includes('Blocked by your organization'),
+    );
     await page.close();
   });
 });

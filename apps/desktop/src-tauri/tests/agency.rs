@@ -451,8 +451,14 @@ fn bulk_confirmations_name_clients_and_the_memory_check_uses_measurements() {
     let summary = ok(invoke(
         &f,
         "selection_summary",
-        json!({ "profileIds": ids }),
+        json!({ "selection": { "kind": "ids", "ids": ids } }),
     ));
+    let all = ok(invoke(
+        &f,
+        "selection_summary",
+        json!({ "selection": { "kind": "filter", "filter": {}, "expected_total": 3 } }),
+    ));
+    assert_eq!(all["total"], json!(3));
     assert_eq!(
         (
             summary["total"].clone(),

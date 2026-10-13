@@ -21,8 +21,10 @@ import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo,
 import type { AccountView, AppView, Backend, OrgImportView } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { OrgBackupsSection } from './backups.tsx';
+import { OrgClientDashboard } from './clients.tsx';
 import { ApiFailure, can, get, ROLE_HELP, ROLE_LABEL, send } from './cloud.ts';
 import { Dialog, useDebounced } from './components.tsx';
+import { OrgExtensionsSection } from './extensions-org.tsx';
 import { type Notify, plural, relative, when } from './status.tsx';
 import { TakeoverDialog } from './team.tsx';
 
@@ -33,6 +35,7 @@ type Section =
   | 'invitations'
   | 'access'
   | 'backups'
+  | 'extensions'
   | 'activity'
   | 'settings';
 interface Page<T> {
@@ -105,6 +108,7 @@ export function OrganizationScreen(props: {
     ['invitations', 'Invitations', can(role, 'members.manage')],
     ['access', 'Access', can(role, 'grants.manage')],
     ['backups', 'Backups', can(role, 'backups.manage')],
+    ['extensions', 'Extensions', can(role, 'org.read') && role !== 'billing'],
     ['activity', 'Activity', can(role, 'audit.read')],
     ['settings', 'Settings', true],
   ];
@@ -144,6 +148,7 @@ export function OrganizationScreen(props: {
       {current === 'invitations' && <InvitationsSection {...common} />}
       {current === 'access' && <AccessSection {...common} />}
       {current === 'backups' && <OrgBackupsSection {...common} />}
+      {current === 'extensions' && <OrgExtensionsSection {...common} />}
       {current === 'activity' && <ActivitySection {...common} />}
       {current === 'settings' && (
         <SettingsSection
@@ -531,7 +536,21 @@ function ClientsSection(props: SectionProps) {
   const list = useResource<Page<OrgClient>>(backend, `/v1/orgs/${orgId}/clients`, notify, [['limit', '100']]);
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<OrgClient | null>(null);
+  const [dashboard, setDashboard] = useState<string | null>(null);
   const manage = can(role, 'clients.manage');
+  if (dashboard)
+    return (
+      <OrgClientDashboard
+        backend={backend}
+        orgId={orgId}
+        clientId={dashboard}
+        role={role}
+        me={props.me}
+        notify={notify}
+        offline={offline}
+        onBack={() => setDashboard(null)}
+      />
+    );
 
   const add = async (e: FormEvent) => {
     e.preventDefault();
@@ -605,6 +624,9 @@ function ClientsSection(props: SectionProps) {
                 <td>{c.archived_at ? <span className="muted">Archived</span> : 'Active'}</td>
                 <td>
                   <div className="cell-actions">
+                    <button type="button" className="pb-button" onClick={() => setDashboard(c.id)}>
+                      Dashboard<span className="pb-sr-only"> of {c.name}</span>
+                    </button>
                     {manage && (
                       <>
                         <button

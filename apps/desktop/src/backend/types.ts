@@ -12,13 +12,18 @@ import type {
   BulkAction,
   BulkResult,
   Client,
+  ClientOverview,
   CloudResponse,
+  DiagnosticsPreview,
   EventName,
   EventPayload,
+  ExtensionsView,
+  HealthView,
   ImportJob,
   ImportPreview,
   ImportSettings,
   IpcError,
+  LaunchCheck,
   Library,
   NetworkCheck,
   OrgImportView,
@@ -33,9 +38,11 @@ import type {
   ProxyEdit,
   ProxyInput,
   ProxyView,
+  ResourcesView,
   RuntimeStatus,
   SavedFilter,
   Selection,
+  SelectionSummary,
   SettingValue,
   Sort,
   Started,
@@ -52,14 +59,21 @@ export type {
   BulkAction,
   BulkResult,
   Client,
+  ClientOverview,
   ClientView,
   CloudResponse,
   ConflictChoice,
+  DiagnosticsPreview,
+  ExtensionsView,
+  ExtensionVerdict,
   FieldReport,
+  HealthCard,
+  HealthView,
   ImportJob,
   ImportPreview,
   ImportSettings,
   IpcError,
+  LaunchCheck,
   Library,
   NetworkCheck,
   NetworkView,
@@ -78,10 +92,12 @@ export type {
   ProxyEdit,
   ProxyInput,
   ProxyView,
+  ResourcesView,
   RunState,
   RuntimeStatus,
   SavedFilter,
   Selection,
+  SelectionSummary,
   SettingValue,
   Sort,
   SyncJobView,
@@ -195,7 +211,6 @@ export interface SystemRepository {
   updateSetting(key: string, value: unknown, expectedVersion?: number): Promise<SettingValue>;
   selectDownloadDirectory(): Promise<{ path: string | null }>;
   diagnostics(): Promise<Record<string, unknown>>;
-  exportDiagnostics(): Promise<{ path: string | null }>;
   reportUiReady(): Promise<number | null>;
   recovery(
     action: 'dismiss_crash' | 'retry_open' | 'restore_backup' | 'discard_interrupted',
@@ -301,8 +316,32 @@ export interface TeamRepository {
   ): Promise<ProfileView>;
 }
 
+/**
+ * Agency workspace on this computer (milestone 09): health, resources, extensions, client overviews, selection
+ * summaries for bulk confirmations, the pre-open check and diagnostics previews.
+ */
+export interface AgencyRepository {
+  health(): Promise<HealthView>;
+  /** Runs a check again: the server and sign-in, every proxy, or the extensions (rescan and policies). */
+  runCheck(check: 'server' | 'proxies' | 'extensions'): Promise<HealthView>;
+  resources(): Promise<ResourcesView>;
+  checkLaunch(profileIds: string[]): Promise<LaunchCheck>;
+  selectionSummary(selection: Selection): Promise<SelectionSummary>;
+  clientOverview(clientId: string): Promise<ClientOverview>;
+  /** Native folder picker for the client's downloads; `clear` returns to the usual folder. */
+  selectClientDownloadDirectory(clientId: string, clear?: boolean): Promise<{ path: string | null }>;
+  extensions(profileId?: string): Promise<ExtensionsView>;
+  rescanExtensions(profileId?: string): Promise<ExtensionsView>;
+  reviewExtension(profileId: string, extensionId: string): Promise<ExtensionsView>;
+  /** The redacted report, exactly as it would be saved (kept for 10 minutes). */
+  previewDiagnostics(): Promise<DiagnosticsPreview>;
+  /** Saves a previewed report where the person chooses. */
+  exportDiagnostics(previewId: string): Promise<{ path: string | null }>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
+  agency: AgencyRepository;
   account: AccountRepository;
   sync: SyncRepository;
   team: TeamRepository;

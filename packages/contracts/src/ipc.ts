@@ -1443,7 +1443,7 @@ export const COMMANDS = {
   },
   get_resources: { args: Type.Object({}), result: ResourcesView },
   check_launch: { args: ProfileIdsArg, result: LaunchCheck },
-  selection_summary: { args: ProfileIdsArg, result: SelectionSummary },
+  selection_summary: { args: Type.Object({ selection: Selection }), result: SelectionSummary },
   get_client_overview: {
     args: Type.Object({ clientId: Type.String({ pattern: ClientIdPattern }) }),
     result: ClientOverview,

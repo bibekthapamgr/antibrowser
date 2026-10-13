@@ -52,7 +52,7 @@ export const get = <T>(backend: Backend, path: string, query?: [string, string][
 
 export const send = <T>(
   backend: Backend,
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: Record<string, unknown>,
   version?: number,

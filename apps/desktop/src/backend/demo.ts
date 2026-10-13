@@ -38,6 +38,7 @@ import type {
   Template,
 } from '@pb/contracts/ipc';
 import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
+import { announceDemoExtensionUpdate, demoAgency } from './demo-agency.ts';
 import { demoCloud } from './demo-cloud.ts';
 import { demoSync } from './demo-sync.ts';
 import { demoTeam } from './demo-team.ts';
@@ -433,9 +434,30 @@ export function demoBackend(mode = ''): Backend {
       version: 0,
       ui_settable: true,
     },
+    'downloads.per_client_folders': {
+      key: 'downloads.per_client_folders',
+      value: false,
+      version: 0,
+      ui_settable: true,
+    },
+    'profiles.open_reminder_hours': {
+      key: 'profiles.open_reminder_hours',
+      value: 'off',
+      version: 0,
+      ui_settable: true,
+    },
+    'resources.memory_warning': {
+      key: 'resources.memory_warning',
+      value: true,
+      version: 0,
+      ui_settable: true,
+    },
   };
   const ENUMS: Record<string, unknown[]> = {
     'proxies.allow_private_addresses': [true, false],
+    'downloads.per_client_folders': [true, false],
+    'profiles.open_reminder_hours': ['off', '4', '8', '12', '24'],
+    'resources.memory_warning': [true, false],
     'appearance.theme': ['system', 'light', 'dark'],
     'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
     'profiles.trash_retention_days': ['7', '30', '90'],
@@ -1319,15 +1341,41 @@ export function demoBackend(mode = ''): Backend {
     }
   }
 
+  const agencyCtx = {
+    mode,
+    profiles: () => recs.filter((r) => inWs(r)).map(view),
+    clients: () => clients.filter((c) => c.workspace_id === activeWs()),
+    setting: (key: string) => settings[key]?.value,
+    proxies: () =>
+      proxies
+        .filter((p) => p.workspace_id === activeWs())
+        .map((p) => ({
+          name: p.name,
+          last_check:
+            checks
+              .filter((c) => c.proxy_id === p.id)
+              .sort((a, b) => b.checked_at.localeCompare(a.checked_at))[0] ?? null,
+        })),
+    runtimeInstalled: () => runtimeInstalled,
+    linkOf: (pid: string) => cloud.sync.linkOf(pid),
+    policy: (orgId: string) => cloud.sync.extensionPolicy(orgId),
+    signedIn: () => cloud.sync.signedIn(),
+    resolve: (sel: Selection) => resolve(sel).ids,
+    emit: (w: EventPayload<'warning'>) => emit('warning', w),
+  };
+  const agency = demoAgency(agencyCtx);
+  announceDemoExtensionUpdate(agencyCtx);
+
   const backend = {
     kind: 'demo',
+    agency,
     account: cloud,
     sync,
     team,
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.8.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: '0.9.0-demo', platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
@@ -2324,9 +2372,6 @@ export function demoBackend(mode = ''): Backend {
           crash_reports: crashed ? 1 : 0,
           recent_activity: [],
         };
-      },
-      async exportDiagnostics() {
-        return { path: '~/Downloads/project-browser-diagnostics.json' };
       },
       async reportUiReady() {
         return performance.now();

@@ -4,56 +4,67 @@ import { AccountScreen } from './account.tsx';
 import type { AccountView, AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { get, ROLE_LABEL } from './cloud.ts';
-import { LiveRegion } from './components.tsx';
+import { HealthScreen, type HealthTab } from './health.tsx';
+import { useLauncher } from './launch.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
+import { NoticeCentre, ReconnectBanner, Toasts, useNotifications } from './notices.tsx';
 import { OrganizationScreen } from './org.tsx';
+import { type Command, CommandPalette, MOD, ShortcutsHelp, useShortcuts } from './palette.tsx';
 import { ProfilesScreen } from './profiles.tsx';
 import {
   CrashPrompt,
   DatabaseRecovery,
-  DiagnosticsScreen,
   DownloadsScreen,
   QuitPrompt,
   SettingsScreen,
   Welcome,
 } from './screens.tsx';
+import { withClient } from './status.tsx';
 
-type View = 'profiles' | 'proxies' | 'downloads' | 'diagnostics' | 'account' | 'settings' | 'organization';
+type View = 'profiles' | 'proxies' | 'downloads' | 'health' | 'account' | 'settings' | 'organization';
 const NAV: [View, string][] = [
   ['profiles', 'Profiles'],
   ['proxies', 'Proxies'],
   ['downloads', 'Downloads and updates'],
-  ['diagnostics', 'Diagnostics'],
+  ['health', 'Health'],
   ['account', 'Account'],
   ['settings', 'Settings'],
 ];
 type OrgWorkspace = Workspaces['items'][number];
 
-interface Toast {
-  id: number;
-  text: string;
-  tone: 'info' | 'error';
-}
-
 export function App({ backend }: { backend: Backend }) {
   const [app, setApp] = useState<AppView | null>(null);
   const [view, setView] = useState<View>('profiles');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const { toasts, notices, notify, raise, resolve } = useNotifications();
+  const [healthTab, setHealthTab] = useState<HealthTab>('health');
+  const [palette, setPalette] = useState(false);
+  const [shortcuts, setShortcuts] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState<{ id: string; nonce: number } | null>(null);
   const [quit, setQuit] = useState<{ running: number; unresponsive: number } | null>(null);
   const [importOp, setImportOp] = useState<Operation | null>(null);
   const [folderSlot, setFolderSlot] = useState<HTMLElement | null>(null);
   const [account, setAccount] = useState<AccountView | null>(null);
   const [orgs, setOrgs] = useState<OrgWorkspace[]>([]);
   const [orgId, setOrgId] = useState<string | null>(null);
-  const toastSeq = useRef(0);
   const reported = useRef(false);
-
-  const notify = useCallback((text: string, tone: 'info' | 'error' = 'info') => {
-    const id = ++toastSeq.current;
-    setToasts((t) => [...t.slice(-3), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === 'error' ? 8000 : 4000);
+  const launcher = useLauncher(backend, notify);
+  const go = useCallback((v: View, tab?: HealthTab) => {
+    setView(v);
+    if (tab) setHealthTab(tab);
   }, []);
+  /** Profile names in notices: "Shop admin (Client North)", or a fallback when it cannot be read. */
+  const nameOf = useCallback(
+    async (id: string) => {
+      try {
+        return `“${withClient((await backend.profiles.status(id)).profile)}”`;
+      } catch {
+        return 'A profile';
+      }
+    },
+    [backend],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -174,12 +185,105 @@ export function App({ backend }: { backend: Backend }) {
           (n) => `Your access to ${n} was removed. It was closed; the data on this computer was kept.`,
           'error',
         );
+      // Milestone 09: what needs the person stays in the notification centre until it is resolved.
+      const key = `team:${e.profile_id}`;
+      if (
+        e.kind === 'phase' &&
+        (e.phase === 'lost' || e.phase === 'pending' || e.phase === 'taken_over' || e.phase === 'revoked')
+      ) {
+        const phase = e.phase;
+        void nameOf(e.profile_id).then((n) =>
+          raise({
+            key,
+            tone: 'error',
+            text:
+              phase === 'lost'
+                ? `${n}: the shared session's connection was lost. It reconnects by itself when you are online.`
+                : phase === 'pending'
+                  ? `${n}: the handoff is waiting for a decision.`
+                  : phase === 'taken_over'
+                    ? `${n} was taken over by an admin; your copy was kept aside.`
+                    : `${n}: your access was removed; the data on this computer was kept.`,
+            action: { label: 'Show profiles', run: () => go('profiles') },
+          }),
+        );
+      } else if (
+        e.kind === 'reconnected' ||
+        e.kind === 'handoff_ready' ||
+        (e.kind === 'phase' && (e.phase === 'running' || e.phase === null))
+      )
+        resolve(key);
+    });
+    const offSync = backend.on('sync', (e) => {
+      const key = `sync:${e.profile_id}`;
+      if (e.state === 'failed' || e.state === 'conflict') {
+        const conflict = e.state === 'conflict';
+        void nameOf(e.profile_id).then((n) =>
+          raise({
+            key,
+            tone: 'error',
+            text: conflict
+              ? `${n}: a newer backup was made on another computer. Choose which copy to keep in the profile's backups.`
+              : `${n}: the ${e.kind === 'restore' ? 'restore' : 'backup'} failed. It is retried; check the profile's backups if it keeps failing.`,
+            action: { label: 'Show profiles', run: () => go('profiles') },
+          }),
+        );
+      } else if (e.state === 'committed' || e.state === 'done') resolve(key);
     });
     const offQuit = backend.on('quit-requested', (p) => setQuit(p));
     const offWarning = backend.on('warning', (w) => {
-      if (w.code === 'LOW_DISK_SPACE')
+      if (w.code === 'LOW_DISK_SPACE') {
         notify('Your disk is almost full. Close profiles soon so their data can be saved safely.', 'error');
-      else if (w.code === 'PROXY_FAILING')
+        raise({
+          key: 'disk',
+          tone: 'error',
+          text: 'Your disk is almost full. Close profiles soon so their data can be saved safely; backups are skipped until there is room.',
+          action: { label: 'Show health', run: () => go('health', 'health') },
+        });
+      } else if (w.code === 'EXTENSIONS_DISABLED' || w.code === 'EXTENSIONS_NOT_APPROVED') {
+        const names = w.extensions.map((x) => x.name).join(', ');
+        const disabled = w.code === 'EXTENSIONS_DISABLED';
+        void nameOf(w.profile_id).then((n) => {
+          const text = disabled
+            ? `${n} opened with extensions turned off: your organization has not approved ${names}.`
+            : `${n} has extensions your organization has not approved: ${names}.`;
+          notify(text, disabled ? 'error' : 'info');
+          raise({
+            key: `ext:${w.profile_id}`,
+            tone: disabled ? 'error' : 'info',
+            text,
+            action: { label: 'Show extensions', run: () => go('health', 'extensions') },
+          });
+        });
+      } else if (w.code === 'EXTENSION_PERMISSIONS_ADDED') {
+        void nameOf(w.profile_id).then((n) =>
+          raise({
+            key: `extperm:${w.profile_id}:${w.extension_id}`,
+            tone: 'info',
+            text: `${n}: an extension update asks for more access (${w.permissions.join(', ')}). Review it.`,
+            action: { label: 'Review', run: () => go('health', 'extensions') },
+          }),
+        );
+      } else if (w.code === 'OPEN_REMINDER') {
+        void nameOf(w.profile_id).then((n) =>
+          raise({
+            key: `open:${w.profile_id}`,
+            tone: 'info',
+            text: `${n} has been open for over ${w.hours} hours. Save your work in its windows first, then close it if you are done; it is never closed for you.`,
+            action: {
+              label: 'Close it',
+              run: async () => {
+                try {
+                  await backend.profiles.stop(w.profile_id);
+                  resolve(`open:${w.profile_id}`);
+                } catch (e) {
+                  notify(errorMessage(e), 'error');
+                }
+              },
+            },
+          }),
+        );
+      } else if (w.code === 'PROXY_FAILING')
         notify(
           `A profile's proxy stopped working. ${PROXY_ERROR_HELP[w.error] ?? ''} ${
             w.fail_closed ? 'Its traffic is blocked until the proxy works again.' : ''
@@ -206,10 +310,101 @@ export function App({ backend }: { backend: Backend }) {
       offOp();
       offChanged();
       offTeam();
+      offSync();
       offQuit();
       offWarning();
     };
-  }, [backend, notify]);
+  }, [backend, notify, raise, resolve, nameOf, go]);
+
+  useShortcuts({
+    palette: () => setPalette(true),
+    help: () => setShortcuts(true),
+    nav: (i) => {
+      const target = NAV[i];
+      if (target) go(target[0]);
+    },
+  });
+
+  const commands: Command[] = [
+    ...NAV.map(
+      ([id, label]): Command => ({
+        id: `go-${id}`,
+        label: `Go to ${label}`,
+        hint: 'Screen',
+        run: () => go(id),
+      }),
+    ),
+    {
+      id: 'health-ext',
+      label: 'Show extensions',
+      keywords: 'addons plugins',
+      hint: 'Health',
+      run: () => go('health', 'extensions'),
+    },
+    {
+      id: 'health-res',
+      label: 'Show memory and processes',
+      keywords: 'resources ram cpu',
+      hint: 'Health',
+      run: () => go('health', 'resources'),
+    },
+    {
+      id: 'health-diag',
+      label: 'Save a diagnostics report',
+      keywords: 'support logs',
+      hint: 'Health',
+      run: () => go('health', 'diagnostics'),
+    },
+    {
+      id: 'check-server',
+      label: 'Check the server connection',
+      keywords: 'online offline reconnect',
+      hint: 'Check',
+      run: () => {
+        go('health', 'health');
+        void backend.agency.runCheck('server').then(
+          (h) => notify(h.cards.find((c) => c.id === 'connectivity')?.summary ?? 'Checked.'),
+          (e) => notify(errorMessage(e), 'error'),
+        );
+      },
+    },
+    {
+      id: 'check-proxies',
+      label: 'Check all proxies',
+      hint: 'Check',
+      run: () => {
+        go('health', 'health');
+        void backend.agency.runCheck('proxies').then(
+          () => setRefreshKey((k) => k + 1),
+          (e) => notify(errorMessage(e), 'error'),
+        );
+      },
+    },
+    {
+      id: 'notifications',
+      label: `Show notifications (${notices.length})`,
+      hint: 'App',
+      run: () => setNoticesOpen(true),
+    },
+    {
+      id: 'shortcuts',
+      label: 'Keyboard shortcuts',
+      keywords: 'keys help',
+      hint: 'Help',
+      run: () => setShortcuts(true),
+    },
+    ...orgs.map(
+      (o): Command => ({
+        id: `org-${o.org_id}`,
+        label: `Go to organization ${o.name}`,
+        hint: 'Organization',
+        run: () => {
+          setOrgId(o.org_id);
+          setView('organization');
+        },
+      }),
+    ),
+  ];
 
   if (!app) {
     return (
@@ -219,7 +414,7 @@ export function App({ backend }: { backend: Backend }) {
     );
   }
 
-  const live = <LiveRegion messages={toasts} />;
+  const live = <Toasts toasts={toasts} />;
   if (app.store.status === 'failed') {
     return (
       <>
@@ -311,6 +506,17 @@ export function App({ backend }: { backend: Backend }) {
             <progress aria-label="Import progress" value={importOp.progress ?? undefined} max={1} />
           </div>
         )}
+        <button
+          type="button"
+          className="nav-item notices-button"
+          aria-label={`Notifications: ${notices.length === 0 ? 'none' : notices.length}`}
+          onClick={() => setNoticesOpen(true)}
+        >
+          Notifications{notices.length > 0 ? ` (${notices.length})` : ''}
+        </button>
+        <p className="sidebar__hint">
+          <kbd>{MOD()}K</kbd> finds anything · <kbd>?</kbd> shortcuts
+        </p>
         <div className="sidebar__status" role="status">
           {app.running_count === 0
             ? 'No profiles open'
@@ -327,6 +533,7 @@ export function App({ backend }: { backend: Backend }) {
 
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}
       <main className="main" id="main" tabIndex={0} aria-label="Content">
+        <ReconnectBanner backend={backend} account={account} refreshKey={refreshKey} />
         {view === 'profiles' && (
           <ProfilesScreen
             backend={backend}
@@ -334,13 +541,23 @@ export function App({ backend }: { backend: Backend }) {
             notify={notify}
             runningCount={app.running_count}
             folderSlot={folderSlot}
+            showProfile={showProfile}
           />
         )}
         {view === 'proxies' && <ProxiesScreen backend={backend} refreshKey={refreshKey} notify={notify} />}
         {view === 'downloads' && (
           <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
         )}
-        {view === 'diagnostics' && <DiagnosticsScreen backend={backend} notify={notify} />}
+        {view === 'health' && (
+          <HealthScreen
+            backend={backend}
+            notify={notify}
+            refreshKey={refreshKey}
+            tab={healthTab}
+            onTab={setHealthTab}
+            onNavigate={(v) => go(v)}
+          />
+        )}
         {view === 'account' && (
           <AccountScreen
             backend={backend}
@@ -388,7 +605,7 @@ export function App({ backend }: { backend: Backend }) {
           backend={backend}
           app={app}
           onDone={refresh}
-          onDiagnostics={() => setView('diagnostics')}
+          onDiagnostics={() => go('health', 'diagnostics')}
         />
       )}
       {quit !== null && (
@@ -400,6 +617,23 @@ export function App({ backend }: { backend: Backend }) {
           onClose={() => setQuit(null)}
         />
       )}
+      {palette && (
+        <CommandPalette
+          backend={backend}
+          commands={commands}
+          onClose={() => setPalette(false)}
+          onOpenProfile={(p) => void launcher.open([p])}
+          onShowProfile={(p) => {
+            setView('profiles');
+            setShowProfile({ id: p.id, nonce: Date.now() });
+          }}
+        />
+      )}
+      {shortcuts && <ShortcutsHelp screens={NAV.map(([, l]) => l)} onClose={() => setShortcuts(false)} />}
+      {noticesOpen && (
+        <NoticeCentre notices={notices} onDismiss={resolve} onClose={() => setNoticesOpen(false)} />
+      )}
+      {launcher.dialog}
       {live}
     </div>
   );

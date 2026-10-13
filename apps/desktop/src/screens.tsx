@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import type { AppView, Backend, RuntimeStatus, SettingValue } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { Dialog, formatBytes } from './components.tsx';
+import { DiagnosticsExport } from './diagnostics.tsx';
 import { ImportHistory } from './importer.tsx';
 import { LibraryManager } from './library.tsx';
 import type { Notify } from './status.tsx';
@@ -129,6 +130,9 @@ export function SettingsScreen(props: {
   const downloads = setting(app, 'downloads.directory')?.value as string | null | undefined;
   const retention = String(setting(app, 'profiles.trash_retention_days')?.value ?? '30');
   const localProxies = setting(app, 'proxies.allow_private_addresses')?.value === true;
+  const perClient = setting(app, 'downloads.per_client_folders')?.value === true;
+  const reminder = String(setting(app, 'profiles.open_reminder_hours')?.value ?? 'off');
+  const memoryWarning = setting(app, 'resources.memory_warning')?.value !== false;
 
   return (
     <section className="screen settings" aria-labelledby="settings-title">
@@ -191,6 +195,49 @@ export function SettingsScreen(props: {
         >
           Choose folder…
         </button>
+        <label className="choice">
+          <input
+            type="checkbox"
+            checked={perClient}
+            onChange={(e) => update('downloads.per_client_folders', e.target.checked)}
+          />
+          Give each client its own folder inside it
+        </label>
+        <p className="muted small">
+          The folder is named after the client (characters a folder name cannot have are replaced). A client
+          can also have a folder of its own (Profiles → choose the client → Client overview), and a profile
+          one of its own. Changes apply the next time a profile opens; nothing already downloaded is moved.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Open profiles</legend>
+        <label>
+          Remind me when a profile has been open for
+          <select value={reminder} onChange={(e) => update('profiles.open_reminder_hours', e.target.value)}>
+            <option value="off">Never</option>
+            {['4', '8', '12', '24'].map((h) => (
+              <option key={h} value={h}>
+                {h} hours
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          A reminder only: profiles are never closed for you, because the app cannot see unsaved work in a
+          page.
+        </p>
+        <label className="choice">
+          <input
+            type="checkbox"
+            checked={memoryWarning}
+            onChange={(e) => update('resources.memory_warning', e.target.checked)}
+          />
+          Warn before opening profiles when free memory looks too low
+        </label>
+        <p className="muted small">
+          Based on what profiles used on this computer (Health → Resources), not on any one website.
+        </p>
       </fieldset>
 
       <fieldset>
@@ -577,27 +624,17 @@ export function DiagnosticsScreen(props: { backend: Backend; notify: Notify }) {
     ['Saved crash reports', String(get('crash_reports') ?? 0)],
   ];
   return (
-    <section className="screen" aria-labelledby="diag-title">
-      <header className="toolbar">
-        <h1 id="diag-title">Diagnostics</h1>
-        <button
-          type="button"
-          className="pb-button"
-          onClick={async () => {
-            try {
-              const r = await backend.system.exportDiagnostics();
-              if (r.path) notify(`Diagnostics saved to ${r.path}.`);
-            } catch (e) {
-              notify(errorMessage(e), 'error');
-            }
-          }}
-        >
-          Save report…
-        </button>
+    <section className="stack" aria-labelledby="diag-title">
+      <header className="row">
+        <h2 id="diag-title" className="grow">
+          This computer
+        </h2>
+        <DiagnosticsExport backend={backend} notify={notify} />
       </header>
       <p className="muted small">
-        Manager figures exclude the browser; browser figures are shown separately. The saved report has
-        personal details removed.
+        Manager figures exclude the browser; browser figures are shown separately. The saved report includes
+        versions, operation ids and summarized errors, with personal details and secrets removed; you see it
+        before it is saved.
       </p>
       <table className="simple">
         <caption className="pb-sr-only">Diagnostics</caption>
@@ -662,13 +699,11 @@ export function DatabaseRecovery(props: {
               Restore the copy made before the update
             </button>
           )}
-          <button
-            type="button"
-            className="pb-button"
-            onClick={() => props.backend.system.exportDiagnostics().catch(() => undefined)}
-          >
-            Save a diagnostics report…
-          </button>
+          <DiagnosticsExport
+            backend={props.backend}
+            notify={props.notify}
+            label="Save a diagnostics report…"
+          />
         </div>
         <p className="muted small">Error code: {failure?.code ?? 'unknown'}</p>
       </div>

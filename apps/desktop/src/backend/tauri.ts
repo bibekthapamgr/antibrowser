@@ -11,6 +11,21 @@ function call<C extends CommandName>(cmd: C, args: CommandArgs<C>): Promise<Comm
 export function tauriBackend(): Backend {
   return {
     kind: 'tauri',
+    agency: {
+      health: () => call('get_health', {}),
+      runCheck: (check) => call('run_health_check', { check }),
+      resources: () => call('get_resources', {}),
+      checkLaunch: (profileIds) => call('check_launch', { profileIds }),
+      selectionSummary: (selection) => call('selection_summary', { selection }),
+      clientOverview: (clientId) => call('get_client_overview', { clientId }),
+      selectClientDownloadDirectory: (clientId, clear) =>
+        call('select_client_download_directory', clear ? { clientId, clear } : { clientId }),
+      extensions: (profileId) => call('get_extensions', profileId ? { profileId } : {}),
+      rescanExtensions: (profileId) => call('rescan_extensions', profileId ? { profileId } : {}),
+      reviewExtension: (profileId, extensionId) => call('review_extension', { profileId, extensionId }),
+      previewDiagnostics: () => call('preview_diagnostics', {}),
+      exportDiagnostics: (previewId) => call('export_diagnostics', { previewId }),
+    },
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),
@@ -135,7 +150,6 @@ export function tauriBackend(): Backend {
         ),
       selectDownloadDirectory: () => call('select_download_directory', {}),
       diagnostics: () => call('get_diagnostics', {}) as Promise<Record<string, unknown>>,
-      exportDiagnostics: () => call('export_diagnostics', {}),
       reportUiReady: () => call('report_ui_ready', {}),
       recovery: async (action, target) => {
         await call('recovery_action', target ? { action, target } : { action });

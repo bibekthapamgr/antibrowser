@@ -16,12 +16,15 @@ import type {
   ProfileView,
   RunState,
   Selection,
+  SelectionSummary,
   Sort,
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
+import { ClientOverviewDialog } from './clients.tsx';
 import { Cell, Dialog, useDebounced, useElementHeight, VirtualList } from './components.tsx';
 import { NameDialog, ProfileDrawer } from './drawer.tsx';
 import { ExportDialog, ImportDialog } from './importer.tsx';
+import { useLauncher } from './launch.tsx';
 import { CredentialPrompt, NetworkCell, SetProxyDialog } from './network.tsx';
 import { nameKey } from './notes.ts';
 import {
@@ -246,8 +249,23 @@ const ACTION_DONE: Record<
       : `Removed the proxy from ${plural(n, 'profile')}.`,
 };
 
+/** What a confirmation names before a bulk action that changes or removes profiles (milestone 09). */
+const CONFIRM_TEXT: Partial<
+  Record<BulkAction['action'], (a: BulkAction, library: Library | null) => string>
+> = {
+  trash: () => 'Move to the trash',
+  archive: () => 'Archive',
+  move: (a, l) =>
+    a.action === 'move' && a.client_id
+      ? `Move to the client “${l?.clients.find((c) => c.id === a.client_id)?.name ?? 'another client'}”`
+      : 'Remove the client',
+  set_proxy: (a) => (a.action === 'set_proxy' && a.proxy_id ? 'Set a different proxy' : 'Remove the proxy'),
+};
+
 type BulkDialog =
   | { kind: 'add_tag' | 'remove_tag' | 'move' | 'export' | 'delete' | 'set_proxy' }
+  | { kind: 'confirm'; action: BulkAction }
+  | { kind: 'client_overview'; clientId: string }
   | { kind: 'credentials'; proxyId: string; profile: ProfileView }
   | { kind: 'failures'; title: string; result: BulkResult };
 
@@ -257,6 +275,8 @@ export function ProfilesScreen(props: {
   notify: Notify;
   runningCount: number;
   folderSlot: HTMLElement | null;
+  /** Opens the settings of this profile (from the command palette). */
+  showProfile?: { id: string; nonce: number } | null;
 }) {
   const { backend, notify, refreshKey } = props;
   const [library, reloadLibrary] = useLibrary(backend, refreshKey, notify);
@@ -301,6 +321,16 @@ export function ProfilesScreen(props: {
     setActive(0);
     anchor.current = null;
   }, [filterKey]);
+
+  // The command palette asked for a profile's settings.
+  const show = props.showProfile;
+  useEffect(() => {
+    if (!show) return;
+    backend.profiles
+      .status(show.id)
+      .then((s) => setDrawer(s.profile))
+      .catch((e) => notify(errorMessage(e), 'error'));
+  }, [show, backend, notify]);
 
   // The drawer follows the row it shows when the table refreshes.
   useEffect(() => {
@@ -363,12 +393,21 @@ export function ProfilesScreen(props: {
     setAllMatching(false);
   };
 
+  // Opening goes through the memory and extension check first (milestone 09).
+  const launcher = useLauncher(backend, notify, (e, target) => {
+    const p = pages.loaded.find((r) => r.id === target.id);
+    if (isIpcError(e) && e.code === 'PROXY_CREDENTIALS_MISSING' && p?.proxy_id) {
+      setDialog({ kind: 'credentials', proxyId: p.proxy_id, profile: p });
+      return true;
+    }
+    return false;
+  });
+
   const toggleOpen = async (p: ProfileView) => {
     const action = primaryAction(p);
     try {
       if (action === 'open') {
-        await backend.profiles.launch(p.id);
-        notify(`Opening ${withClient(p)}…`);
+        await launcher.open([p]);
       } else if (action === 'close') {
         await backend.profiles.stop(p.id);
         notify(`Closing ${withClient(p)}…`);
@@ -398,6 +437,12 @@ export function ProfilesScreen(props: {
       });
     else notify(text);
     setUndo(r.undo_token ? { token: r.undo_token, text } : null);
+  };
+
+  /** Actions that change or remove several profiles are confirmed with the clients and profiles they touch. */
+  const confirmOrRun = (a: BulkAction) => {
+    if (CONFIRM_TEXT[a.action]) setDialog({ kind: 'confirm', action: a });
+    else void runBulk(a);
   };
 
   const runBulk = async (a: BulkAction, sel: Selection = selection) => {
@@ -467,6 +512,15 @@ export function ProfilesScreen(props: {
             onClick={() => backend.profiles.closeAll().catch((e) => notify(errorMessage(e), 'error'))}
           >
             Close all ({props.runningCount})
+          </button>
+        )}
+        {folder.kind === 'client' && (
+          <button
+            type="button"
+            className="pb-button"
+            onClick={() => setDialog({ kind: 'client_overview', clientId: folder.id })}
+          >
+            Client overview
           </button>
         )}
         <button type="button" className="pb-button" onClick={() => setImporting(true)}>
@@ -569,7 +623,7 @@ export function ProfilesScreen(props: {
           view={view}
           onSelectAll={() => setAllMatching(true)}
           onClear={clearSelection}
-          onAction={(a) => void runBulk(a)}
+          onAction={confirmOrRun}
           onDialog={(kind) => setDialog({ kind })}
         />
       )}
@@ -777,9 +831,29 @@ export function ProfilesScreen(props: {
           library={library}
           onClose={() => setDialog(null)}
           onSubmit={async (a) => {
+            setDialog({ kind: 'confirm', action: a });
+          }}
+        />
+      )}
+      {dialog?.kind === 'confirm' && (
+        <ConfirmSelectionDialog
+          backend={backend}
+          selection={selection}
+          operation={CONFIRM_TEXT[dialog.action.action]?.(dialog.action, library) ?? 'Change'}
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            const a = dialog.action;
             setDialog(null);
             await runBulk(a);
           }}
+        />
+      )}
+      {dialog?.kind === 'client_overview' && (
+        <ClientOverviewDialog
+          backend={backend}
+          clientId={dialog.clientId}
+          notify={notify}
+          onClose={() => setDialog(null)}
         />
       )}
       {dialog?.kind === 'export' && (
@@ -793,6 +867,8 @@ export function ProfilesScreen(props: {
       )}
       {dialog?.kind === 'delete' && (
         <DeleteDialog
+          backend={backend}
+          selection={selection}
           count={count}
           onClose={() => {
             setDialog(null);
@@ -822,11 +898,11 @@ export function ProfilesScreen(props: {
           count={count}
           onClose={() => setDialog(null)}
           onSubmit={async (a) => {
-            setDialog(null);
-            await runBulk(a);
+            setDialog({ kind: 'confirm', action: a });
           }}
         />
       )}
+      {launcher.dialog}
       {dialog?.kind === 'credentials' && (
         <CredentialPrompt
           backend={backend}
@@ -1398,7 +1474,100 @@ function MoveDialog(props: {
   );
 }
 
-function DeleteDialog(props: { count: number; onClose: () => void; onConfirm: () => Promise<void> }) {
+/** The clients, profiles and operation a bulk action will touch, loaded from the shell (milestone 09). */
+function SelectionSummaryView(props: { backend: Backend; selection: Selection }) {
+  const [s, setS] = useState<SelectionSummary | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const { backend, selection } = props;
+  const key = JSON.stringify(selection);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key stands for the selection
+  useEffect(() => {
+    let live = true;
+    backend.agency
+      .selectionSummary(selection)
+      .then((x) => live && setS(x))
+      .catch((e) => live && setFailed(errorMessage(e)));
+    return () => {
+      live = false;
+    };
+  }, [backend, key]);
+  if (failed)
+    return (
+      <p role="alert" className="error">
+        {failed}
+      </p>
+    );
+  if (!s) return <p role="status">Checking which profiles this touches…</p>;
+  return (
+    <div className="stack selection-summary">
+      <p>
+        <strong>{plural(s.total, 'profile')}</strong>
+        {' in '}
+        {plural(s.clients.filter((c) => c.client_name).length, 'client')}
+        {s.clients.some((c) => !c.client_name) ? ' (and some without a client)' : ''}:
+      </p>
+      <ul>
+        {s.clients.map((c) => (
+          <li key={c.client_id ?? 'none'}>
+            <strong>{c.client_name ?? 'No client'}</strong> — {plural(c.count, 'profile')}:{' '}
+            {c.names.join(', ')}
+            {c.count > c.names.length ? ` and ${c.count - c.names.length} more` : ''}
+          </li>
+        ))}
+      </ul>
+      {s.running > 0 && (
+        <p className="warn">{plural(s.running, 'of them is', 'of them are')} open right now.</p>
+      )}
+      {s.shared > 0 && (
+        <p className="muted small">
+          {plural(s.shared, 'is', 'are')} shared with an organization: this changes the copy on this computer
+          only.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ConfirmSelectionDialog(props: {
+  backend: Backend;
+  selection: Selection;
+  operation: string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  return (
+    <Dialog role="alertdialog" title={`${props.operation}?`} onClose={props.onClose}>
+      <div className="stack">
+        <SelectionSummaryView backend={props.backend} selection={props.selection} />
+        <p className="muted small">
+          Only what this app controls changes. Nothing is done on websites, and actions inside open browser
+          windows are not intercepted.
+        </p>
+        <div className="row row--end">
+          <button type="button" className="pb-button" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="pb-button"
+            data-variant="primary"
+            onClick={() => void props.onConfirm()}
+          >
+            {props.operation}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function DeleteDialog(props: {
+  backend: Backend;
+  selection: Selection;
+  count: number;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1411,6 +1580,7 @@ function DeleteDialog(props: { count: number; onClose: () => void; onConfirm: ()
       onClose={props.onClose}
       initialFocus="input"
     >
+      <SelectionSummaryView backend={props.backend} selection={props.selection} />
       <form
         className="stack"
         onSubmit={async (e) => {

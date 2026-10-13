@@ -699,10 +699,10 @@ pub fn check_launch<Rt: Runtime>(
 pub fn selection_summary<Rt: Runtime>(
     webview: Webview<Rt>,
     state: S<'_>,
-    profile_ids: Vec<ProfileId>,
+    selection: Selection,
 ) -> R<crate::agency::SelectionSummary> {
     caller(&webview)?;
-    state.selection_summary(&profile_ids)
+    state.selection_summary(selection)
 }
 
 #[tauri::command]

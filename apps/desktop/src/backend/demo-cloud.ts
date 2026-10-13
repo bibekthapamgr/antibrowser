@@ -8,6 +8,15 @@
  * unreachable after the first answers), `member` (the demo user is an operator of the demo organization).
  * Milestone 08 (with `linked`): `inuse` (Sam has the first organization profile open on another computer).
  */
+
+import {
+  BOOKMARKS_PER_CLIENT,
+  bookmarkUrlProblem,
+  cleanLabel,
+  type ExtensionRule,
+  isSensitivePermission,
+  validVersionRange,
+} from '@pb/contracts/agency';
 import {
   type ASSIGNABLE_ROLES,
   defaultCapabilities,
@@ -92,6 +101,28 @@ interface OrgRec {
   leases: Map<string, DemoLease>;
   requests: DemoRequest[];
   recovery: DemoRecovery[];
+  /** Milestone 09: tasks, shared bookmarks, the extension policy and devices' extension reports. */
+  tasks: DemoTask[];
+  bookmarks: DemoBookmark[];
+  ext: {
+    mode: 'off' | 'warn' | 'enforce';
+    version: number;
+    updated_at: string | null;
+    rules: ExtensionRule[];
+  };
+  extReports: {
+    profile_id: string;
+    device_id: string;
+    extensions: {
+      id: string;
+      name: string;
+      version: string;
+      source: string;
+      enabled: boolean;
+      permissions: string[];
+    }[];
+    reported_at: string;
+  }[];
   audit: {
     id: string;
     actor_user_id: string | null;
@@ -104,6 +135,34 @@ interface OrgRec {
     details: Record<string, unknown>;
     created_at: string;
   }[];
+}
+
+interface DemoTask {
+  id: string;
+  client_id: string;
+  profile_id: string | null;
+  assignee_id: string | null;
+  title: string;
+  notes: string;
+  status: 'open' | 'in_progress' | 'done';
+  due_at: string | null;
+  created_by: string;
+  completed_by: string | null;
+  completed_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DemoBookmark {
+  id: string;
+  client_id: string;
+  title: string;
+  url: string;
+  position: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
 }
 
 interface DemoLease {
@@ -172,6 +231,12 @@ export interface DemoCloudSync {
   unlink(localId: string): void;
   /** The local profile's link (synchronous, for list views). */
   linkOf(localId: string): { org_id: string; org_profile_id: string } | null;
+  /** Whether the demo account is signed in (milestone 09 health). */
+  signedIn(): boolean;
+  /** The organization's extension policy as the desktop caches it (milestone 09). */
+  extensionPolicy(
+    orgId: string,
+  ): { mode: 'off' | 'warn' | 'enforce'; version: number; rules: ExtensionRule[] } | null;
   profileName(orgId: string, orgProfileId: string): string | null;
   /** Newest committed version (0: none) and its snapshot. */
   head(orgId: string, orgProfileId: string): { version: number; snapshot: DemoSnapshot | null };
@@ -318,6 +383,10 @@ export function demoCloud(opts: {
       leases: new Map(),
       requests: [],
       recovery: [],
+      tasks: [],
+      bookmarks: [],
+      ext: { mode: 'off', version: 1, updated_at: null, rules: [] },
+      extReports: [],
     };
     for (const name of ['Client North', 'Client South']) {
       org.clients.push({
@@ -379,6 +448,97 @@ export function demoCloud(opts: {
       capabilities: ['launch', 'backup_download'],
       created_at: t,
     });
+    // Milestone 09: open tasks, shared bookmarks, a "warn" extension policy and one device report.
+    if (north) {
+      const day = (n: number) => new Date(Date.now() + n * DAY).toISOString();
+      const task = (title: string, extra: Partial<DemoTask>): DemoTask => ({
+        id: rid('tsk'),
+        client_id: north.id,
+        profile_id: null,
+        assignee_id: null,
+        title,
+        notes: '',
+        status: 'open',
+        due_at: null,
+        created_by: sam.id,
+        completed_by: null,
+        completed_at: null,
+        version: 1,
+        created_at: t,
+        updated_at: t,
+        ...extra,
+      });
+      org.tasks.push(
+        task('Check weekend orders', {
+          profile_id: org.profiles[0]?.id ?? null,
+          assignee_id: me.id,
+          due_at: day(1),
+        }),
+        task('Renew the ad budget', { assignee_id: sam.id, due_at: day(-2) }),
+        task('Monthly report', { status: 'done', completed_by: sam.id, completed_at: t }),
+      );
+      org.bookmarks.push(
+        {
+          id: rid('bkm'),
+          client_id: north.id,
+          title: 'Shop admin',
+          url: 'https://admin.shop.example/',
+          position: 0,
+          version: 1,
+          created_at: t,
+          updated_at: t,
+        },
+        {
+          id: rid('bkm'),
+          client_id: north.id,
+          title: 'Orders',
+          url: 'https://admin.shop.example/orders',
+          position: 1,
+          version: 1,
+          created_at: t,
+          updated_at: t,
+        },
+      );
+    }
+    org.ext = {
+      mode: 'warn',
+      version: 2,
+      updated_at: t,
+      rules: [
+        {
+          extension_id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          name: 'Grammar helper',
+          decision: 'allowed',
+          source: 'web_store',
+          approved_version_range: '>=4 <5',
+          permissions: ['activeTab'],
+        },
+      ],
+    };
+    if (backedUp)
+      org.extReports.push({
+        profile_id: backedUp.id,
+        device_id: rid('dev'),
+        extensions: [
+          {
+            id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            name: 'Grammar helper',
+            version: '4.2.0',
+            source: 'web_store',
+            enabled: true,
+            permissions: ['activeTab', 'storage'],
+          },
+          {
+            id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            name: 'Coupon finder',
+            version: '2.1.0',
+            source: 'web_store',
+            enabled: true,
+            permissions: ['tabs', '<all_urls>'],
+          },
+        ],
+        reported_at: t,
+      });
     // Milestone 08: Sam has the first profile open on his Windows laptop.
     if (opts.mode.includes('inuse') && backedUp) {
       org.leases.set(backedUp.id, {
@@ -635,6 +795,10 @@ export function demoCloud(opts: {
         leases: new Map(),
         requests: [],
         recovery: [],
+        tasks: [],
+        bookmarks: [],
+        ext: { mode: 'off', version: 1, updated_at: null, rules: [] },
+        extReports: [],
       };
       orgs.set(org.id, org);
       audit(org, 'organization.created', org.id);
@@ -790,6 +954,415 @@ export function demoCloud(opts: {
       org.invitations.unshift(inv);
       audit(org, 'invitation.created', inv.id);
       return { status: 201, body: { invitation: invitationRow(inv), token: inv.token } };
+    }
+    // ---------------------------------------------------------------- milestone 09: agency workspace
+    const f = parts[5];
+    if (c === 'clients' && d && (e === 'dashboard' || e === 'tasks' || e === 'bookmarks')) {
+      const cl = org.clients.find((x) => x.id === d && visibleClient(org, x));
+      if (!cl) return notFound('Client');
+      const denied = need('clients.read');
+      if (denied) return denied;
+      const scope = ROLE_SCOPE[r];
+      const taskVisible = (tk: DemoTask) => {
+        if (scope === 'organization') return true;
+        if (scope === 'none') return false;
+        if (tk.profile_id) {
+          const p = org.profiles.find((x) => x.id === tk.profile_id);
+          return !!p && visibleProfile(org, p);
+        }
+        return (
+          tk.assignee_id === me.id ||
+          tk.created_by === me.id ||
+          org.grants.some((g) => g.user_id === me.id && g.client_id === tk.client_id)
+        );
+      };
+      const taskView = (tk: DemoTask) => ({
+        ...tk,
+        org_id: org.id,
+        profile_name: org.profiles.find((p) => p.id === tk.profile_id)?.name ?? null,
+        assignee_name: tk.assignee_id ? (people.get(tk.assignee_id)?.display_name ?? null) : null,
+        overdue: tk.status !== 'done' && !!tk.due_at && Date.parse(tk.due_at) < Date.now(),
+      });
+      const byDue = (x: DemoTask, y: DemoTask) =>
+        (x.due_at ? Date.parse(x.due_at) : Number.POSITIVE_INFINITY) -
+          (y.due_at ? Date.parse(y.due_at) : Number.POSITIVE_INFINITY) || x.id.localeCompare(y.id);
+      const tasks = org.tasks.filter((tk) => tk.client_id === cl.id && taskVisible(tk)).sort(byDue);
+      const bookmarkView = (bk: DemoBookmark) => ({ ...bk, org_id: org.id });
+      const bookmarks = org.bookmarks
+        .filter((bk) => bk.client_id === cl.id)
+        .sort((x, y) => x.position - y.position || x.id.localeCompare(y.id));
+      if (e === 'dashboard') {
+        const vis = org.profiles.filter((p) => p.client_id === cl.id && visibleProfile(org, p));
+        const lastSnap = (pid: string) =>
+          org.snapshots
+            .filter((sn) => sn.profile_id === pid)
+            .reduce<DemoSnapshot | null>((m, x) => (!m || x.version > m.version ? x : m), null);
+        const items = vis.map((p) => {
+          const sn = lastSnap(p.id);
+          const l = org.leases.get(p.id);
+          return {
+            id: p.id,
+            name: p.name,
+            in_use: inUse(org, p.id),
+            snapshot_version: sn?.version ?? 0,
+            last_snapshot_at: sn?.committed_at ?? null,
+            last_opened_at: l?.since ?? null,
+          };
+        });
+        items.sort((x, y) => Number(!!y.in_use) - Number(!!x.in_use) || x.name.localeCompare(y.name));
+        const ids = new Set(vis.map((p) => p.id).concat(cl.id));
+        const open = tasks.filter((tk) => tk.status !== 'done');
+        return {
+          status: 200,
+          body: {
+            client: { ...cl, org_id: org.id },
+            profiles: {
+              total: vis.length,
+              in_use: items.filter((i) => i.in_use).length,
+              never_backed_up: items.filter((i) => i.snapshot_version === 0).length,
+              stale_backups: items.filter(
+                (i) => i.last_snapshot_at && Date.parse(i.last_snapshot_at) < Date.now() - 7 * DAY,
+              ).length,
+              items: items.slice(0, 50),
+              more: items.length > 50,
+            },
+            people: allows(r, 'grants.manage')
+              ? [...new Set(org.grants.map((g) => g.user_id))]
+                  .map((uid) => {
+                    const gs = org.grants.filter(
+                      (g) =>
+                        g.user_id === uid &&
+                        (g.client_id === cl.id ||
+                          org.profiles.some((p) => p.id === g.profile_id && p.client_id === cl.id)),
+                    );
+                    const m = org.members.get(uid);
+                    if (!gs.length || !m) return null;
+                    const whole = gs.some((g) => g.client_id === cl.id);
+                    return {
+                      user_id: uid,
+                      display_name: people.get(uid)?.display_name ?? '',
+                      role: m.role,
+                      access: whole ? 'client' : 'profiles',
+                      profiles: whole ? vis.length : gs.length,
+                      capabilities: [...new Set(gs.flatMap((g) => g.capabilities))].sort(),
+                    };
+                  })
+                  .filter((x) => x !== null)
+              : null,
+            tasks: {
+              open: open.length,
+              overdue: open.filter((tk) => tk.due_at && Date.parse(tk.due_at) < Date.now()).length,
+              mine: open.filter((tk) => tk.assignee_id === me.id).length,
+              items: open.slice(0, 20).map(taskView),
+            },
+            bookmarks: bookmarks.map(bookmarkView),
+            activity: allows(r, 'audit.read')
+              ? org.audit
+                  .filter((x) => x.outcome === 'success' && x.target_id && ids.has(x.target_id))
+                  .slice(0, 20)
+                  .map((x) => ({
+                    id: x.id,
+                    action: x.action,
+                    actor_name: (x.actor_user_id && people.get(x.actor_user_id)?.display_name) || '',
+                    target_type: x.target_type,
+                    target_id: x.target_id,
+                    target_name:
+                      org.profiles.find((p) => p.id === x.target_id)?.name ??
+                      (x.target_id === cl.id ? cl.name : null),
+                    created_at: x.created_at,
+                  }))
+              : null,
+          },
+        };
+      }
+      if (e === 'tasks') {
+        if (!f && req.method === 'GET') {
+          const status = q.get('status') ?? 'open';
+          return page(
+            tasks
+              .filter((tk) => status === 'all' || (status === 'done') === (tk.status === 'done'))
+              .map(taskView),
+          );
+        }
+        const deniedWrite = need('tasks.write');
+        const admin = scope === 'organization';
+        const checkTitle = (v: unknown) => {
+          const title = cleanLabel(String(v ?? ''));
+          if (!title || title.length > 200) return err(400, 'VALIDATION_FAILED', 'Give the task a title');
+          const hint = secretHint(title);
+          return hint ? err(422, 'NOTE_LOOKS_SECRET', hint, { field: 'title' }) : title;
+        };
+        const checkNotes = (v: unknown) => {
+          const notes = String(v ?? '');
+          const hint = secretHint(notes);
+          return hint ? err(422, 'NOTE_LOOKS_SECRET', hint, { field: 'notes' }) : notes;
+        };
+        const checkAssignee = (assignee: string | null, current: string | null) => {
+          if (!admin && assignee !== null && assignee !== me.id)
+            return err(403, 'FORBIDDEN', 'You can assign tasks to yourself only', { field: 'assignee_id' });
+          if (!admin && current !== null && current !== me.id && assignee !== current)
+            return err(403, 'FORBIDDEN', 'This task is assigned to someone else', { field: 'assignee_id' });
+          if (assignee !== null && !org.members.has(assignee))
+            return err(400, 'VALIDATION_FAILED', 'The assignee cannot see this client or profile', {
+              field: 'assignee_id',
+            });
+          return null;
+        };
+        const checkProfile = (pid: string | null) => {
+          if (pid) {
+            const p = org.profiles.find((x) => x.id === pid && visibleProfile(org, x));
+            if (!p) return notFound('Profile');
+            if (p.client_id !== cl.id)
+              return err(400, 'VALIDATION_FAILED', 'The profile belongs to another client', {
+                field: 'profile_id',
+              });
+            return null;
+          }
+          return admin || org.grants.some((g) => g.user_id === me.id && g.client_id === cl.id)
+            ? null
+            : err(403, 'FORBIDDEN', 'Add tasks to the profiles you were given', { field: 'profile_id' });
+        };
+        if (!f) {
+          if (deniedWrite) return deniedWrite;
+          if (cl.archived_at) return err(400, 'VALIDATION_FAILED', 'The client is archived');
+          const title = checkTitle(body.title);
+          if (typeof title !== 'string') return title;
+          const notes = checkNotes(body.notes);
+          if (typeof notes !== 'string') return notes;
+          const pid = (body.profile_id as string | null | undefined) ?? null;
+          const pe = checkProfile(pid);
+          if (pe) return pe;
+          const assignee = (body.assignee_id as string | null | undefined) ?? null;
+          const ae = checkAssignee(assignee, null);
+          if (ae) return ae;
+          const status = (body.status as DemoTask['status'] | undefined) ?? 'open';
+          const tk: DemoTask = {
+            id: rid('tsk'),
+            client_id: cl.id,
+            profile_id: pid,
+            assignee_id: assignee,
+            title,
+            notes,
+            status,
+            due_at: (body.due_at as string | null | undefined) ?? null,
+            created_by: me.id,
+            completed_by: status === 'done' ? me.id : null,
+            completed_at: status === 'done' ? t : null,
+            version: 1,
+            created_at: t,
+            updated_at: t,
+          };
+          org.tasks.push(tk);
+          audit(org, 'task.created', cl.id);
+          return { status: 201, body: taskView(tk) };
+        }
+        const tk = tasks.find((x) => x.id === f);
+        if (!tk) return notFound('Task');
+        if (deniedWrite) return deniedWrite;
+        if (req.method === 'DELETE') {
+          if (!admin && tk.created_by !== me.id)
+            return err(403, 'FORBIDDEN', 'Only its creator or an admin can delete this task');
+          org.tasks = org.tasks.filter((x) => x.id !== tk.id);
+          audit(org, 'task.deleted', cl.id);
+          return { status: 204, body: null };
+        }
+        if (version !== tk.version)
+          return err(409, 'VERSION_CONFLICT', 'This was changed by someone else; reload and retry', {
+            current_version: tk.version,
+          });
+        if ('title' in body) {
+          const title = checkTitle(body.title);
+          if (typeof title !== 'string') return title;
+          tk.title = title;
+        }
+        if ('notes' in body) {
+          const notes = checkNotes(body.notes);
+          if (typeof notes !== 'string') return notes;
+          tk.notes = notes;
+        }
+        if ('profile_id' in body) {
+          const pid = (body.profile_id as string | null) ?? null;
+          const pe = checkProfile(pid);
+          if (pe) return pe;
+          tk.profile_id = pid;
+        }
+        if ('assignee_id' in body) {
+          const assignee = (body.assignee_id as string | null) ?? null;
+          const ae = checkAssignee(assignee, tk.assignee_id);
+          if (ae) return ae;
+          tk.assignee_id = assignee;
+        }
+        if ('due_at' in body) tk.due_at = (body.due_at as string | null) ?? null;
+        if (typeof body.status === 'string') {
+          const done = body.status === 'done';
+          if (done && tk.status !== 'done') {
+            tk.completed_by = me.id;
+            tk.completed_at = t;
+          }
+          if (!done) {
+            tk.completed_by = null;
+            tk.completed_at = null;
+          }
+          tk.status = body.status as DemoTask['status'];
+        }
+        tk.version++;
+        tk.updated_at = t;
+        audit(org, tk.status === 'done' ? 'task.completed' : 'task.updated', cl.id);
+        return { status: 200, body: taskView(tk) };
+      }
+      // bookmarks
+      if (!f && req.method === 'GET') return { status: 200, body: { items: bookmarks.map(bookmarkView) } };
+      const deniedManage = need('clients.manage');
+      if (deniedManage) return deniedManage;
+      const checkUrl = (u: unknown) => {
+        const problem = bookmarkUrlProblem(String(u ?? ''));
+        return problem
+          ? err(
+              400,
+              'VALIDATION_FAILED',
+              'Bookmarks must be http or https links without a user name or password',
+              {
+                field: 'url',
+                problem,
+              },
+            )
+          : null;
+      };
+      if (!f) {
+        if (bookmarks.length >= BOOKMARKS_PER_CLIENT)
+          return err(400, 'VALIDATION_FAILED', `A client has at most ${BOOKMARKS_PER_CLIENT} bookmarks`);
+        const title = cleanLabel(String(body.title ?? ''));
+        if (!title) return err(400, 'VALIDATION_FAILED', 'Give the bookmark a title');
+        const ue = checkUrl(body.url);
+        if (ue) return ue;
+        const bk: DemoBookmark = {
+          id: rid('bkm'),
+          client_id: cl.id,
+          title,
+          url: String(body.url),
+          position: (body.position as number | undefined) ?? bookmarks.length,
+          version: 1,
+          created_at: t,
+          updated_at: t,
+        };
+        org.bookmarks.push(bk);
+        audit(org, 'bookmark.created', cl.id);
+        return { status: 201, body: bookmarkView(bk) };
+      }
+      const bk = bookmarks.find((x) => x.id === f);
+      if (!bk) return notFound('Bookmark');
+      if (req.method === 'DELETE') {
+        org.bookmarks = org.bookmarks.filter((x) => x.id !== bk.id);
+        audit(org, 'bookmark.deleted', cl.id);
+        return { status: 204, body: null };
+      }
+      if (version !== bk.version)
+        return err(409, 'VERSION_CONFLICT', 'This was changed by someone else; reload and retry', {
+          current_version: bk.version,
+        });
+      if ('url' in body) {
+        const ue = checkUrl(body.url);
+        if (ue) return ue;
+        bk.url = String(body.url);
+      }
+      if ('title' in body) bk.title = cleanLabel(String(body.title)) || bk.title;
+      if (typeof body.position === 'number') bk.position = body.position;
+      bk.version++;
+      bk.updated_at = t;
+      audit(org, 'bookmark.updated', cl.id);
+      return { status: 200, body: bookmarkView(bk) };
+    }
+    if (c === 'extension-policy') {
+      const view = () => ({
+        org_id: org.id,
+        mode: org.ext.mode,
+        version: org.ext.version,
+        updated_at: org.ext.updated_at,
+        extensions: [...org.ext.rules].sort((x, y) => x.name.localeCompare(y.name)),
+      });
+      if (req.method === 'GET') return need('org.read') ?? { status: 200, body: view() };
+      const denied = need('extensions.manage');
+      if (denied) return denied;
+      if (version !== org.ext.version)
+        return err(409, 'VERSION_CONFLICT', 'This was changed by someone else; reload and retry', {
+          current_version: org.ext.version,
+        });
+      const rules = (body.extensions as ExtensionRule[] | undefined) ?? [];
+      const seen = new Set<string>();
+      for (const rule of rules) {
+        if (!/^[a-p]{32}$/.test(rule.extension_id))
+          return err(400, 'VALIDATION_FAILED', 'Extension ids are 32 letters a to p');
+        if (seen.has(rule.extension_id)) return err(400, 'VALIDATION_FAILED', 'An extension is listed twice');
+        seen.add(rule.extension_id);
+        if (rule.approved_version_range !== null && !validVersionRange(rule.approved_version_range))
+          return err(400, 'VALIDATION_FAILED', 'Version ranges look like 1.2.3, 1.2.* or >=1.2 <2');
+      }
+      org.ext = {
+        mode: body.mode as 'off' | 'warn' | 'enforce',
+        version: org.ext.version + 1,
+        updated_at: t,
+        rules: rules.map((x) => ({ ...x, name: cleanLabel(x.name) })),
+      };
+      audit(org, 'extension_policy.updated', org.id);
+      return { status: 200, body: view() };
+    }
+    if (c === 'extension-inventory') {
+      const denied = need('extensions.manage');
+      if (denied) return denied;
+      const byId = new Map<
+        string,
+        {
+          name: string;
+          versions: Set<string>;
+          sources: Set<string>;
+          permissions: Set<string>;
+          profiles: Set<string>;
+          devices: Set<string>;
+          last: string;
+        }
+      >();
+      for (const rep of org.extReports) {
+        if (!org.profiles.some((p) => p.id === rep.profile_id && !p.deleted)) continue;
+        for (const x of rep.extensions) {
+          const row = byId.get(x.id) ?? {
+            name: x.name,
+            versions: new Set<string>(),
+            sources: new Set<string>(),
+            permissions: new Set<string>(),
+            profiles: new Set<string>(),
+            devices: new Set<string>(),
+            last: rep.reported_at,
+          };
+          row.versions.add(x.version);
+          row.sources.add(x.source);
+          for (const perm of x.permissions) row.permissions.add(perm);
+          row.profiles.add(rep.profile_id);
+          row.devices.add(rep.device_id);
+          if (rep.reported_at > row.last) row.last = rep.reported_at;
+          byId.set(x.id, row);
+        }
+      }
+      return {
+        status: 200,
+        body: {
+          items: [...byId.entries()]
+            .map(([id, x]) => {
+              const permissions = [...x.permissions].sort();
+              return {
+                id,
+                name: x.name,
+                versions: [...x.versions].sort(),
+                sources: [...x.sources].sort(),
+                permissions,
+                sensitive: permissions.filter(isSensitivePermission),
+                profiles: x.profiles.size,
+                devices: x.devices.size,
+                last_reported_at: x.last,
+              };
+            })
+            .sort((x, y) => x.name.localeCompare(y.name)),
+        },
+      };
     }
     if (c === 'clients') {
       if (!d) {
@@ -1180,6 +1753,13 @@ export function demoCloud(opts: {
     },
     linkOf(localId) {
       return links.find((l) => l.local_profile_id === localId) ?? null;
+    },
+    signedIn() {
+      return status === 'signed_in';
+    },
+    extensionPolicy(orgId) {
+      const org = orgs.get(orgId);
+      return org ? { mode: org.ext.mode, version: org.ext.version, rules: org.ext.rules } : null;
     },
     profileName(orgId, orgProfileId) {
       return orgs.get(orgId)?.profiles.find((p) => p.id === orgProfileId)?.name ?? null;
