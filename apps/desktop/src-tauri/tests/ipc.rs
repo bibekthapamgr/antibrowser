@@ -1765,6 +1765,73 @@ fn permanent_deletion_needs_confirmation_the_trash_and_no_live_process() {
 }
 
 #[test]
+fn trash_and_deletion_never_race_a_backup_of_the_profile() {
+    let f = fixture();
+    let id = workspace_with_profile(&f);
+    let op =
+        invoke(&f, "launch_profile", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let stop =
+        invoke(&f, "stop_profile", json!({ "profileId": id })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &stop), OpStatus::Succeeded);
+    // A backup of the just-closed profile (the routine one after a clean close, or this requested one) is running.
+    let backup = invoke(
+        &f,
+        "recover_profile",
+        json!({ "profileId": id, "action": "backup_now" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let sel = json!({ "kind": "ids", "ids": [id] });
+    // Trashing only changes metadata, so a backup does not block it.
+    let r = invoke(
+        &f,
+        "bulk_profiles",
+        json!({ "action": { "action": "trash" }, "selection": sel }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        (r["changed"].clone(), r["failed"].clone()),
+        (json!(1), json!([]))
+    );
+    // Recovery actions are refused while the profile is in the trash.
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "recover_profile",
+            json!({ "profileId": id, "action": "start_fresh" })
+        ))
+        .as_deref(),
+        Some("PROFILE_IN_TRASH")
+    );
+    // Permanent deletion cancels the backup first and leaves nothing of the profile behind.
+    let r = invoke(
+        &f,
+        "delete_profiles",
+        json!({ "selection": sel, "confirm": "DELETE", "expectedCount": 1 }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        (r["changed"].clone(), r["failed"].clone()),
+        (json!(1), json!([]))
+    );
+    let _ = wait_op(&f, &backup);
+    let pid = pb_runtime::ProfileId::parse(&id).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!f.state.root.dirs(&pid).root.exists());
+    assert!(
+        !f.data().join("backups").join(&id).exists(),
+        "no backup of a deleted profile"
+    );
+    let leftovers = std::fs::read_dir(f.data().join("profiles"))
+        .map(|d| {
+            d.filter_map(Result::ok)
+                .filter(|e| e.file_name().to_string_lossy().starts_with(".deleting"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0);
+}
+
+#[test]
 fn templates_and_duplicates_copy_configuration_never_browser_data() {
     let f = fixture();
     let src = workspace_with_profile(&f);

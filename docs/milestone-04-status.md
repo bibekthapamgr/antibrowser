@@ -22,7 +22,7 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
 | 2. Clients, tags, notes, favourites; notes as sanitized text; no secrets in notes | Done. Notes rendered as text; control and bidi characters stripped; notes that look like passwords/keys/tokens/card numbers refused (`NOTES_LOOK_SECRET`) with a live warning in the drawer |
 | 3. Templates: new profile has empty storage; cloning never clones sessions | Done. Templates hold start pages, permission defaults, tags. Create-from-template and Duplicate copy configuration only (tests check no browser data and no `last_started_at`) |
 | 4. Bulk tag/move/archive in bounded batches with per-item results; running profiles can't be deleted | Done. Batches of 250; each profile changed/unchanged/failed with a reason; open or busy profiles refused for the trash and deletion; undo for 10 minutes |
-| 5. Trash retention; permanent-deletion confirmation; no live process writes into a removed directory | Done. Retention 7/30/90 days (Settings), hourly purge; deletion needs `DELETE` + exact count, holds the launch lock, re-checks supervisor, process table and the profile's OS lock, renames the folder aside before removing it |
+| 5. Trash retention; permanent-deletion confirmation; no live process writes into a removed directory | Done. Retention 7/30/90 days (Settings), hourly purge; deletion needs `DELETE` + exact count, holds the launch lock, cancels a running backup and claims the profile so none can start, re-checks supervisor, process table and the profile's OS lock, renames the folder aside before removing it |
 | 6. CSV/JSON import: size limit, schema version, preview, dry run, duplicate policy, escaped formula export, row errors | Done (`crates/import`, `transfer.rs`). 20 MB / 10,000 rows; schema v1; preview bound to SHA-256 + settings; skip/update/create duplicates; per-row field errors; formulas never evaluated and neutralised on export |
 | 7. Adapters only for documented/user-supplied formats; configuration ≠ cookie migration; archive validation | Done. Own CSV/JSON/bundle only; bundles claiming session data refused; traversal, links, encryption, extra entries, size, ratio and executable checks |
 | 8. Export with an authorization placeholder; secrets excluded by default | Done. `authz::authorize(ExportConfiguration, n)`; configuration allowlist; notes off by default and secret-looking notes always withheld |
@@ -60,6 +60,16 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
 | Search p95 ≤ 200 ms at 10k | `crates/storage/tests/search_latency.rs` (runs on every CI build): release p50 25 ms, **p95 45 ms**; debug p95 ≈ 94 ms |
 | UI flows | `apps/desktop/e2e/manager.e2e.test.ts`: keyboard selection + bulk + undo, select-all-matching at 10,000, folders and accent-insensitive search, trash and typed deletion, import preview/commit, 10,000-row cancel/continue, client in launch toast, secret notes; axe clean on 19 screens × light/dark |
 
+## Found by the Windows CI runs
+- CSV files with Windows (CRLF) line endings — what Excel writes — reported every import row one line too low. Rows
+  are now counted from byte offsets; a regression test runs the same file with both line endings.
+- A permanent deletion right after closing a profile could meet the routine backup that starts after a clean close
+  (Windows refused the folder move; elsewhere a backup of the deleted profile could have been left behind). Deletion
+  now cancels the backup and claims the profile first; Windows renames/deletes retry briefly while antivirus or the
+  indexer releases files. Test: `trash_and_deletion_never_race_a_backup_of_the_profile`.
+- Test archives are now marked as made on Unix on every OS (the zip writer marks them DOS-made on Windows, which hid
+  the link and permission bits the checks look for).
+
 ## Deliverables
 | Deliverable | Where |
 |---|---|
@@ -69,7 +79,7 @@ defaults). They never move cookies, sign-ins or other browser data; there is no 
 | Usability walkthrough | [usability/milestone-04-walkthrough.md](usability/milestone-04-walkthrough.md) |
 
 ## Test totals
-Rust 140 (runtime 33, storage 22 + 1 latency gate, update 16 + 1 Windows-only, import 14, desktop 17 unit + 32 IPC
+Rust 141 (runtime 33, storage 22 + 1 latency gate, update 16 + 1 Windows-only, import 14, desktop 17 unit + 33 IPC
 integration + 5 real-browser). TypeScript desktop unit/contract 25 (was 15), packages 18; API/worker suites unchanged
 (they need PostgreSQL and run in CI). UI end-to-end 59 (was 39).
 

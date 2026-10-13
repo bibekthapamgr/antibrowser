@@ -513,7 +513,12 @@ impl AppState {
                     self.profile_name(&store, id),
                     ipc::PROFILE_RUNNING,
                 ));
-            } else if matches!(op, BulkOp::Trash { .. }) && self.supervisor.is_busy(id) {
+            } else if matches!(op, BulkOp::Trash { .. })
+                && self.supervisor.is_busy(id)
+                && !self.has_backup_job(id)
+            {
+                // Busy with recovery. (A backup is fine: trashing only changes metadata, and a permanent deletion
+                // cancels the backup first.)
                 failed.push(failure(
                     id,
                     self.profile_name(&store, id),
@@ -704,48 +709,60 @@ impl AppState {
                 failed.push(failure(id, name, ipc::PROFILE_RUNNING));
                 continue;
             }
-            if self.supervisor.is_busy(id) && !self.cancel_backup(id) {
+            // Claim the profile for the whole deletion so no routine backup (started automatically after a clean
+            // close) or recovery can begin and open its files halfway; a routine backup already running is
+            // cancelled first.
+            let mut claimed = self.supervisor.try_busy(id);
+            if !claimed && self.cancel_backup(id) {
+                claimed = self.supervisor.try_busy(id);
+            }
+            if !claimed {
                 failed.push(failure(id, name, ipc::PROFILE_BUSY));
                 continue;
             }
-            let dirs = self.root.dirs(id);
-            if !procs::browser_mains(&snapshot, &dirs.user_data).is_empty() {
-                failed.push(failure(id, name, ipc::PROFILE_RUNNING));
-                continue;
+            let outcome = self.delete_claimed(store, id, &snapshot, purge);
+            self.supervisor.clear_busy(id);
+            if let Err(e) = outcome {
+                failed.push(failure(id, name, e));
             }
-            match ProfileLock::try_acquire(&dirs.root) {
-                Ok(Some(lock)) => drop(lock), // nobody else holds it; released before the folder moves
-                Ok(None) => {
-                    failed.push(failure(id, name, ipc::PROFILE_IN_USE));
-                    continue;
-                }
-                Err(_) if !dirs.root.exists() => {}
-                Err(_) => {
-                    failed.push(failure(id, name, ipc::INTERNAL));
-                    continue;
-                }
-            }
-            // 1. Move the folder aside (atomic): a browser can no longer open it under this profile's path.
-            if self.root.retire(id).is_err() {
-                failed.push(failure(id, name, ipc::PROFILE_IN_USE));
-                continue;
-            }
-            // 2. Remove the metadata, then the moved folder, backups and evidence.
-            if store.delete_profile_metadata(id).is_err() {
-                failed.push(failure(id, name, ipc::INTERNAL));
-                continue;
-            }
-            let _ = self.backups.remove_profile(id.as_str());
-            let _ = store.audit(
-                Some(id),
-                if purge { "purge" } else { "delete" },
-                "ok",
-                None,
-                None,
-            );
         }
         let _ = self.root.purge_retired();
         failed
+    }
+
+    /// Deletes one trashed profile that the caller has claimed (busy) under the launch lock.
+    fn delete_claimed(
+        &self,
+        store: &LocalStore,
+        id: &ProfileId,
+        snapshot: &[pb_runtime::ProcRecord],
+        purge: bool,
+    ) -> Result<(), IpcError> {
+        let dirs = self.root.dirs(id);
+        if !procs::browser_mains(snapshot, &dirs.user_data).is_empty() {
+            return Err(ipc::PROFILE_RUNNING);
+        }
+        match ProfileLock::try_acquire(&dirs.root) {
+            Ok(Some(lock)) => drop(lock), // nobody else holds it; released before the folder moves
+            Ok(None) => return Err(ipc::PROFILE_IN_USE),
+            Err(_) if !dirs.root.exists() => {}
+            Err(_) => return Err(ipc::INTERNAL),
+        }
+        // 1. Move the folder aside (atomic): a browser can no longer open it under this profile's path.
+        self.root.retire(id).map_err(|_| ipc::PROFILE_IN_USE)?;
+        // 2. Remove the metadata, then the moved folder, backups and evidence.
+        store
+            .delete_profile_metadata(id)
+            .map_err(|_| ipc::INTERNAL)?;
+        let _ = self.backups.remove_profile(id.as_str());
+        let _ = store.audit(
+            Some(id),
+            if purge { "purge" } else { "delete" },
+            "ok",
+            None,
+            None,
+        );
+        Ok(())
     }
 }
 

@@ -102,9 +102,9 @@ impl ProfilesRoot {
         self.verify(&dirs)?;
         let target = self.canonical.join(format!(".deleting-{}", id.as_str()));
         if target.exists() {
-            std::fs::remove_dir_all(&target)?;
+            with_retry(|| std::fs::remove_dir_all(&target))?;
         }
-        std::fs::rename(&dirs.root, &target)?;
+        with_retry(|| std::fs::rename(&dirs.root, &target))?;
         Ok(Some(target))
     }
 
@@ -115,7 +115,7 @@ impl ProfilesRoot {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with(".deleting-prf_") && entry.file_type()?.is_dir() {
-                std::fs::remove_dir_all(entry.path())?;
+                with_retry(|| std::fs::remove_dir_all(entry.path()))?;
                 removed += 1;
             }
         }
@@ -172,6 +172,30 @@ fn simplify_verbatim(s: &str) -> Option<String> {
         .filter(|c| !c.is_empty())
         .all(|c| c != "." && c != ".." && !c.ends_with('.') && !c.ends_with(' ') && !reserved(c));
     ok.then_some(simple)
+}
+
+/// Windows briefly refuses to rename or delete files another program has just touched (antivirus, the search
+/// indexer, a handle that is still closing). Those errors are retried for up to about 1.5 seconds; other errors, and
+/// every error on other platforms, are returned at once.
+fn with_retry<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut delay = std::time::Duration::from_millis(25);
+    for _ in 0..6 {
+        match op() {
+            Err(e) if cfg!(windows) && transient_on_windows(&e) => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    op()
+}
+
+/// Access denied (5), sharing violation (32), lock violation (33), directory not empty (145, a delete racing with
+/// a file being released).
+fn transient_on_windows(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::PermissionDenied
+        || matches!(e.raw_os_error(), Some(5 | 32 | 33 | 145))
 }
 
 #[cfg(test)]

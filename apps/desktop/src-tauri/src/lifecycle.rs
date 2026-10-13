@@ -535,6 +535,9 @@ impl AppState {
         if !matches!(action, "restore_backup" | "start_fresh" | "backup_now") {
             return Err(ipc::INVALID_ARGUMENT);
         }
+        if profile.trashed_at.is_some() {
+            return Err(ipc::PROFILE_IN_TRASH);
+        }
         if self.supervisor.is_tracked(profile_id) || profile.state == RunState::Recovering {
             return Err(ipc::NOT_RECOVERABLE);
         }
@@ -702,6 +705,14 @@ impl AppState {
             }
             Err(_) => self.supervisor.clear_busy(profile_id),
         }
+    }
+
+    /// True while a backup (routine or requested) of `profile_id` is running.
+    pub(crate) fn has_backup_job(&self, profile_id: &ProfileId) -> bool {
+        self.backups_running
+            .lock()
+            .map(|jobs| jobs.contains_key(profile_id))
+            .unwrap_or(false)
     }
 
     /// Cancels a routine backup of `profile_id` and waits up to [`BACKUP_CANCEL_WAIT`] for it to release the

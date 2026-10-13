@@ -18,10 +18,13 @@ choices must not need to be undone then.
 2. **Lifecycle.** Active → Archived (reversible, hidden from the main list) → Trash (retention 7, 30 or 90 days,
    default 30) → permanent deletion. Open or busy profiles cannot be moved to the trash, launched from it, or edited
    while in it. Permanent deletion is only from the trash and needs `confirm = "DELETE"` plus the exact count the user
-   saw. Per profile it holds the launch lock, re-checks the supervisor, the OS process table and the profile's OS
-   lock, cancels a running backup, **renames the folder to `.deleting-<id>`** (atomic, so no browser can reopen it
+   saw. Per profile it holds the launch lock, cancels a running backup and **claims the profile** (marks it busy) so no
+   routine backup or recovery can start mid-deletion, re-checks the supervisor, the OS process table and the profile's
+   OS lock, **renames the folder to `.deleting-<id>`** (atomic, so no browser can reopen it
    under the profile's path), deletes the metadata, removes backups and crash evidence, then deletes the moved
-   folder. Leftover `.deleting-*` folders are purged at start-up and hourly, together with expired trash.
+   folder. Leftover `.deleting-*` folders are purged at start-up and hourly, together with expired trash. On Windows
+   the rename and removal retry briefly (about 1.5 s) when another program (antivirus, indexer) still holds a handle.
+   Trashing only changes metadata, so a running backup does not block it; recovery of a trashed profile is refused.
 3. **Querying.** One parameterised SQL query serves filter (view, client(s), tags, run states, favourites, template,
    text over folded name/client/tags or exact id), sort (name, client, last used, created, state) and paging.
    `cursor` continues a page and is refused if the filter or sort changed (`CURSOR_STALE`); `offset` jumps, which the
