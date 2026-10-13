@@ -36,5 +36,20 @@ Recorded 2026-10-12 (milestone 01). Exact versions are locked in `pnpm-lock.yaml
 | jose | 6.2.12 | https://github.com/panva/jose |
 | Vitest | 5.0.3 | https://vitest.dev |
 
+## Backups and sync (milestone 07)
+| Component | Pinned | Reference |
+|---|---|---|
+| aes-gcm / aead-stream (RustCrypto) | =0.11.1 / =0.6.0 | https://github.com/RustCrypto/AEADs |
+| zstd (level 3) / tar | 0.13.3 / 0.4.46 | crates/seal |
+| sha2 / zeroize | 0.10.9 / 1.9.1 | crates/seal |
+| @aws-sdk/client-s3 / s3-request-presigner | 3.1142.0 / 3.1142.0 | services/api (signed part uploads and downloads) |
+| SeaweedFS (S3-compatible storage: test server, CI, docker-compose) | 4.48, release archives pinned by SHA-256 (amd64 `4a7d1083…a9561124`, arm64 `557e92c3…d09f03a07`) | https://github.com/seaweedfs/seaweedfs/releases/tag/4.48 |
+| Root key provider | `local` (a mode-600 JSON file, ADR-0014) | A managed KMS/HSM is a paid launch gate |
+
+## Identity (milestone 06)
+| Component | Pinned | Reference |
+|---|---|---|
+| Keycloak (reference OIDC provider: CI and the test server) | 26.6.2 | https://www.keycloak.org |
+
 ## Not yet versioned (chosen in later milestones)
-OIDC provider (ADR-0004), cloud provider/region (ADR-0005), KMS (ADR-0003), object storage service, OpenTelemetry SDK (13), MinIO image tag for local dev (pin a dated RELEASE tag at kickoff).
+Cloud provider/region (ADR-0005), managed KMS/HSM (ADR-0003/0014), production object storage service, OpenTelemetry SDK (13).

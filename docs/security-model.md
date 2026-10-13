@@ -1,4 +1,4 @@
-# Security model (draft, milestones 01–06)
+# Security model (draft, milestones 01–07)
 
 This document states what the product protects, what it does not, and the disclosures customers must see. Milestone 12 turns it into a reviewed threat model.
 
@@ -7,12 +7,12 @@ This document states what the product protects, what it does not, and the disclo
 |---|---|---|
 | Tenant data in the API | Server-derived membership; non-members and out-of-reach ids get the same 404 as nonexistent ids (also in bulk, search and export); five roles with client/profile grants, deny by default (06, [permission matrix](permission-matrix.md)); row-level security on every tenant table with transaction-local context; composite same-organization foreign keys; response schemas strip unexpected fields; least-privilege DB roles; [tenant isolation report](identity/tenant-isolation-report.md) | Pen test (12) |
 | Identity and sessions (06) | OIDC Authorization Code + PKCE in the system browser (Keycloak reference); ID tokens verified (signature, issuer, audience, age, nonce) and used once; users matched by issuer + subject; device-bound API sessions: 10-minute access tokens checked against the database on every request, rotating refresh tokens with reuse detection, kept only in the OS keychain; device revocation and sign-out effective at the next request; recent sign-in for ownership transfer; rate limits on sign-in, refresh and invitations; security audit of changes and denials ([threat review](identity/authentication-threat-review.md)) | MFA policy at the provider; pen test (12) |
-| Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them | Encrypted snapshots (07) |
-| Manager UI → native code | 61 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
+| Profile directories | Named only by validated id; stored reference must equal the id; symlinks refused; containment re-checked; exclusive OS lock per profile held from launch until every browser process has exited; never copied while a browser uses them; backups and snapshots only after a verified clean shutdown, with the profile held (busy + OS lock) while it is read, and opening it cancels that step | Lease-controlled opening of shared profiles (08) |
+| Manager UI → native code | 68 commands, each granted individually to the `main` window only; every command re-checks the calling window label; typed arguments with size limits rejected before work starts; browser executable and download folder never taken from UI strings; strict CSP (`script-src 'self'`, no remote origins); navigation outside the bundle blocked and new windows denied; prototypes frozen; no Tauri global | Signed installers (owner certificates, see os-setup.md), updater signatures (12) |
 | External links and deep links | Only `https://github.com/…` help links open, and only in the system browser; deep links accepted only for the auth-callback shape bound to a one-time state; the provider's `iss` must match (RFC 9207) before a code is exchanged with the in-memory PKCE verifier | — |
 | Local database | WAL + foreign keys; all pending migrations in one transaction; a copy is taken before upgrading; a failed upgrade keeps the previous database and shows recovery actions | Encrypted local secrets (07) |
 | Browser runtime | Only the runtime in the Ed25519-signed manifest (owner key, verified against compiled-in public keys); download prefix compiled in; https only, size-capped; SHA-256 + size checked before extraction, mismatch → quarantine; extraction refuses absolute paths, `..`, escaping links, writes through links and zip bombs; executable and macOS code signature checked; free-space check; journal for interrupted installs. No executable path is accepted from the UI or settings in release builds | Over-the-air manifest updates and key revocation (12); redistributable runtime before customers (ADR-0010) |
-| Secrets on the device | OS keychain only; if unavailable, secret persistence is disabled (no file fallback). Proxy logins (05): written once to the keychain, never returned over IPC, never in SQLite, exports, diagnostics, logs, Preferences or command lines; a changed login replaces the keychain entry only after the database accepted the change. Account session (06): only the refresh token, only in the keychain (memory-only when no keychain works); access tokens in memory; the manager window never receives a token and can only ask the shell for allow-listed API requests | Encrypted local secrets (07) |
+| Secrets on the device | OS keychain only; if unavailable, secret persistence is disabled (no file fallback). Proxy logins (05): written once to the keychain, never returned over IPC, never in SQLite, exports, diagnostics, logs, Preferences or command lines; a changed login replaces the keychain entry only after the database accepted the change. Account session (06): only the refresh token, only in the keychain (memory-only when no keychain works); access tokens in memory; the manager window never receives a token and can only ask the shell for allow-listed API requests. Backup keys (07): this device's local-backup key (32 random bytes, `backup-key-v1`) only in the keychain, never in a file; snapshot data keys only in memory (zeroized, redacted `Debug`), never sent to the window, dropped once the file is sealed or opened | Hardware-backed keys where the OS offers them (12) |
 | Proxy routing (05) | Per-profile loopback gateway (127.0.0.1 only, loopback peers only, proxy requests only); the login is added by the gateway and sent only to that proxy; a `407` never reaches the browser; fail-closed by default (no direct route; WebRTC restricted to the proxy; QUIC off; prefetch off); fail-open only by explicit choice, only for an unreachable proxy, counted and shown; proxy addresses checked on every connection (private only with the local setting, link-local/metadata never); HTTPS proxy certificates verified; no change of route during a session | Gateway fuzzing and pen test (12); our own check endpoint (06/13) |
 | Crash data | Local only, opt-in flag off by default, home paths/user names/tokens scrubbed, at most 20 reports | Upload service (13) |
 | Browser processes | Launched from a structured argument list with a minimal environment (no inherited tokens); start URLs only http(s) and after `--`; extra switches only from an allowlist used by tests (`--no-sandbox` and remote debugging are not in it); identified by pid + start time + executable; only a profile's own verified process tree is ever force-closed | Runtime update SLA (ADR-0001) |
@@ -21,14 +21,16 @@ This document states what the product protects, what it does not, and the disclo
 | Notes and exports (04) | Notes are plain text rendered as text; control and bidi-override characters removed; notes that look like passwords, keys, tokens or card numbers refused by the API, left out on import, withheld on export; exports hold an allowlist of configuration fields (no paths, ids, cookies), notes off by default, CSV formulas neutralised, written via temp file + rename | Export permission per role (06) |
 | Local audit log | Launch/stop/crash/recover/backup/install events with machine codes only — never URLs, titles, cookies or passwords; bounded to 5,000 entries | — |
 | Server audit (06) | Actor, action, target, outcome, request id and time for changes, denials and failed sign-ins; append-only for the API role; no tokens, secrets or browsing history | Export and retention policy (11/13) |
-| Snapshots | Planned client-side encryption before upload (ADR-0003) | 07 |
+| Organization backups (07) | Sealed on the device before upload: zstd, then AES-256-GCM in the STREAM construction (RustCrypto), 1 MiB chunks; the header (organization, profile, snapshot, key version, nonce prefix) is the associated data of every chunk; a fresh data key per snapshot, wrapped by the organization key version, wrapped by the root key ([ADR-0014](adr/0014-encrypted-snapshots-and-sync.md)). Uploads need the profile lease (fencing token), `snapshot.commit` and the current head version; signed URLs for one part of one upload, 15 minutes; the worker checks size, sealed header and SHA-256 before a compare-and-set commit (one winner, never last-write-wins). Restores need `snapshot.restore` (audited, rate limited); size and SHA-256 checked before decrypting; archive safety checks; unpacked into a fresh folder and switched with the previous data kept as evidence. Retention, quota, 30-day trash, key rotation and destruction ([crypto review](sync/crypto-design-review.md)) | Managed KMS/HSM provider and independent crypto review (12/14) |
+| Backup root key (07) | `local` provider: a file owned by the API user, mode 600, checked at start-up; repository fixture keys refused outside dev/test; rotation re-wraps organization keys and the old key can be retired only when it wraps nothing (`scripts/deploy/root-key.sh`); offline copy mandatory ([runbook](sync/key-recovery-runbook.md)) | Managed KMS/HSM (12/14) |
+| Local last-good copies (03, 07) | Sealed with the device key (`kind local-backup`, key fingerprint in the header); a reset keychain is reported as "key not available", never as damage; without a usable keychain they stay plain copies as in 03 | — |
 | Logs | Authorization, cookie and idempotency headers redacted; invitation tokens masked in logged URLs; errors carry codes, not stack traces or SQL | OpenTelemetry pipeline with redaction (13) |
 
 ## Required disclosures (must appear in docs and UI where relevant)
 1. **Profiles in use are plaintext to Chromium on the device.** Anyone with access to the logged-in OS account while a profile is open can read its data; disk encryption is the customer's responsibility.
 2. **Separate profiles separate stored website data** (cookies, local storage, IndexedDB, cache). They do **not** make profiles appear as different devices or networks, and they do not prevent websites from linking activity.
-3. **Logins may not survive moving a profile to another device** (ADR-0002). Users may need to sign in again.
-4. **Operator access to encrypted snapshots** is technically possible through key management and is restricted and audited (ADR-0003). No end-to-end or zero-knowledge claim.
+3. **Logins may not survive moving a profile to another device** (ADR-0002). Users may need to sign in again; after a restore on another computer the app says "Sign-in may be required on websites".
+4. **Operator access to organization backups**: whoever holds the server's root key file (the operator of the organization server) can decrypt them; every restore is recorded in Activity (ADR-0003, ADR-0014). No end-to-end or zero-knowledge claim. The app says so under Backups.
 5. The product is for **authorized business account work**. The acceptable-use policy forbids violating website terms, evading bans, or fraud; no feature is marketed as ban prevention or invisibility.
 
 ## Findings from milestone 01 spikes
@@ -63,6 +65,33 @@ This document states what the product protects, what it does not, and the disclo
   open profile's gateway port (see [network/README.md](network/README.md) for all limitations).
 - The connectivity check uses an interim third-party service until our own endpoint exists (ADR-0012).
 - Linux keeps proxy logins only until logout (kernel keyring).
+
+## Milestone 07 boundary tests
+- Sealed format (`crates/seal/src/tests.rs`): wrong key, every binding field, edited header, truncation, reordering,
+  bit flips, chunks spliced between files, traversal/links/special files/Windows device names/limits in the archive;
+  a failed open leaves nothing usable.
+- Engine against a fault-injecting server (`crates/sync/src/tests.rs`): connection lost before and after each of 8
+  calls, the app killed after each of 13 saved steps, concurrent devices, lost lease, failed verification, cancel, cut
+  download, another organization's snapshot, substituted object, forged manifest, low disk, newer browser.
+- API (`services/api/test/sync.test.ts`, `sync-s3.test.ts` with real S3, `cross-tenant.test.ts`): stale base and
+  fencing tokens, object substitution/truncation/removal in storage, headers naming another kind or key version,
+  modified wrapped keys, manifests moved to another profile, destroyed keys, snapshot ids swapped across
+  organizations on every route, data keys and download URLs searched for in request logs, audit details and outbox
+  events.
+- End to end (`crates/sync/tests/real_api.rs`, CI): the desktop engine against the real API, PostgreSQL and S3 with
+  dropped requests, two computers, an operator and a member of another organization.
+- Desktop (`apps/desktop/src-tauri/tests/sync.rs`): restore switch interrupted and finished at start-up, opening
+  refused while restoring, keychain-sealed local backups. Window: the allow-list (`crates/cloud`) refuses init,
+  restore plans and operation routes to the window; they exist only in the shell.
+
+## Known gaps after milestone 07
+- Not end-to-end encrypted; the root key is a file on the organization server until a managed KMS/HSM provider exists.
+- Restored profile folders are plaintext on disk like any open profile (disclosure 1).
+- Storage sees object sizes and timing; compression makes the size follow the profile's content coarsely.
+- Strings derived from keys in Node.js (base64 in JSON) are not zeroized; the desktop drops its JSON copy right after
+  parsing.
+- Who may open a shared profile, and handing it over, are milestone 08; until then uploads are fenced but opening is
+  not.
 
 ## Milestone 04 boundary tests
 - Storage (`crates/storage/src/tests_m04.rs`): folded-name uniqueness, filter validation, bulk across workspaces counts as not found, undo only where the version is unchanged, trash retention, `import_ref` uniqueness.

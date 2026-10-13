@@ -174,6 +174,7 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await p.waitForFunction(() =>
         document.querySelector('.drawer')?.textContent?.includes('Organization backup: version 1'),
       );
+      await p.evaluate(() => document.querySelector('#backup-legend')?.scrollIntoView({ block: 'start' }));
     },
   },
   {
@@ -183,6 +184,9 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await clickRow(p, 'Shop admin');
       await clickButton(p, '.drawer', 'Upload backup now');
       await p.waitForSelector('.drawer [role=alert]', { timeout: 10_000 });
+      await p.evaluate(() => document.querySelector('#backup-legend')?.scrollIntoView({ block: 'start' }));
+      // For the picture, let the transient "Backing up…" notice disappear (4 s) so it does not cover the panel.
+      if (SHOTS) await new Promise((r) => setTimeout(r, 4500));
     },
   },
   {

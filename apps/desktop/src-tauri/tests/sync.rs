@@ -5,6 +5,7 @@
 
 mod support;
 
+use pb_desktop_lib::operations::{OpKind, OpStatus};
 use pb_desktop_lib::secrets::MemoryStore;
 use pb_desktop_lib::supervisor::fake::FakeProcesses;
 use pb_runtime::ProfileId;
@@ -72,6 +73,24 @@ fn run(f: &Fixture, id: &str, cookies: &[u8]) {
         .unwrap_or(true)
         && std::time::Instant::now() < deadline
     {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The routine last-good copy after a clean close holds the profile for a moment (longer on Windows). An
+    // organization backup started meanwhile waits for it and is woken when it ends; these tests start after it, as a
+    // person would see it: a copy exists and no backup of the profile is running.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let copying = f.state.ops.list().iter().any(|o| {
+            o.kind == OpKind::BackupProfile
+                && o.status == OpStatus::Running
+                && o.target.as_deref() == Some(id)
+        });
+        let copied = invoke(f, "get_profile_status", json!({ "profileId": id }))
+            .map(|s| !s["backup"].is_null())
+            .unwrap_or(false);
+        if (copied && !copying) || std::time::Instant::now() > deadline {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
 }
