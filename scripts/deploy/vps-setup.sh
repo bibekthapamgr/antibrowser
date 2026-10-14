@@ -250,7 +250,7 @@ Wants=network-online.target
 Type=simple
 User=$STORE_USER
 Group=$STORE_USER
-ExecStart=/opt/seaweedfs/current/weed server -dir=$STORE_DATA -ip=127.0.0.1 -ip.bind=127.0.0.1 -master.port=9333 -master.volumeSizeLimitMB=1024 -volume.port=8090 -volume.max=50 -filer.port=8888 -s3 -s3.port=$S3_PORT -s3.config=$STORE_CONF_DIR/s3.json
+ExecStart=/opt/seaweedfs/current/weed server -dir=$STORE_DATA -ip=127.0.0.1 -ip.bind=127.0.0.1 -master.port=9333 -master.volumeSizeLimitMB=1024 -volume.port=8090 -volume.max=50 -filer.port=8888 -s3 -s3.port=$S3_PORT -s3.port.iceberg=0 -s3.port.lance=0 -s3.config=$STORE_CONF_DIR/s3.json
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

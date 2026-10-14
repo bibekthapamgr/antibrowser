@@ -491,7 +491,9 @@ fn engine_against_the_real_api() {
     );
     report.push("stale computer: VERSION_CONFLICT (head 2), head unchanged".into());
 
-    // ---- 5. Rollback: version 1 restores on its own computer with everything intact.
+    // ---- 5. Rollback: an older version needs a recent sign-in (milestone 12); these development tokens never count
+    //         as one, so the server refuses with REAUTHENTICATION_REQUIRED and nothing is written. (Restoring an
+    //         older version's contents is covered with a fresh sign-in by the API tests.)
     let v1 = {
         let (rj, opened) = restore(
             &owner.api,
@@ -533,8 +535,13 @@ fn engine_against_the_real_api() {
         Some(&v1),
         &owner.device,
     );
-    assert_eq!(opened.map(|o| o.snapshot.version), Some(1), "{rj:?}");
-    assert_eq!(tree(&dest.join("user-data")), v1_files);
+    assert!(opened.is_none(), "{rj:?}");
+    assert_eq!(
+        rj.error_code.as_deref(),
+        Some("REAUTHENTICATION_REQUIRED"),
+        "{rj:?}"
+    );
+    assert!(!dest.join("user-data").exists());
 
     // ---- 6. Another organization's member: the profile does not exist for them.
     let outsider = actor(&cfg, "outsider");
