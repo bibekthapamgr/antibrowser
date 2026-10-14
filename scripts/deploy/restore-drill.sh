@@ -18,6 +18,7 @@
 # command again while it runs follows it instead of starting another.
 set -Eeuo pipefail
 trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
+SELF=$(readlink -f "$0")   # before leaving the caller's folder ($0 may be relative)
 cd /
 
 APP_USER=pb
@@ -88,9 +89,9 @@ if [[ -z ${PB_DRILL_IN_UNIT:-} ]]; then
     started=$(date -d "$(systemctl show -p ActiveEnterTimestamp --value "$UNIT")" +%s 2>/dev/null || date +%s)
   else
     systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
-    systemd-run --unit="$UNIT" --collect --quiet --setenv=PB_DRILL_IN_UNIT=1 /bin/bash "$(readlink -f "$0")" "$@"
+    systemd-run --unit="$UNIT" --collect --quiet --setenv=PB_DRILL_IN_UNIT=1 /bin/bash "$SELF" "$@"
     echo "    the drill runs as a background service ($UNIT): if the SSH connection drops, it continues."
-    echo "    Reconnect and run this command again to follow it, or see the result with: bash $0 --last"
+    echo "    Reconnect and run this command again to follow it, or see the result with: bash $SELF --last"
   fi
   journalctl -a -o cat -f -u "$UNIT" --since "$(date -d "@$started" '+%Y-%m-%d %H:%M:%S')" &
   follow=$!
