@@ -188,10 +188,35 @@ objects_copy() {  # runs as pb-backup (reads only its own files: rclone.conf and
   printf '{"at":"%s","copy":%s}\n' "$(date -u +%FT%TZ)" "$count" > "$STATE_DIR/objects.json"
 }
 
+# SELinux (AlmaLinux and other EL systems): PostgreSQL runs confined (postgresql_t) and starts pgBackRest's log
+# upload itself. Let that domain reach HTTPS and use pgBackRest's own folders; nothing else is widened.
+selinux_for_pgbackrest() {
+  command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled || return 0
+  local cil=/etc/pgbackrest/pb-pgbackrest.cil
+  printf '%s\n' '; Project Browser: PostgreSQL archives its log to R2 over HTTPS through pgBackRest.' \
+    '(allow postgresql_t http_port_t (tcp_socket (name_connect)))' > "$cil"
+  if semodule -i "$cil" 2>/dev/null; then
+    ok "SELinux: PostgreSQL may reach HTTPS for pgBackRest (module pb-pgbackrest)"
+  else
+    warn "SELinux: could not load $cil; if log archiving fails, see: ausearch -m avc -ts recent -c pgbackrest"
+  fi
+  chcon -R -t postgresql_db_t /var/spool/pgbackrest /var/lib/pgbackrest 2>/dev/null || true
+  chcon -R -t postgresql_log_t /var/log/pgbackrest 2>/dev/null || true
+}
+
 # Packages (pgBackRest from the distribution) and rclone (pinned, SHA-256 verified).
 install_tools() {
   if [[ $(family) == rhel ]]; then
-    rpm -q pgbackrest >/dev/null 2>&1 || dnf install -y -q pgbackrest >/dev/null
+    if ! rpm -q pgbackrest >/dev/null 2>&1; then
+      # PostgreSQL's repository has pgBackRest; one of its libraries (libssh2) comes from EPEL on EL 8 and 9.
+      if ! rpm -q epel-release >/dev/null 2>&1; then
+        dnf install -y -q epel-release >/dev/null 2>&1 \
+          || dnf install -y -q "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm" >/dev/null \
+          || die "could not enable EPEL (needed for pgBackRest's libssh2)"
+        ok "EPEL enabled (for pgBackRest's libssh2)"
+      fi
+      dnf install -y -q pgbackrest >/dev/null || die "could not install pgBackRest from the PostgreSQL repository"
+    fi
     rpm -q unzip >/dev/null 2>&1 || dnf install -y -q unzip >/dev/null
   else
     dpkg -s pgbackrest >/dev/null 2>&1 || apt-get install -y -qq pgbackrest >/dev/null
@@ -224,7 +249,8 @@ repo_system_id() {
   json=$(as_pg pgbackrest --stanza=$STANZA --output=json --log-level-console=off info) || return 1
   printf '%s' "$json" | /opt/node/bin/node -e '
     let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
-      const s = (JSON.parse(d || "[]")[0]) || {};
+      // System identifiers exceed JavaScript numbers: read them as text.
+      const s = (JSON.parse((d || "[]").replace(/"system-id":(\d+)/g, "\"system-id\":\"$1\""))[0]) || {};
       const db = (s.db || []).at(-1);
       console.log(s.status && s.status.code === 0 && db ? String(db["system-id"]) : "");
     });'
@@ -257,6 +283,7 @@ restore_server() {
   install_tools
   chown root:root "$CIPHER_FILE"; chmod 600 "$CIPHER_FILE"
   write_pgbackrest_conf
+  selinux_for_pgbackrest   # the restored server fetches its log from R2 through pgBackRest, as PostgreSQL
   local repo_id here_id
   repo_id=$(repo_system_id) \
     || die "the backups in r2:$R2_BUCKET cannot be read: check the token in $BACKUP_ENV and that $CIPHER_FILE is the passphrase they were made with"
@@ -401,6 +428,7 @@ fi
 chown root:root "$CIPHER_FILE"; chmod 600 "$CIPHER_FILE"
 
 write_pgbackrest_conf
+selinux_for_pgbackrest
 ok "pgBackRest writes to r2:$R2_BUCKET/pgbackrest (encrypted here; configuration root:postgres 0640)"
 
 # Log archiving: at most 60 s of the newest changes can be missing from the off-site copy (plus upload time).
@@ -422,7 +450,12 @@ if [[ -n $repo_id && $repo_id != "$(local_system_id)" ]]; then
   die "r2:$R2_BUCKET holds backups of another database (system $repo_id). To restore them onto this server: bash $0 restore-server (docs/security/dr-runbook.md). To start fresh: use a new, empty bucket."
 fi
 as_pg pgbackrest --stanza=$STANZA --log-level-console=warn stanza-create
-as_pg pgbackrest --stanza=$STANZA --log-level-console=warn check || die "pgBackRest cannot write to R2 (check $BACKUP_ENV)"
+if ! as_pg pgbackrest --stanza=$STANZA --log-level-console=warn check; then
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled && command -v ausearch >/dev/null 2>&1; then
+    ausearch -m avc -ts recent 2>/dev/null | grep -i pgbackrest | tail -5 | sed 's/^/    SELinux: /' || true
+  fi
+  die "pgBackRest cannot archive to R2 (check $BACKUP_ENV; on SELinux systems see the lines above)"
+fi
 ok "log archiving to R2 works (pgbackrest check)"
 
 # rclone: snapshot storage (read-only identity written by vps-setup.sh) -> R2.

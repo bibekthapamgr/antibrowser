@@ -55,7 +55,10 @@ previous copy for 6 weeks**. A database restored from a backup made before the r
    values into a chat.
 5. **Run the server update twice:**
    `\cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh`. It installs
-   pgBackRest and rclone, turns on log archiving, makes the first full backup and starts the timers.
+   pgBackRest and rclone, turns on log archiving, makes the first full backup and starts the timers. On AlmaLinux:
+   - it enables EPEL, which supplies pgBackRest's `libssh2` library;
+   - with SELinux on, it loads a one-rule module (`/etc/pgbackrest/pb-pgbackrest.cil`) that lets PostgreSQL reach
+     HTTPS for log archiving. If archiving still fails, the script prints the SELinux denials it found.
 6. **Copy the passphrase into the offline kit.** It is created on the first run; the script reminds you.
 7. **Run the restore drill** (next section) and keep its report.
 
