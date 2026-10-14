@@ -1,6 +1,6 @@
 {
   "name": "@pb/sdk",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "description": "TypeScript SDK for the Project Browser developer API (milestone 10): profiles, automation jobs, webhook verification and Playwright debugging sessions. No dependencies; runs on Node 24 and in bundlers (WebCrypto and fetch).",

@@ -5,6 +5,24 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.12.0 — 2026-10-14 (milestone 12: production security, updates and recovery)
+Added
+- `GET /support/audit/export?after_seq=&limit=` (support leads): the hash-chained platform audit with the chain head;
+  each later export continues from the last hash (`services/api/src/audit-chain.ts` recomputes it).
+- `POST /support/orgs/{org}/emergency/revoke-api-tokens` (break-glass for that organization only, reason required).
+- Request header `x-pb-client-version` (sent by the desktop app). With `MIN_DESKTOP_VERSION` set, desktop clients
+  below it get `426 CLIENT_UPDATE_REQUIRED` (with `minimum_version`); scripts and the SDK are not affected.
+- `break_glass_until` in the support organization overview; alert kind `break_glass_used`.
+
+Changed (visible to clients)
+- A recent sign-in (`REAUTHENTICATION_REQUIRED`, 403) is now needed for restore plans of anything other than the
+  current version, recovery-copy restores and undelete. API and development tokens never qualify.
+- Undelete works only during the trash period (404 afterwards).
+- Automation job detail and screenshots need the grant's `launch` capability on the profile (403 otherwise), as
+  creating the job does.
+- `/v1/health` and `/v1/ready` return only their status. No documentation, debug or metrics routes are served.
+- Resolving a `break_glass_used` alert is refused to the staff member who held that grant (`own_break_glass`).
+
 ## 0.11.0 — 2026-10-14 (milestone 11: billing, plan limits and administration)
 Added
 - **Billing** (interactive sign-in; `billing.read` / `billing.manage`): `GET /orgs/{org}/billing/subscription`,
