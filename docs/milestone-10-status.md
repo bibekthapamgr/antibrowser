@@ -76,8 +76,9 @@ and macOS with upstream stable Chrome for Testing 155.0.8059.79 in
 [runtime pipeline 38494070918](https://github.com/bibekthapamgr/antibrowser/actions/runs/38494070918) (Linux: every
 step but the screenshot, see limitations; cross-OS restore matrix green). Installers in
 [desktop internal build 38494073415](https://github.com/bibekthapamgr/antibrowser/actions/runs/38494073415) (at
-`f0f1c43`; later commits changed tests, CI scripts and docs only). Test server update path in
-[deploy scripts 38496718767](https://github.com/bibekthapamgr/antibrowser/actions/runs/38496718767).
+`f0f1c43`; later commits changed tests, CI scripts and docs only). Test server update path, including the egress rules (user `pb` refused 10/8, 192.168/16 and the metadata address;
+loopback API reachable; Keycloak sign-ins and a root key rotation with the rules in force), in
+[deploy scripts 38501964517](https://github.com/bibekthapamgr/antibrowser/actions/runs/38501964517) at `d4a315a`.
 
 ## Test server
 `vps-setup.sh` changed, so the update runs **twice**: the first run copies the new script, the second applies it —
