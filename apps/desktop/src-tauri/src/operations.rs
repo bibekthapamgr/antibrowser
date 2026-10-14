@@ -18,6 +18,8 @@ pub enum OpKind {
     RecoverProfile,
     BackupProfile,
     ImportProfiles,
+    /// Downloading a manager update (milestone 12).
+    DownloadUpdate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

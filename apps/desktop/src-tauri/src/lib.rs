@@ -7,6 +7,7 @@
 
 pub mod account;
 pub mod agency;
+pub mod app_update;
 pub mod authz;
 pub mod automation;
 pub mod billing;
@@ -146,6 +147,11 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::billing_open_checkout,
         commands::billing_open_portal,
         commands::billing_open_invoice,
+        commands::get_update_status,
+        commands::check_for_updates,
+        commands::download_update,
+        commands::cancel_update_download,
+        commands::install_update,
     ]
 }
 
@@ -323,6 +329,8 @@ pub fn run() {
             state.start_automation_worker();
             // The health page's server card starts from a fresh check (milestone 09).
             state.check_server_later();
+            // Signed manager updates: checked and downloaded in the background, installed on a click (milestone 12).
+            state.start_update_worker();
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.
             let monitor = state.clone();

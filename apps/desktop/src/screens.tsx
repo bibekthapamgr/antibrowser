@@ -7,6 +7,7 @@ import { DiagnosticsExport } from './diagnostics.tsx';
 import { ImportHistory } from './importer.tsx';
 import { LibraryManager } from './library.tsx';
 import type { Notify } from './status.tsx';
+import { AppUpdatesCard } from './updates.tsx';
 
 const HELP_URL = 'https://github.com/bibekthapamgr/antibrowser';
 
@@ -499,10 +500,12 @@ export function DownloadsScreen(props: { backend: Backend; refreshKey: number; n
         <ImportHistory backend={backend} refreshKey={props.refreshKey} notify={notify} />
       </div>
 
-      <div className="card">
-        <h2>App updates</h2>
-        <p className="muted">Internal build. Automatic updates are off. {status.manager_updates.note}</p>
-      </div>
+      <AppUpdatesCard
+        backend={backend}
+        notify={notify}
+        refreshKey={props.refreshKey}
+        runningCount={status.running.length}
+      />
     </section>
   );
 }
@@ -513,6 +516,7 @@ const OP_LABELS: Record<string, string> = {
   close_all: 'Closing all profiles',
   verify_runtime: 'Checking the browser runtime',
   install_runtime: 'Installing the browser',
+  download_update: 'Downloading an app update',
   recover_profile: 'Recovering a profile',
   backup_profile: 'Backing up a profile',
   import_profiles: 'Importing profiles',

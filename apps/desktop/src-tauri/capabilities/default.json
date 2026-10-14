@@ -99,6 +99,11 @@
     "allow-automation-screenshot",
     "allow-billing-open-checkout",
     "allow-billing-open-portal",
-    "allow-billing-open-invoice"
+    "allow-billing-open-invoice",
+    "allow-get-update-status",
+    "allow-check-for-updates",
+    "allow-download-update",
+    "allow-cancel-update-download",
+    "allow-install-update"
   ]
 }

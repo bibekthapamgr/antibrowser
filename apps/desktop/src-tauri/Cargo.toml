@@ -45,6 +45,7 @@ base64 = "0.22"
 pb-netproxy = { workspace = true, features = ["testing"] }
 pb-sync = { workspace = true, features = ["testing"] }
 pb-devtools = { workspace = true, features = ["testing"] }
+pb-update = { workspace = true, features = ["testing"] }
 rusqlite.workspace = true
 ed25519-dalek = "3"
 hex.workspace = true

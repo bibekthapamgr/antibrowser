@@ -116,6 +116,8 @@ pub struct AppState {
     pub(crate) agency: crate::agency::AgencyRuntime,
     /// Automation jobs run on this computer (milestone 10).
     pub(crate) automation: crate::automation::AutomationRuntime,
+    /// Signed manager updates (milestone 12).
+    pub(crate) updates: crate::app_update::UpdateRuntime,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -201,7 +203,7 @@ pub struct RuntimeStatus {
     pub quarantined: usize,
     pub running: Vec<RunningProfile>,
     pub operations: Vec<crate::operations::Operation>,
-    pub manager_updates: Value,
+    pub manager_updates: crate::app_update::UpdateStatus,
 }
 
 /// Arguments of `update_profile` after deserialization (validated in [`AppState::update_profile`]).
@@ -306,6 +308,7 @@ impl AppState {
             team: crate::team::TeamRuntime::new(),
             agency: crate::agency::AgencyRuntime::default(),
             automation: crate::automation::AutomationRuntime::new(),
+            updates: crate::app_update::UpdateRuntime::new(),
         }))
     }
 
@@ -722,11 +725,7 @@ impl AppState {
             quarantined: installer.quarantined().map(|q| q.len()).unwrap_or(0),
             running: self.supervisor.running(),
             operations: self.ops.list(),
-            manager_updates: json!({
-                "channel": "internal",
-                "automatic": false,
-                "note": "Signed update channels arrive in milestone 12."
-            }),
+            manager_updates: self.update_status(),
         }
     }
 

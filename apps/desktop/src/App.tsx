@@ -20,6 +20,7 @@ import {
   Welcome,
 } from './screens.tsx';
 import { withClient } from './status.tsx';
+import { UpdateBanner } from './updates.tsx';
 
 type View = 'profiles' | 'proxies' | 'downloads' | 'health' | 'account' | 'settings' | 'organization';
 const NAV: [View, string][] = [
@@ -534,6 +535,7 @@ export function App({ backend }: { backend: Backend }) {
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}
       <main className="main" id="main" tabIndex={0} aria-label="Content">
         <ReconnectBanner backend={backend} account={account} refreshKey={refreshKey} />
+        <UpdateBanner backend={backend} refreshKey={refreshKey} onOpen={() => go('downloads')} />
         {view === 'profiles' && (
           <ProfilesScreen
             backend={backend}

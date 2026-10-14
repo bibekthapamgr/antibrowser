@@ -180,6 +180,9 @@ export const SettingValue = Type.Object({
     'downloads.per_client_folders',
     'profiles.open_reminder_hours',
     'resources.memory_warning',
+    'automation.allow_debugging',
+    'updates.channel',
+    'updates.automatic',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -230,6 +233,7 @@ export const Operation = Type.Object({
     'recover_profile',
     'backup_profile',
     'import_profiles',
+    'download_update',
   ]),
   status: Type.Enum(['running', 'succeeded', 'failed']),
   progress: Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Null()]),
@@ -259,6 +263,43 @@ export const RunningProfile = Type.Object({
   helpers: Type.Integer(),
   force_available: Type.Boolean(),
 });
+
+/**
+ * Manager updates (milestone 12, ADR-0019): the selected channel's signed manifest, what it offers this computer,
+ * download progress, and whether this version must be updated (`blocked`: revoked or below the channel minimum).
+ */
+export const UpdateChannel = Type.Enum(['stable', 'canary', 'dev']);
+export const UpdateStatus = Type.Object({
+  configured: Type.Boolean(),
+  install_supported: Type.Boolean(),
+  current_version: Type.String(),
+  platform: Type.String(),
+  channel: UpdateChannel,
+  automatic: Type.Boolean(),
+  phase: Type.Enum(['idle', 'checking', 'up_to_date', 'available', 'downloading', 'ready', 'failed']),
+  checked_at: Nullable(Type.String()),
+  latest_version: Nullable(Type.String()),
+  available: Nullable(
+    Type.Object({
+      version: Type.String(),
+      notes_url: Type.String({ pattern: '^https://github\\.com/' }),
+      size_bytes: Type.Integer({ minimum: 0 }),
+    }),
+  ),
+  paused: Type.Boolean(),
+  blocked: Nullable(
+    Type.Union([
+      Type.Object({ reason: Type.Literal('revoked') }),
+      Type.Object({ reason: Type.Literal('below_minimum'), minimum_version: Type.String() }),
+    ]),
+  ),
+  manifest_expires_at: Nullable(Type.String()),
+  progress: Nullable(
+    Type.Object({ received: Type.Integer({ minimum: 0 }), total: Type.Integer({ minimum: 0 }) }),
+  ),
+  error: Nullable(Type.Object({ code: Type.String(), message: Type.String() })),
+});
+export type UpdateStatus = Static<typeof UpdateStatus>;
 
 export const RuntimeStatus = Type.Object({
   browser: Type.Object({
@@ -300,7 +341,7 @@ export const RuntimeStatus = Type.Object({
   quarantined: Type.Integer(),
   running: Type.Array(RunningProfile),
   operations: Type.Array(Operation),
-  manager_updates: Type.Object({ channel: Type.String(), automatic: Type.Boolean(), note: Type.String() }),
+  manager_updates: UpdateStatus,
 });
 export type RuntimeStatus = Static<typeof RuntimeStatus>;
 
@@ -1578,6 +1619,19 @@ export const COMMANDS = {
     }),
     result: Type.Null(),
   },
+  // Milestone 12: manager updates (ADR-0019). The channel and automatic checks are the settings `updates.channel`
+  // and `updates.automatic`. Errors: UPDATES_NOT_CONFIGURED, UPDATE_BUSY, UPDATE_NOT_AVAILABLE, UPDATE_NOT_READY,
+  // UPDATE_PROFILES_OPEN, UPDATE_UNSUPPORTED, UPDATE_MOVE_APP, UPDATE_CORRUPT, UPDATE_SIGNATURE_INVALID,
+  // UPDATE_INSTALL_FAILED. Check and download problems are reported in `UpdateStatus.error`.
+  get_update_status: { args: Type.Object({}), result: UpdateStatus },
+  /** Checks the selected channel's signed manifest now. */
+  check_for_updates: { args: Type.Object({}), result: UpdateStatus },
+  /** Downloads the offered update in the background (`update` and `operation` events). */
+  download_update: { args: Type.Object({}), result: UpdateStatus },
+  /** Stops a download; it continues from there next time. */
+  cancel_update_download: { args: Type.Object({}), result: UpdateStatus },
+  /** Installs the downloaded, verified update (profiles closed); the app restarts. */
+  install_update: { args: Type.Object({}), result: Type.Null() },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -1620,6 +1674,8 @@ export const EVENTS = {
     error_code: Type.Optional(Nullable(Type.String())),
     enrolled: Type.Optional(Type.Boolean()),
   }),
+  /** The manager's own update state changed (milestone 12). */
+  update: UpdateStatus,
   account: Type.Object({
     status: Type.Enum(['signed_in', 'signed_out', 'expired', 'failed']),
     reauth: Type.Optional(Type.Boolean()),

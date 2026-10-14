@@ -22,6 +22,8 @@
  * - milestone 10: the job dashboard (steps, screenshots, a stop that names the profile), API tokens and webhook
  *   secrets shown once, webhook destinations that are refused, dead letters sent again, and this computer enrolled
  *   to run jobs with Playwright connections off until confirmed
+ * - milestone 12: app updates (check, download with progress and stop, install only with profiles closed, channel
+ *   change, a withdrawn version flagged on every screen, a manifest with a bad signature offering nothing)
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -1916,5 +1918,95 @@ describe('developer API and automation (milestone 10)', () => {
     const violations = await axeSerious(page);
     expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     await page.close();
+  });
+});
+
+describe('app updates (milestone 12)', () => {
+  const installed = (page: Page) =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __pbDemo: { updates: { installed: string[] } } }).__pbDemo.updates.installed,
+    );
+  const cardHas = (page: Page, needle: string) =>
+    page.waitForFunction((t) => document.querySelector('.updates')?.textContent?.includes(t), {}, needle);
+
+  it('checks the channel, downloads with progress and installs on a click, never with profiles open', async () => {
+    const page = await open('running');
+    await goTo(page, 'Downloads and updates');
+    await page.waitForSelector('#updates-title');
+    expect(await text(page, '.updates')).toContain('Not checked yet on this channel.');
+    await clickButton(page, '.updates', 'Check now');
+    await cardHas(page, 'Version 0.12.1 is available');
+    await clickButton(page, '.updates', 'Download 0.12.1');
+    await page.waitForSelector('.updates progress');
+    await cardHas(page, 'Version 0.12.1 is downloaded and verified.');
+    // A profile is open: installing (which restarts the app) waits until it is closed.
+    expect(await text(page, '.updates')).toContain('Close the open profiles first');
+    const disabled = await page.$$eval('.updates button', (bs) =>
+      bs.filter((b) => (b as HTMLButtonElement).disabled).map((b) => b.textContent?.trim()),
+    );
+    expect(disabled).toContain('Restart and install 0.12.1');
+    expect(await installed(page)).toEqual([]);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+
+    const idle = await open('');
+    await goTo(idle, 'Downloads and updates');
+    await clickButton(idle, '.updates', 'Check now');
+    await clickButton(idle, '.updates', 'Download 0.12.1');
+    await clickButton(idle, '.updates', 'Restart and install 0.12.1');
+    await toastContains(idle, 'Installing the update');
+    expect(await installed(idle)).toEqual(['0.12.1']);
+    await idle.close();
+  });
+
+  it('a channel change checks that channel; a stopped download can continue', async () => {
+    const page = await open('', { dark: true });
+    await goTo(page, 'Downloads and updates');
+    await page.waitForSelector('#updates-title');
+    const canary = await page.$('input[name=update-channel]:not(:checked)');
+    expect(canary).not.toBeNull();
+    await page.$$eval('.updates label.choice', (ls) =>
+      ls
+        .find((l) => l.textContent?.startsWith('Canary'))
+        ?.querySelector('input')
+        ?.click(),
+    );
+    await cardHas(page, 'Version 0.13.0-beta.1 is available');
+    await clickButton(page, '.updates', 'Download 0.13.0-beta.1');
+    await clickButton(page, '.updates', 'Stop');
+    await cardHas(page, 'it continues where it stopped');
+    expect(await text(page, 'main')).toContain('Downloading an app update');
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+
+  it('a withdrawn version is flagged on every screen; a failed signature check offers nothing', async () => {
+    const page = await open('update-blocked');
+    // The banner appears once the first check has run (automatic in the app; here from the Downloads screen).
+    await goTo(page, 'Downloads and updates');
+    await clickButton(page, '.updates', 'Check now');
+    await page.waitForFunction(() =>
+      document.querySelector('main > .banner')?.textContent?.includes('was withdrawn'),
+    );
+    expect(await text(page, 'main > .banner')).toContain('your profiles and data are not affected');
+    await goTo(page, 'Profiles');
+    expect(await text(page, 'main > .banner')).toContain('This version (0.12.0) was withdrawn');
+    await clickButton(page, 'main > .banner', 'Update');
+    await page.waitForSelector('#updates-title');
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+
+    const forged = await open('update-bad-signature');
+    await goTo(forged, 'Downloads and updates');
+    await clickButton(forged, '.updates', 'Check now');
+    await cardHas(forged, 'not signed with the Project Browser release key');
+    expect(
+      await forged.$$eval('.updates button', (bs) => bs.map((b) => b.textContent?.trim())),
+    ).not.toContain('Download 0.12.1');
+    await forged.close();
   });
 });

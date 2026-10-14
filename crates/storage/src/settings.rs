@@ -43,6 +43,11 @@ pub const MEMORY_WARNING: &str = "resources.memory_warning";
 /// Lets owners' and admins' debugging jobs hand a session to a Playwright script on this computer (milestone 10;
 /// off by default; set only on this computer, through its own audited command, never by the server).
 pub const AUTOMATION_DEBUGGING: &str = "automation.allow_debugging";
+/// Release channel of manager updates (milestone 12): `stable` by default; `canary` gets releases earlier; `dev` is for
+/// internal testing. Every channel is signed with the same release key.
+pub const UPDATE_CHANNEL: &str = "updates.channel";
+/// Check for manager updates (and download them in the background) automatically. Installing always needs a click.
+pub const UPDATE_AUTOMATIC: &str = "updates.automatic";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -110,6 +115,18 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::Bool,
         ui_settable: false,
         default: || Value::from(false),
+    },
+    SettingSpec {
+        key: UPDATE_CHANNEL,
+        kind: SettingKind::Enum(&["stable", "canary", "dev"]),
+        ui_settable: true,
+        default: || Value::from("stable"),
+    },
+    SettingSpec {
+        key: UPDATE_AUTOMATIC,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::from(true),
     },
 ];
 

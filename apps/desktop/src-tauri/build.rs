@@ -95,6 +95,11 @@ const COMMANDS: &[&str] = &[
     "billing_open_checkout",
     "billing_open_portal",
     "billing_open_invoice",
+    "get_update_status",
+    "check_for_updates",
+    "download_update",
+    "cancel_update_download",
+    "install_update",
 ];
 
 fn main() {

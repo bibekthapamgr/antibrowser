@@ -1376,3 +1376,68 @@ pub async fn billing_open_invoice<Rt: Runtime>(
     .map_err(|_| ipc::INTERNAL)??;
     open_payment_page(&app, url)
 }
+
+// ---------------------------------------------------------------- milestone 12: manager updates
+
+/// The manager's own update state: channel, last check, what is offered, download progress, and whether this
+/// version must be updated (revoked or below the channel's minimum).
+#[tauri::command]
+pub fn get_update_status<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+) -> R<crate::app_update::UpdateStatus> {
+    caller(&webview)?;
+    Ok(state.update_status())
+}
+
+/// Checks the selected channel's signed manifest now.
+#[tauri::command]
+pub async fn check_for_updates<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+) -> R<crate::app_update::UpdateStatus> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || state.update_check())
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Downloads the offered update in the background (progress in the `update` and `operation` events).
+#[tauri::command]
+pub fn download_update<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+) -> R<crate::app_update::UpdateStatus> {
+    caller(&webview)?;
+    blocking_state(&app).update_download()
+}
+
+/// Stops a running download (it continues from there next time).
+#[tauri::command]
+pub fn cancel_update_download<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+) -> R<crate::app_update::UpdateStatus> {
+    caller(&webview)?;
+    Ok(state.update_cancel())
+}
+
+/// Installs the downloaded, verified update: profiles must be closed. Windows runs the installer and quits (the
+/// installer starts the new version); macOS replaces the app and restarts.
+#[tauri::command]
+pub async fn install_update<Rt: Runtime>(app: AppHandle<Rt>, webview: Webview<Rt>) -> R<()> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    let plan = tauri::async_runtime::spawn_blocking(move || state.update_install())
+        .await
+        .map_err(|_| ipc::INTERNAL)??;
+    match plan {
+        crate::app_update::InstallPlan::RunInstaller(path) => {
+            crate::app_update::run_installer(&path)?;
+            app.exit(0);
+        }
+        crate::app_update::InstallPlan::Restart => app.request_restart(),
+    }
+    Ok(())
+}

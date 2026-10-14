@@ -23,6 +23,11 @@ semver = "1"
 base64 = "0.22"
 flate2 = "1"
 tar = { version = "0.4.46", default-features = false }
+# Only with the `testing` feature (other crates' tests): signs manifests with throwaway keys.
+minisign = { version = "0.10", optional = true }
+
+[features]
+testing = ["dep:minisign"]
 
 [dev-dependencies]
 tempfile.workspace = true

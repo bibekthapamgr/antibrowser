@@ -42,6 +42,7 @@ import { announceDemoExtensionUpdate, demoAgency } from './demo-agency.ts';
 import { demoCloud } from './demo-cloud.ts';
 import { demoSync } from './demo-sync.ts';
 import { demoTeam } from './demo-team.ts';
+import { DEMO_APP_VERSION, demoUpdates } from './demo-updates.ts';
 import type {
   AppView,
   Backend,
@@ -452,12 +453,16 @@ export function demoBackend(mode = ''): Backend {
       version: 0,
       ui_settable: true,
     },
+    'updates.channel': { key: 'updates.channel', value: 'stable', version: 0, ui_settable: true },
+    'updates.automatic': { key: 'updates.automatic', value: true, version: 0, ui_settable: true },
   };
   const ENUMS: Record<string, unknown[]> = {
     'proxies.allow_private_addresses': [true, false],
     'downloads.per_client_folders': [true, false],
     'profiles.open_reminder_hours': ['off', '4', '8', '12', '24'],
     'resources.memory_warning': [true, false],
+    'updates.channel': ['stable', 'canary', 'dev'],
+    'updates.automatic': [true, false],
     'appearance.theme': ['system', 'light', 'dark'],
     'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
     'profiles.trash_retention_days': ['7', '30', '90'],
@@ -741,6 +746,15 @@ export function demoBackend(mode = ''): Backend {
     emit('operation', { ...op });
     changed();
   };
+  /** The manager's own updates (milestone 12; demo-updates.ts). */
+  const updates = demoUpdates({
+    mode,
+    emit,
+    startOp,
+    finish,
+    setting: (key) => settings[key]?.value,
+    running,
+  });
   const requireStore = () => {
     if (storeFailed)
       throw err('STORE_UNAVAILABLE', 'Local data could not be opened. Use the recovery options to continue.');
@@ -1268,11 +1282,7 @@ export function demoBackend(mode = ''): Backend {
       force_available: p.force_available,
     })),
     operations: ops.slice(0, 50),
-    manager_updates: {
-      channel: 'internal',
-      automatic: false,
-      note: 'Signed update channels arrive in milestone 12.',
-    },
+    manager_updates: updates.snapshot(),
   });
 
   const cloud = demoCloud({
@@ -1372,13 +1382,14 @@ export function demoBackend(mode = ''): Backend {
     agency,
     automation: cloud.automation,
     billing: cloud.billing,
+    updates,
     account: cloud,
     sync,
     team,
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.11.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: `${DEMO_APP_VERSION}-demo`, platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
@@ -2360,7 +2371,12 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.11.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: {
+            version: `${DEMO_APP_VERSION}-demo`,
+            platform: 'demo',
+            os: navigator.userAgent,
+            arch: 'demo',
+          },
           store: {
             status: storeFailed ? 'failed' : 'ready',
             schema_version: 9,

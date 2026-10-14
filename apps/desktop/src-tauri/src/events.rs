@@ -11,6 +11,7 @@
 //! | `sync`              | `{ "profile_id", "job_id", "kind": "upload" \| "restore", "state", "version"?, "portability"? }` |
 //! | `team`              | `{ "profile_id", "kind": "phase" \| "requests" \| "handoff_ready" \| "kept_aside" \| "recovery_kept" \| "reconnected", … }` |
 //! | `automation`        | `{ "kind": "poll" \| "job", "org_id", "job_id"?, "state"? }` (milestone 10) |
+//! | `update`            | [`crate::app_update::UpdateStatus`] (milestone 12) |
 
 use serde_json::Value;
 use std::sync::Mutex;
@@ -24,6 +25,7 @@ pub const ACCOUNT: &str = "account";
 pub const SYNC: &str = "sync";
 pub const TEAM: &str = "team";
 pub const AUTOMATION: &str = "automation";
+pub const UPDATE: &str = "update";
 
 pub trait EventSink: Send + Sync {
     fn emit_json(&self, event: &str, payload: Value);

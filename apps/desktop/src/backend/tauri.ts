@@ -39,6 +39,13 @@ export function tauriBackend(): Backend {
       openPortal: (orgId) => call('billing_open_portal', { orgId }),
       openInvoice: (orgId, invoiceId, pdf) => call('billing_open_invoice', { orgId, invoiceId, pdf }),
     },
+    updates: {
+      get: () => call('get_update_status', {}),
+      check: () => call('check_for_updates', {}),
+      download: () => call('download_update', {}),
+      cancel: () => call('cancel_update_download', {}),
+      install: () => call('install_update', {}),
+    },
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),

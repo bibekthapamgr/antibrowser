@@ -183,6 +183,7 @@ struct LoadedKey {
 }
 
 /// Release signing keys compiled into the manager, each with a validity window (like a certificate's).
+#[derive(Default)]
 pub struct ReleaseKeys {
     keys: Vec<LoadedKey>,
 }
@@ -842,8 +843,8 @@ fn sha256_file(path: &Path) -> io::Result<String> {
 }
 
 /// Checks a finished file against the manifest (size, SHA-256) and its Tauri signature (trusted key, bound to this
-/// version and file name).
-fn verify_artifact_file(
+/// version and file name). Also run again right before installing, so a file changed after its download is refused.
+pub fn verify_artifact_file(
     path: &Path,
     offer: &Offer,
     keys: &ReleaseKeys,
@@ -1182,3 +1183,7 @@ pub fn install_app_bundle(
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(feature = "testing")]
+#[path = "app_testing.rs"]
+pub mod testing;

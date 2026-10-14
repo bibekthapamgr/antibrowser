@@ -51,6 +51,7 @@ import type {
   TagRef,
   TeamStatus,
   Template,
+  UpdateStatus,
   Workspace,
 } from '@pb/contracts/ipc';
 
@@ -112,6 +113,7 @@ export type {
   TeamRequest,
   TeamStatus,
   Template,
+  UpdateStatus,
   Workspace,
 } from '@pb/contracts/ipc';
 
@@ -367,11 +369,24 @@ export interface BillingRepository {
   openInvoice(orgId: string, invoiceId: string, pdf: boolean): Promise<null>;
 }
 
+/**
+ * Milestone 12: the manager's own signed updates. The channel and automatic checks are the settings
+ * `updates.channel` and `updates.automatic`; installing restarts the app and needs closed profiles.
+ */
+export interface UpdatesRepository {
+  get(): Promise<UpdateStatus>;
+  check(): Promise<UpdateStatus>;
+  download(): Promise<UpdateStatus>;
+  cancel(): Promise<UpdateStatus>;
+  install(): Promise<null>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   agency: AgencyRepository;
   automation: AutomationRepository;
   billing: BillingRepository;
+  updates: UpdatesRepository;
   account: AccountRepository;
   sync: SyncRepository;
   team: TeamRepository;
