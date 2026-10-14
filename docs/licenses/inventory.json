@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-13T10:28:17.127Z",
+  "generated_at": "2026-10-14T00:35:59.234Z",
   "dependencies": [
     {
       "ecosystem": "cargo",
@@ -353,6 +353,12 @@
       "ecosystem": "cargo",
       "name": "cfg-if",
       "version": "1.0.5",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "chacha20",
+      "version": "0.10.2",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -1995,6 +2001,18 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "rand",
+      "version": "0.10.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rand_core",
+      "version": "0.10.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "raw-window-handle",
       "version": "0.6.2",
       "license": "MIT OR Apache-2.0 OR Zlib"
@@ -2309,6 +2327,12 @@
       "ecosystem": "cargo",
       "name": "servo_arc",
       "version": "0.4.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "sha1",
+      "version": "0.11.0",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -2802,6 +2826,12 @@
       "name": "try-lock",
       "version": "0.2.5",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "tungstenite",
+      "version": "0.30.0",
+      "license": "MIT OR Apache-2.0"
     },
     {
       "ecosystem": "cargo",
@@ -4338,6 +4368,12 @@
       "name": "pino-std-serializers",
       "version": "7.1.0",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "playwright-core",
+      "version": "1.63.0",
+      "license": "Apache-2.0"
     },
     {
       "ecosystem": "npm",

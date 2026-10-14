@@ -875,7 +875,8 @@ export function automationRoutes(app: App, deps: Deps): void {
         tags: ['automation'],
         description:
           'The computer holding the job reports, in order: `started` (its session lease: id and fencing token; the ' +
-          'job becomes RUNNING), `step_started` before each step (refused unless the lease is still current and the ' +
+          'job becomes RUNNING), `step_started` before each step (refused unless the lease is still current — except ' +
+          'closing, which only records how the profile was given back — and the ' +
           'steps before it finished), `step_finished` with typed outputs only, and `finished`. `released` gives a ' +
           'claim back before anything ran (it returns to the queue). Reports from another computer or an older ' +
           'claim answer JOB_CLAIM_STALE. The answer says whether a cancel was requested.',

@@ -438,11 +438,11 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     demo: 'signedin',
     prepare: async (p) => {
       await openOrg(p, 'Automation');
-      await p.waitForFunction(() =>
-        document.querySelector('main')?.textContent?.includes('Morning login check'),
-      );
-      await clickButton(p, 'main table', 'Steps');
-      await p.waitForFunction(() => document.querySelector('.job-steps'));
+      await clickInRow(p, 'Morning login check', 'Steps');
+      await p.waitForFunction(() => document.querySelector('.job-steps')?.textContent?.includes('Done'));
+      await clickButton(p, '.job-steps', 'Show screenshot “login”');
+      await p.waitForSelector('img.job-shot');
+      await p.$eval('.job-steps', (el) => el.scrollIntoView());
     },
   },
   {
@@ -1765,9 +1765,10 @@ describe('developer API and automation (milestone 10)', () => {
     const secret = await page.$eval('[role=alertdialog] input.mono', (i) => (i as HTMLInputElement).value);
     expect(secret).toMatch(/^whsec_[A-Za-z0-9+/]{43}=$/);
     await clickButton(page, '[role=alertdialog]', 'I copied it');
-    // The seeded endpoint has a dead letter: sent again, it is delivered.
-    const rows = await page.$$('main table tbody tr');
-    expect(rows.length).toBeGreaterThanOrEqual(2);
+    // Listed with the seeded endpoint (whose dead letter is sent again below).
+    await page.waitForFunction(() =>
+      document.querySelector('main table')?.textContent?.includes('hooks.example.org/pb'),
+    );
     await clickInRow(page, 'hooks.example.com/project-browser', 'Deliveries');
     await page.waitForFunction(() =>
       document.querySelector('main ul.deliveries')?.textContent?.includes('server error (5xx)'),

@@ -1283,7 +1283,7 @@ function WebhooksPanel(props: PanelProps) {
         <SecretDialog
           title={secret.title}
           secret={secret.value}
-          help="Verify each delivery’s signature with it (the SDK’s verifyWebhook does this) and refuse old timestamps. After a rotation, deliveries carry both signatures for a day."
+          help="Verify each delivery’s signature with it (the SDK’s verifyWebhook does this) and refuse old timestamps. After a rotation, deliveries carry both signatures for an hour, so receivers can switch over."
           notify={notify}
           onClose={() => setSecret(null)}
         />

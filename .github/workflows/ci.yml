@@ -188,7 +188,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: scripts/ci/annotate.sh "clippy (linux)" cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Headless Chromium for the DevTools pipe tests (milestone 10)
+        shell: bash
+        run: |
+          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
+          echo "$out" | tail -1
+          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+          # Ubuntu 24.04 runners block the unprivileged user namespaces the sandbox needs; only these tests' own
+          # browser runs without it (the app never disables it).
+          echo "PB_CHROME_NO_SANDBOX=1" >> "$GITHUB_ENV"
       - run: scripts/ci/annotate.sh "rust tests (linux)" cargo test --workspace --locked --no-fail-fast
+      - name: Playwright compatibility through the authenticated broker (milestone 10)
+        shell: bash
+        run: |
+          cargo build -p pb-devtools --example bridge --locked
+          PB_BRIDGE_BIN="$PWD/target/debug/examples/bridge" scripts/ci/annotate.sh "playwright compatibility" \
+            pnpm --filter @pb/sdk exec vitest run test/playwright.test.ts
       - name: Local search latency baseline (informational)
         run: cargo test -p pb-storage --release --test search_latency -- --ignored --nocapture
 
@@ -228,6 +243,12 @@ jobs:
       - name: Build manager (unsigned; signing is a milestone 02 gate)
         shell: bash
         run: scripts/ci/annotate.sh "build ${{ matrix.target }}" cargo build -p pb-desktop --release --locked
+      - name: Headless Chromium for the DevTools pipe tests (milestone 10)
+        shell: bash
+        run: |
+          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
+          echo "$out" | tail -1
+          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
       - name: Rust tests on target OS
         shell: bash
         run: scripts/ci/annotate.sh "rust tests ${{ matrix.target }}" cargo test --workspace --locked --no-fail-fast

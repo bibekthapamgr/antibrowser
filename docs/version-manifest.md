@@ -51,5 +51,15 @@ Recorded 2026-10-12 (milestone 01). Exact versions are locked in `pnpm-lock.yaml
 |---|---|---|
 | Keycloak (reference OIDC provider: CI and the test server) | 26.6.2 | https://www.keycloak.org |
 
+## Developer API and automation (milestone 10)
+| Component | Pinned | Reference |
+|---|---|---|
+| tungstenite (WebSocket handshake for the loopback broker; no TLS, no client features) | 0.30.0 | crates/devtools |
+| windows-sys (Win32 pipes for `--remote-debugging-io-pipes`) | 0.61.2 | crates/devtools (Windows only) |
+| libc (descriptor placement in the child, Unix) | 0.2.190 | crates/devtools (Unix only) |
+| playwright-core (compatibility test only, dev dependency) | 1.63.0 | packages/sdk |
+| Chromium for DevTools pipe tests | chrome-headless-shell, current stable in CI; Chrome for Testing upstream stable in the runtime pipeline's compatibility jobs | crates/devtools/tests, apps/desktop/src-tauri/tests/browser.rs |
+| Webhook signatures | Standard Webhooks (HMAC-SHA256, `webhook-id`/`-timestamp`/`-signature`) | https://www.standardwebhooks.com |
+
 ## Not yet versioned (chosen in later milestones)
 Cloud provider/region (ADR-0005), managed KMS/HSM (ADR-0003/0014), production object storage service, OpenTelemetry SDK (13).

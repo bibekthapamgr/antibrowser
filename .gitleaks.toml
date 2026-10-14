@@ -30,6 +30,8 @@ regexes = [
   # Placeholder debugging capability from a milestone 10 desktop test (history only; the test now builds its value
   # at run time).
   '''pbcap_test-capability-secret''',
+  # The example WebSocket key from RFC 6455 section 1.3 (base64 of "the sample nonce"; history only).
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
 ]
 paths = [
   '''docs/openapi\.json''',

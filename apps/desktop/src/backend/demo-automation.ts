@@ -334,6 +334,11 @@ export function demoAutomation(deps: DemoAutomationDeps) {
       ],
       by,
     });
+    // Sample history: created before they ran.
+    ok.job.created_at = ago(56);
+    bad.job.created_at = ago(31);
+    hold.job.created_at = ago(10);
+    queued.job.created_at = ago(2);
     s.jobs.push(queued, hold, bad, ok);
     const endpoint: WebhookEndpoint = {
       id: rid('whk'),

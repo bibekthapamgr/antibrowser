@@ -1,6 +1,6 @@
 {
   "name": "@pb/worker",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "Outbox worker and snapshot jobs: durable, idempotent background processing on PostgreSQL (no broker yet).",

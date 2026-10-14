@@ -1,7 +1,7 @@
 //! The protected pipe, the workflow steps and the broker against a real Chromium (milestone 10). Runs when
-//! PB_CHROME_PATH names a Chromium or headless-shell executable (CI installs the pinned headless shell on Windows,
+//! PB_CHROME_PATH names a Chromium or headless-shell executable (CI installs the stable headless shell on Windows,
 //! macOS and Linux); otherwise each test says it was skipped. PB_CHROME_NO_SANDBOX=1 only where the sandbox cannot
-//! run (a root container).
+//! run (a root container, or a Linux runner that blocks unprivileged user namespaces); the app never disables it.
 
 use pb_devtools::broker::{Broker, BrokerConfig};
 use pb_devtools::{Condition, DevtoolsPipes, Hub, Page, StepError, close_browser};

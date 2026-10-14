@@ -255,8 +255,16 @@ pub trait Launcher: Send + Sync {
 /// Spawns the real browser process detached from the manager's stdio.
 pub struct SystemLauncher;
 
+/// On Windows every inheritable handle that exists while *any* process starts is inherited by it. Browser starts are
+/// serialised, and a job's pipe ends are made inheritable and closed again inside this lock, so they reach only their
+/// own browser (Unix pipes are close-on-exec and placed in the child only).
+static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Launcher for SystemLauncher {
     fn spawn(&self, spec: &LaunchSpec) -> Result<Spawned, LaunchError> {
+        let _one = SPAWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cmd = Command::new(&spec.executable);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())

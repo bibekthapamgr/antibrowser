@@ -1377,7 +1377,7 @@ export function demoBackend(mode = ''): Backend {
     workspaces: {
       async appState(): Promise<AppView> {
         return {
-          app: { version: '0.9.0-demo', platform: 'demo', arch: 'demo' },
+          app: { version: '0.10.0-demo', platform: 'demo', arch: 'demo' },
           store: storeFailed
             ? {
                 status: 'failed',
@@ -2359,7 +2359,7 @@ export function demoBackend(mode = ''): Backend {
       },
       async diagnostics() {
         return {
-          app: { version: '0.9.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
+          app: { version: '0.10.0-demo', platform: 'demo', os: navigator.userAgent, arch: 'demo' },
           store: {
             status: storeFailed ? 'failed' : 'ready',
             schema_version: 9,

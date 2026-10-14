@@ -607,9 +607,14 @@ fn upgrade(endpoint: &str, headers: &[(&str, &str)]) -> String {
         return "refused".into();
     };
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    // Any 16-byte nonce, base64-encoded (built here rather than written out).
+    let nonce = {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(b"automation tests")
+    };
     let mut req = format!(
         "GET /{path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
-         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {nonce}\r\n"
     );
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
