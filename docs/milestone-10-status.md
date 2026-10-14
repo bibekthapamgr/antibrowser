@@ -86,8 +86,9 @@ migration `0007_automation.sql`, the API tests including the automation suite, a
 service loads an nftables table that refuses private, link-local (cloud metadata), carrier-grade NAT and local IPv6
 destinations to the `pb` user's processes (API, worker; DNS resolvers allowed, loopback untouched, other users and
 firewall rules untouched). The script proves the rules with a connection that must be refused and counted ("worker
-egress: … test connection refused"), and only then makes the worker require them. Automation works through the same
-SSH tunnel; a computer enrolled from the desktop polls the API through it.
+egress: … test connection refused"), and only then makes the worker require them. Confirmed on the AlmaLinux 8.10 test
+server at `6f71cf4` (2026-10-14): 540 server tests passed, egress rules proven, smoke tests green. Automation works
+through the same SSH tunnel; a computer enrolled from the desktop polls the API through it.
 
 ## Found and fixed during verification
 - Chromium reads DevTools message ids as 32-bit integers: the app's own ids start at 2^30 (ids at 2^31 got no answer).
