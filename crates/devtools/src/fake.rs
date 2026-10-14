@@ -151,7 +151,8 @@ fn serve(state: &Mutex<FakeState>, reader: std::io::PipeReader, mut writer: std:
                     "targetInfos": [{ "targetId": TARGET, "type": "page", "url": s.page.url, "attached": false }]
                 }))),
                 "Target.attachToTarget" => out.push(reply(json!({ "sessionId": SESSION }))),
-                "Target.detachFromTarget" | "Page.enable" | "Network.enable" | "Runtime.enable" => {
+                "Target.detachFromTarget" | "Page.enable" | "Network.enable" | "Runtime.enable"
+                | "Page.bringToFront" => {
                     out.push(reply(json!({})));
                 }
                 "Target.getTargetInfo" => out.push(reply(json!({

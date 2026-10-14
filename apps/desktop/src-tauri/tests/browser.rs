@@ -745,8 +745,15 @@ fn an_automation_job_drives_the_real_browser_over_its_pipe() {
         jpeg.len()
     );
     assert_eq!(out("close_profile")["backup"], json!("committed"));
-    // The page was opened by the job (and reported to the test server like any visit).
-    assert!(env.server.wait_report("auto").is_some());
+    // The page was requested from the test server by the job's browser (its own report may not finish before the job
+    // closes the profile, so the request log is checked instead).
+    assert!(
+        env.server
+            .requests
+            .lock()
+            .map(|r| r.iter().any(|l| l.contains("who=auto")))
+            .unwrap_or(false)
+    );
     // DevTools went over the pipe: the browser never wrote a debugging port file.
     assert!(!env.user_data(&id).join("DevToolsActivePort").exists());
     // Handed back: closed, backed up, released.

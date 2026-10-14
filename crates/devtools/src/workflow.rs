@@ -326,12 +326,7 @@ impl Page {
                 .clamp(0.0, 100_000.0) as u32
         };
         for quality in [80, 60, 40] {
-            let r = self.hub.call(
-                "Page.captureScreenshot",
-                json!({ "format": "jpeg", "quality": quality }),
-                Some(&self.session),
-                Duration::from_secs(20),
-            )?;
+            let r = self.capture(quality)?;
             let data = r.get("data").and_then(Value::as_str).unwrap_or("");
             let jpeg = base64::engine::general_purpose::STANDARD
                 .decode(data)
@@ -345,6 +340,31 @@ impl Page {
             }
         }
         Err(StepError::ArtifactTooLarge)
+    }
+
+    /// One capture. A window that is minimized, hidden or covered may produce no frame (the capture never answers):
+    /// the job's own tab is then brought to the front and captured once more.
+    fn capture(&self, quality: u32) -> Result<Value, StepError> {
+        let params = json!({ "format": "jpeg", "quality": quality });
+        match self.hub.call(
+            "Page.captureScreenshot",
+            params.clone(),
+            Some(&self.session),
+            Duration::from_secs(10),
+        ) {
+            Err(CdpError::Timeout) => {
+                let _ = self
+                    .hub
+                    .call("Page.bringToFront", json!({}), Some(&self.session), CALL);
+                Ok(self.hub.call(
+                    "Page.captureScreenshot",
+                    params,
+                    Some(&self.session),
+                    Duration::from_secs(20),
+                )?)
+            }
+            other => Ok(other?),
+        }
     }
 
     /// Lets go of the tab (before a debugging session takes over the connection).

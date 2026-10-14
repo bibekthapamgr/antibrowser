@@ -58,7 +58,7 @@ a job there (the confirmation names the profile and client).
 | `open_profile` (automatic) | session | Takes the profile's session lease on the computer (refused if anyone has it open), restores the newest backup if needed, launches the browser |
 | `open_url` | navigation | Opens an approved address; fails if the page ends on another site (`PAGE_LEFT_APPROVED_SITES`); reports the final origin and HTTP status |
 | `wait_for` | read | Waits for a CSS selector, a text, a title or an address prefix (on approved pages); reports only yes/no and the time |
-| `screenshot` | read | A JPEG of the visible approved page (≤ 1.5 MiB), kept 7 days |
+| `screenshot` | read | A JPEG of the visible approved page (≤ 1.5 MiB), kept 7 days; a minimized or hidden job window is brought to the front first (a covered one keeps rendering) |
 | `debug_bridge` (with `debug`) | session | Hands the session to a Playwright script on that computer ([Playwright](playwright.md)) |
 | `hold_open` (with `keep_open_minutes`) | session | Keeps the profile open until stopped or the time is up |
 | `close_profile` (automatic) | session | Closes the browser; the closing backup uploads; the lease is released |

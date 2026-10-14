@@ -65,6 +65,7 @@ reach internal networks (SSRF); and nothing on a web page may change what a job 
   open. It **polls** (`POST …/agents/{agt}/poll`, every 5 s: heartbeat for its running jobs, new claims up to its
   capacity, cancellations, jobs to drop). No port is opened for jobs.
 - Automation launches add `--enable-automation` (websites can tell; Chromium shows that the browser is controlled)
+  and `--disable-backgrounding-occluded-windows` (a covered job window keeps rendering for its steps and screenshots)
   and connect the DevTools protocol over a **protected pipe**: `--remote-debugging-pipe` with descriptors 3/4 placed
   only in the child (Unix: close-on-exec pipes, `dup2` in `pre_exec`), or `--remote-debugging-io-pipes=<r>,<w>`
   with handles that are inheritable only while the launch holds a process-wide spawn lock (Windows). No

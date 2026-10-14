@@ -15,8 +15,9 @@
 //!    milestone 09); switches that load or allow extensions (`--load-extension`, `--disable-extensions-except`) are
 //!    never accepted;
 //! 10. an automation session (milestone 10) adds `--enable-automation` (websites can tell, and the window says so)
-//!     and the launcher connects the DevTools protocol over a protected pipe (`--remote-debugging-pipe`, on Windows
-//!     with `--remote-debugging-io-pipes`): only this app holds the other ends. `--remote-debugging-port` and
+//!     and `--disable-backgrounding-occluded-windows` (a covered job window keeps rendering), and the launcher
+//!     connects the DevTools protocol over a protected pipe (`--remote-debugging-pipe`, on Windows with
+//!     `--remote-debugging-io-pipes`): only this app holds the other ends. `--remote-debugging-port` and
 //!     `--remote-debugging-address` are never added, and no switch from a job or the UI is accepted.
 //!
 //! Only then is the `Launcher` called. The process is started from a structured argument list (never a shell
@@ -211,6 +212,8 @@ pub fn prepare_launch(
     if request.automation {
         // Websites can tell the session is automated (navigator.webdriver), and the window shows it.
         args.push("--enable-automation".into());
+        // A job's window keeps rendering when other windows cover it (its steps and screenshots need frames).
+        args.push("--disable-backgrounding-occluded-windows".into());
     }
     let mut env = vec![];
     if let Some(tz) = &environment.timezone
@@ -446,9 +449,20 @@ mod tests {
         let auto = spec(true, &[])?;
         assert!(auto.devtools);
         assert!(auto.args.iter().any(|a| a == "--enable-automation"));
+        assert!(
+            auto.args
+                .iter()
+                .any(|a| a == "--disable-backgrounding-occluded-windows")
+        );
         let plain = spec(false, &[])?;
         assert!(!plain.devtools);
-        assert!(!plain.args.iter().any(|a| a == "--enable-automation"));
+        assert!(
+            !plain
+                .args
+                .iter()
+                .any(|a| a == "--enable-automation"
+                    || a == "--disable-backgrounding-occluded-windows")
+        );
         for s in [&auto, &plain] {
             assert!(
                 !s.args

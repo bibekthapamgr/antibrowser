@@ -190,6 +190,7 @@ jobs:
       - run: scripts/ci/annotate.sh "clippy (linux)" cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Headless Chromium for the DevTools pipe tests (milestone 10)
         shell: bash
+        working-directory: apps/desktop
         run: |
           out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
           echo "$out" | tail -1
@@ -245,6 +246,7 @@ jobs:
         run: scripts/ci/annotate.sh "build ${{ matrix.target }}" cargo build -p pb-desktop --release --locked
       - name: Headless Chromium for the DevTools pipe tests (milestone 10)
         shell: bash
+        working-directory: apps/desktop
         run: |
           out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
           echo "$out" | tail -1
