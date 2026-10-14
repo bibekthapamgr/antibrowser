@@ -3,3 +3,6 @@
 runtimes/manifest.json -text
 runtimes/manifest.json.sig -text
 runtimes/trusted-keys.json -text
+# Release-tooling fixtures (milestone 12): a manifest and installer signed by the Tauri CLI, checked byte for byte.
+crates/update/tests/fixtures/** -text
+apps/desktop/src-tauri/release-keys.json -text
