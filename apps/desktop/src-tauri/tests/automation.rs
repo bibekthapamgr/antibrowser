@@ -640,7 +640,8 @@ fn debugging_sessions_need_this_computers_consent_and_a_capability() {
         )
         .is_err()
     );
-    let secret = "pbcap_test-capability-secret";
+    // Built at run time (never a secret-looking literal in the repository).
+    let secret = format!("pbcap_{}", hex::encode(*b"test capability!"));
     let digest = {
         use sha2::Digest;
         hex::encode(sha2::Sha256::digest(secret.as_bytes()))

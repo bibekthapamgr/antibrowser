@@ -50,6 +50,7 @@ describe('IPC surface', () => {
     expect(Object.keys(EVENTS).sort()).toEqual(rust);
     expect(rust).toEqual([
       'account',
+      'automation',
       'deep-link',
       'operation',
       'profiles-changed',

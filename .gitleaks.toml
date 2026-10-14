@@ -27,9 +27,32 @@ regexes = [
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c3JfeCJ9\.aW52YWxpZHNpZ25hdHVyZQ''',
   # Placeholder ID token from the milestone 06 desktop test (history only; base64 of "header.payload.sig").
   '''aGVhZGVy\.cGF5bG9hZA\.c2ln''',
+  # Placeholder debugging capability from a milestone 10 desktop test (history only; the test now builds its value
+  # at run time).
+  '''pbcap_test-capability-secret''',
 ]
 paths = [
   '''docs/openapi\.json''',
   '''pnpm-lock\.yaml''',
   '''Cargo\.lock''',
 ]
+
+# Milestone 10: this project's own secret formats, so a leaked one is found even where the generic rules are quiet.
+# Tests build such values at run time; none is ever committed.
+[[rules]]
+id = "project-browser-api-token"
+description = "Project Browser API token (pbt_<token id>_<secret>)"
+regex = '''pbt_tok_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{43}'''
+keywords = ["pbt_tok_"]
+
+[[rules]]
+id = "project-browser-debug-capability"
+description = "Project Browser debugging capability secret"
+regex = '''pbcap_[A-Za-z0-9_-]{43}'''
+keywords = ["pbcap_"]
+
+[[rules]]
+id = "standard-webhooks-secret"
+description = "Webhook signing secret (Standard Webhooks whsec_)"
+regex = '''whsec_[A-Za-z0-9+/]{43}='''
+keywords = ["whsec_"]

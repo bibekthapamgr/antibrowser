@@ -268,16 +268,15 @@ fn the_broker_relays_only_an_authenticated_local_script() {
         ))),
         404
     );
-    let refusals = b.refusals.lock().map(|r| r.clone()).unwrap_or_default();
     assert_eq!(
-        refusals,
-        vec![
+        refusals(&b, 5),
+        sorted(vec![
             Refusal::Capability,
             Refusal::Capability,
             Refusal::Origin,
             Refusal::Host,
             Refusal::Path
-        ]
+        ])
     );
 
     // The real script: commands reach the browser, answers come back.
@@ -327,10 +326,24 @@ fn the_capability_expires_if_nobody_connects_in_time() {
         ))),
         401
     );
-    assert_eq!(
-        b.refusals.lock().map(|r| r.clone()).unwrap_or_default(),
-        vec![Refusal::Expired]
-    );
+    assert_eq!(refusals(&b, 1), vec![Refusal::Expired]);
+}
+
+/// The broker records a refusal on its connection's thread after answering: wait for `n` of them (in any order).
+fn refusals(b: &crate::broker::Broker, n: usize) -> Vec<Refusal> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let r = b.refusals.lock().map(|r| r.clone()).unwrap_or_default();
+        if r.len() >= n || std::time::Instant::now() > deadline {
+            return sorted(r);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn sorted(mut r: Vec<Refusal>) -> Vec<Refusal> {
+    r.sort_by_key(|x| format!("{x:?}"));
+    r
 }
 
 fn rand_bytes() -> [u8; 16] {
