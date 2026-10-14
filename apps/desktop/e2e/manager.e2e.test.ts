@@ -312,7 +312,7 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     demo: 'unified signedin fifty',
     nav: 'Team',
     prepare: async (p) => {
-      await clickButton(p, '#main', 'Invite someone…');
+      await openInviteWizard(p);
       await p.waitForSelector('[role=dialog] input[type=email]');
       await p.type('[role=dialog] input[type=email]', 'mate@example.test');
       await clickButton(p, '[role=dialog]', 'Next');
@@ -2123,15 +2123,6 @@ describe('app updates (milestone 12)', () => {
 /** Names of the rows of the unified Profiles list. */
 const unifiedRows = (page: Page) =>
   page.$$eval('table.workspace-profiles tbody th[scope=row]', (ths) => ths.map((t) => t.textContent?.trim()));
-/** The status shown for one row. */
-const rowStatusOf = (page: Page, name: string) =>
-  page.$$eval(
-    'table.workspace-profiles tbody tr',
-    (trs, n) =>
-      trs.find((tr) => tr.querySelector('th')?.textContent?.trim() === n)?.querySelector('.badge')
-        ?.textContent,
-    name,
-  );
 const waitRowStatus = (page: Page, name: string, status: string) =>
   page.waitForFunction(
     (n, st) =>
@@ -2143,6 +2134,25 @@ const waitRowStatus = (page: Page, name: string, status: string) =>
     name,
     status,
   );
+/** Team → Invite someone…, once the Team page has finished loading (its sections move while lists arrive). */
+async function openInviteWizard(page: Page) {
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('table.records').length > 0 &&
+      !document.querySelector('#main p[role=status]'),
+    { timeout: 10_000 },
+  );
+  await page.waitForFunction(
+    () => {
+      const b = [...document.querySelectorAll<HTMLButtonElement>('#main button')].find(
+        (x) => x.textContent?.trim() === 'Invite someone…' && !x.disabled,
+      );
+      b?.click();
+      return !!document.querySelector('[role=dialog] input[type=email]');
+    },
+    { timeout: 10_000, polling: 250 },
+  );
+}
 async function clickChoice(page: Page, label: string) {
   await page.$$eval(
     '[role=dialog] label.choice',
@@ -2204,7 +2214,7 @@ describe('R3 unified profiles and simple team sharing', () => {
     await waitWorkspaceRows(page);
     expect(await unifiedRows(page)).toHaveLength(50);
     await goTo(page, 'Team');
-    await clickButton(page, '#main', 'Invite someone…');
+    await openInviteWizard(page);
     await page.waitForSelector('[role=dialog] input[type=email]');
     await page.type('[role=dialog] input[type=email]', 'mate@example.test');
     await clickButton(page, '[role=dialog]', 'Next');
