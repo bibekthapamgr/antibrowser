@@ -1,6 +1,9 @@
-# Security model (draft, milestones 01–11)
+# Security model (milestones 01–12)
 
-This document states what the product protects, what it does not, and the disclosures customers must see. Milestone 12 turns it into a reviewed threat model.
+This document states what the product protects, what it does not, and the disclosures customers must see, milestone
+by milestone. Milestone 12 added the reviewed [threat model](security/threat-model.md), the
+[findings register](security/findings.md) and the customer-facing [limitations](security/limitations.md); start
+there.
 
 ## What is protected
 | Asset | Protection in place now | Planned |

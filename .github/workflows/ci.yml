@@ -262,6 +262,24 @@ jobs:
       - run: pnpm run licenses
       - uses: actions/upload-artifact@v4
         with: { name: license-inventory, path: docs/licenses/ }
+      # Milestone 12: a CycloneDX SBOM of every commit (Cargo.lock and pnpm-lock.yaml); releases carry their own,
+      # attested, from desktop-release.yml.
+      - name: Software bill of materials (CycloneDX)
+        uses: anchore/sbom-action@0b82b0b1a22399a1c542d4d656f70cd903571b5c # v0.21.1
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: project-browser.sbom.cdx.json
+          upload-artifact: false
+      - name: The SBOM lists both ecosystems
+        run: |
+          set -euo pipefail
+          cargo=$(jq '[.components[]? | .purl // "" | select(startswith("pkg:cargo/"))] | length' project-browser.sbom.cdx.json)
+          npm=$(jq '[.components[]? | .purl // "" | select(startswith("pkg:npm/"))] | length' project-browser.sbom.cdx.json)
+          echo "::notice title=SBOM::$cargo Rust crates and $npm npm packages"
+          [ "$cargo" -gt 100 ] && [ "$npm" -gt 100 ] || { echo "::error title=SBOM::too few components ($cargo crates, $npm npm)"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: project-browser.sbom.cdx.json, retention-days: 90 }
 
   desktop:
     name: desktop compile (${{ matrix.target }})

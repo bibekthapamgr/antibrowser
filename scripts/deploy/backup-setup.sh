@@ -286,7 +286,7 @@ restore_server() {
   aside="$data.before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
   mv "$data" "$aside"
   install -d -m 700 -o postgres -g postgres "$data"
-  local args=(--stanza=$STANZA --archive-mode=off --log-level-console=warn)
+  local args=("--stanza=$STANZA" --archive-mode=off --log-level-console=warn)
   [[ -n $target ]] && args+=(--type=time "--target=$target" --target-action=promote)
   if ! as_pg pgbackrest "${args[@]}" restore; then
     rm -rf "$data"; mv "$aside" "$data"; systemctl start "$(pg_service)" || true

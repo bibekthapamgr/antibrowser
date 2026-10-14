@@ -4,11 +4,13 @@ Desktop multi-profile browser for **authorized business account work**: isolated
 
 > Separate profiles separate **stored website data**. They do not make profiles appear as different devices or networks, and this product makes no invisibility or ban-prevention claims.
 
-**Status:** milestones 01–07 delivered (desktop 0.7.0, local engineering alpha; organizations and encrypted backups
-against your own server for testing). Latest: [docs/milestone-07-status.md](docs/milestone-07-status.md) — encryption,
-backups and cloud synchronization ([docs/sync/](docs/sync/README.md)). Earlier: [01](docs/milestone-01-status.md),
+**Status:** milestones 01–12 delivered (desktop 0.12.0; signed updates, off-site backups and a tested restore for the
+test server). Latest: [docs/milestone-12-status.md](docs/milestone-12-status.md) — production security, updates and
+recovery ([docs/security/](docs/security/report.md)). Earlier: [01](docs/milestone-01-status.md),
 [02](docs/milestone-02-status.md), [03](docs/milestone-03-status.md), [04](docs/milestone-04-status.md),
-[05](docs/milestone-05-status.md), [06](docs/milestone-06-status.md).
+[05](docs/milestone-05-status.md), [06](docs/milestone-06-status.md), [07](docs/milestone-07-status.md),
+[08](docs/milestone-08-status.md), [09](docs/milestone-09-status.md), [10](docs/milestone-10-status.md),
+[11](docs/milestone-11-status.md). Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Start here
 1. [docs/setup.md](docs/setup.md) — toolchains, database, fixtures, checks
@@ -17,6 +19,7 @@ backups and cloud synchronization ([docs/sync/](docs/sync/README.md)). Earlier: 
 4. [docs/adr/](docs/adr/README.md) — decisions; shared assumptions change only through an ADR
 5. [docs/spikes/](docs/spikes/README.md) — isolation, IPC validation and snapshot/restore evidence
 6. [docs/security-model.md](docs/security-model.md) — protections, disclosures, findings
+7. [docs/security/](docs/security/report.md) — threat model, findings register, update, recovery and incident runbooks, customer-facing limitations (milestone 12)
 
 ## Layout
 ```
