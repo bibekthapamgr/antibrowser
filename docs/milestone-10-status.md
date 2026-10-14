@@ -85,6 +85,10 @@ SSH tunnel; a computer enrolled from the desktop polls the API through it.
   serialised so a job's pipe ends reach only its own browser.
 - Secret scanning flagged a placeholder capability and RFC 6455's sample WebSocket key in tests; both are now built at
   run time, and gitleaks gained rules for this project's token, capability and webhook-secret formats.
+- A capture of a window that produces no frame never answers: the step now brings the job's tab to the front and tries
+  once more, and job windows keep rendering when covered (`--disable-backgrounding-occluded-windows`).
+- The real-browser job test waited for the test page's own report, which the job can close before it is sent
+  (Windows); it now checks that the browser requested the page.
 
 ## Known limitations
 - No website-changing step (by design for v1); the reconciliation path is built but not exercised by a real step.
@@ -94,6 +98,10 @@ SSH tunnel; a computer enrolled from the desktop polls the API through it.
 - A job for a profile that was never backed up can run only on the computer that has it (other computers give the
   claim back).
 - Playwright sessions control the whole browser session (sign-ins included) on the computer that allows them.
+- Linux is a development platform only (ADR-0006): a full Chrome for Testing 155 started with
+  `--ozone-platform=headless` (how the runtime pipeline runs it) never answers a capture, so the real-browser job test
+  accepts a screenshot timeout there and checks every other step; the headless shell on Linux and the full browser on
+  Windows and macOS capture normally.
 
 ## Release
 No release boundary at this milestone (team beta was reached at 08; paid launch after 14). Internal builds remain
