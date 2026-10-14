@@ -11,12 +11,14 @@ import {
   InvitationCreate,
   InvitationCreated,
   InvitationPreview,
+  MEMBER_DEFAULT_CAPABILITIES,
   newId,
   Page,
   PageQuery,
   type Role,
 } from '@pb/contracts';
 import type pg from 'pg';
+import { scopeRows } from '../access.ts';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, auditAlone, changeEntry } from '../audit.ts';
 import { requireBillingAllows } from '../billing/state.ts';
@@ -103,6 +105,45 @@ export function invitationRoutes(app: App, deps: Deps): void {
           throw err;
         }
         if (!row) throw new ApiError('INTERNAL', 'Invitation was not created');
+        // R3: the access chosen with the invitation, applied when it is accepted (members and viewers only).
+        const chosen = req.body.access;
+        if (chosen) {
+          if (req.body.role !== 'operator' && req.body.role !== 'viewer') {
+            throw new ApiError(
+              'VALIDATION_FAILED',
+              'Admins reach every profile; access is chosen for members',
+              {
+                role: req.body.role,
+              },
+            );
+          }
+          const caps =
+            req.body.role === 'operator'
+              ? [...new Set(chosen.capabilities ?? MEMBER_DEFAULT_CAPABILITIES)].sort()
+              : [];
+          if (req.body.role === 'viewer' && (chosen.capabilities?.length ?? 0) > 0) {
+            throw new ApiError('VALIDATION_FAILED', 'Viewers cannot be given capabilities', {
+              role: 'viewer',
+            });
+          }
+          for (const r of await scopeRows(c, access.orgId, chosen.scope)) {
+            await c.query(
+              `insert into invitation_grants (id, org_id, invitation_id, client_id, profile_id, folder_id, all_profiles,
+                                              capabilities)
+               values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [
+                newId('grant'),
+                access.orgId,
+                id,
+                r.client_id,
+                r.profile_id,
+                r.folder_id,
+                r.all_profiles,
+                caps,
+              ],
+            );
+          }
+        }
         // R2: the link by e-mail (the worker sends it; the token is sealed, never stored in clear).
         const names = await c.query<{ org_name: string; inviter: string }>(
           `select o.name as org_name, u.display_name as inviter from organizations o, users u
@@ -130,6 +171,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
           changeEntry(access, 'invitation.created', 'invitation', id, {
             role: req.body.role,
             expires_in_days: days,
+            access: req.body.access?.scope.kind ?? null,
           }),
         );
         return { row, queued };

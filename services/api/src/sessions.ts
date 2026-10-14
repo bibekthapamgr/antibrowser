@@ -16,7 +16,7 @@ import { audit } from './audit.ts';
 import { requireFeature } from './billing/state.ts';
 import { ts } from './db.ts';
 import { appendEvent } from './outbox.ts';
-import type { TenantAccess } from './tenancy.ts';
+import { grantCovers, type TenantAccess } from './tenancy.ts';
 
 /** Lease columns as the SessionLease resource; the query aliases profile_leases as `l`, users `u`, devices `d`. */
 export const SESSION_LEASE_COLUMNS = `l.id, l.profile_id, l.purpose,
@@ -58,8 +58,7 @@ export function capabilitiesSql(access: TenantAccess, p: string, userParam: stri
       return `(case when ${userParam}::text is null then '{}'::text[] else '{}'::text[] end)`;
     case 'granted':
       return `coalesce((select array_agg(distinct cap order by cap) from permission_grants g, unnest(g.capabilities) cap
-                         where g.org_id = ${p}.org_id and g.user_id = ${userParam}
-                           and (g.profile_id = ${p}.id or (g.client_id is not null and g.client_id = ${p}.client_id))
+                         where g.org_id = ${p}.org_id and g.user_id = ${userParam} and ${grantCovers('g', p)}
                            and ${access.role === 'operator' ? 'true' : 'false'}), '{}'::text[])`;
   }
 }
@@ -80,8 +79,7 @@ export async function userMayLaunch(
   if (role === 'owner' || role === 'admin') return true;
   const g = await c.query(
     `select 1 from permission_grants g join profiles p on p.org_id = g.org_id and p.id = $3
-      where g.org_id = $1 and g.user_id = $2 and p.deleted_at is null
-        and (g.profile_id = p.id or (g.client_id is not null and g.client_id = p.client_id))
+      where g.org_id = $1 and g.user_id = $2 and p.deleted_at is null and ${grantCovers('g', 'p')}
         and 'launch' = any(g.capabilities)`,
     [orgId, userId, profileId],
   );

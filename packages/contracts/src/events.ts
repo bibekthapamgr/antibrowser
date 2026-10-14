@@ -38,6 +38,7 @@ export const EVENT_TYPES = [
   'handoff.requested',
   'handoff.answered',
   'grant.updated',
+  'grant.access_set',
   'snapshot.recovery_kept',
   // Milestone 09
   'task.created',

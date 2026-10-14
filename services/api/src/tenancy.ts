@@ -147,6 +147,20 @@ function tokenClientClause(access: TenantAccess, c: string): string {
  * A client grant covers every profile of that client; a profile grant covers one profile. An API token narrows this
  * further to its restrictions.
  */
+/**
+ * R3 (ADR-0022): whether grant row `g` covers profile row `p` — a profile grant, a client grant (its profiles), a
+ * folder grant (the profiles in that folder now) or a whole-workspace grant. The one definition of effective access:
+ * visibility, capabilities, session leases, automation and the desktop (through the API) all use it.
+ */
+export function grantCovers(g: string, p: string): string {
+  return `(${g}.profile_id = ${p}.id
+           or (${g}.client_id is not null and ${g}.client_id = ${p}.client_id)
+           or (${g}.folder_id is not null and exists (
+                 select 1 from profile_folders pf_cov
+                  where pf_cov.org_id = ${p}.org_id and pf_cov.profile_id = ${p}.id and pf_cov.folder_id = ${g}.folder_id))
+           or ${g}.all_profiles)`;
+}
+
 export function profileVisible(access: TenantAccess, p: string, userParam: string): string {
   return `(${roleProfileVisible(access, p, userParam)} and ${tokenProfileClause(access, p)})`;
 }
@@ -160,8 +174,7 @@ function roleProfileVisible(access: TenantAccess, p: string, userParam: string):
       return `(${userParam}::text is null)`;
     case 'granted':
       return `exists (select 1 from permission_grants g
-                       where g.org_id = ${p}.org_id and g.user_id = ${userParam}
-                         and (g.profile_id = ${p}.id or (g.client_id is not null and g.client_id = ${p}.client_id)))`;
+                       where g.org_id = ${p}.org_id and g.user_id = ${userParam} and ${grantCovers('g', p)})`;
   }
 }
 
@@ -180,9 +193,9 @@ function roleClientVisible(access: TenantAccess, c: string, userParam: string): 
       return `exists (select 1 from permission_grants g
                        where g.org_id = ${c}.org_id and g.user_id = ${userParam}
                          and (g.client_id = ${c}.id
-                              or g.profile_id in (select pp.id from profiles pp
-                                                   where pp.org_id = ${c}.org_id and pp.client_id = ${c}.id
-                                                     and pp.deleted_at is null)))`;
+                              or exists (select 1 from profiles pp
+                                          where pp.org_id = ${c}.org_id and pp.client_id = ${c}.id
+                                            and pp.deleted_at is null and ${grantCovers('g', 'pp')})))`;
   }
 }
 
@@ -233,8 +246,7 @@ export async function requireCapability(
   if (access.scope !== 'granted' || !capability) return;
   const { rowCount } = await c.query(
     `select 1 from permission_grants g join profiles p on p.org_id = g.org_id and p.id = $3
-      where g.org_id = $1 and g.user_id = $2
-        and (g.profile_id = p.id or (g.client_id is not null and g.client_id = p.client_id))
+      where g.org_id = $1 and g.user_id = $2 and ${grantCovers('g', 'p')}
         and $4 = any(g.capabilities)`,
     [access.orgId, access.userId, profileId, capability],
   );

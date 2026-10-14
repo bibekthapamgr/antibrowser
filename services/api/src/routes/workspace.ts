@@ -20,6 +20,7 @@ import {
   FeatureSettingsUpdate,
   Folder,
   FolderCreate,
+  FolderMoveImpact,
   FolderUpdate,
   ID_PATTERN,
   MigrationRun,
@@ -28,6 +29,7 @@ import {
   OnboardingState,
   ProfileFolder,
   ProfileFolderSet,
+  roleAllows,
   SERVER_FEATURES,
 } from '@pb/contracts';
 import type pg from 'pg';
@@ -36,6 +38,7 @@ import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
 import { ts, withTx } from '../db.ts';
 import { nameKey } from '../names.ts';
+import { endLeasesOutOfReach } from '../sessions.ts';
 import {
   profileFor,
   profileVisible,
@@ -287,7 +290,8 @@ export function workspaceRoutes(app: App, deps: Deps): void {
         tags: ['profiles'],
         description:
           'Puts a profile in a folder, or in none. Needs profile.update on the profile (a grant’s edit capability). ' +
-          'Moving a profile never changes who can see or open it.',
+          'R3: when folder grants make the move change who can reach the profile, it also needs grants.manage ' +
+          '(see …/folder-impact first); people who lose access have their open sessions ended.',
         params: ProfileParams,
         body: ProfileFolderSet,
         response: { 200: ProfileFolder, ...errors },
@@ -297,6 +301,13 @@ export function workspaceRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       return withTx(deps.pool, access, async (c) => {
         await profileFor(c, access, req.params.profileId, 'profile.update', 'p.id', true);
+        const impact = await folderImpact(c, access.orgId, req.params.profileId, req.body.folder_id);
+        const changes = impact.gains.length + impact.losses.length > 0;
+        if (changes && !roleAllows(access.role, 'grants.manage')) {
+          throw new ApiError('FORBIDDEN', 'Moving this profile changes who can open it; ask an admin', {
+            permission: 'grants.manage',
+          });
+        }
         if (req.body.folder_id) {
           const f = await c.query(
             'select 1 from folders where id = $1 and org_id = $2 and archived_at is null',
@@ -314,13 +325,48 @@ export function workspaceRoutes(app: App, deps: Deps): void {
             req.params.profileId,
           ]);
         }
+        for (const lost of impact.losses)
+          await endLeasesOutOfReach(c, access, lost.user_id, 'access_removed');
         await audit(
           c,
           changeEntry(access, 'profile.folder_set', 'profile', req.params.profileId, {
             folder_id: req.body.folder_id,
+            access_gained: impact.gains.length,
+            access_lost: impact.losses.length,
           }),
         );
         return { profile_id: req.params.profileId, folder_id: req.body.folder_id };
+      });
+    },
+  );
+
+  app.get(
+    '/orgs/:orgId/profiles/:profileId/folder-impact',
+    {
+      schema: {
+        tags: ['profiles'],
+        description:
+          'R3: who would gain or lose access if the profile moved to this folder (or to none), because of folder ' +
+          'grants, and whether the caller may make that move.',
+        params: ProfileParams,
+        querystring: Type.Object(
+          { folder_id: Type.Union([Type.String({ pattern: ID_PATTERN('fld') }), Type.Literal('none')]) },
+          { additionalProperties: false },
+        ),
+        response: { 200: FolderMoveImpact, ...errors },
+      },
+    },
+    async (req) => {
+      const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      return withTx(deps.pool, access, async (c) => {
+        await profileFor(c, access, req.params.profileId, 'profile.update', 'p.id', true);
+        const target = req.query.folder_id === 'none' ? null : req.query.folder_id;
+        const impact = await folderImpact(c, access.orgId, req.params.profileId, target);
+        return {
+          ...impact,
+          allowed:
+            impact.gains.length + impact.losses.length === 0 || roleAllows(access.role, 'grants.manage'),
+        };
       });
     },
   );
@@ -508,4 +554,43 @@ export function workspaceRoutes(app: App, deps: Deps): void {
       });
     },
   );
+}
+
+/**
+ * Members and viewers whose reach of a profile changes if it moves to `target` (null: no folder). Only folder grants
+ * depend on the folder; every other grant they hold is taken into account, so nobody is listed whose access stays.
+ */
+async function folderImpact(
+  c: pg.PoolClient,
+  orgId: string,
+  profileId: string,
+  target: string | null,
+): Promise<{
+  gains: { user_id: string; display_name: string }[];
+  losses: { user_id: string; display_name: string }[];
+}> {
+  const { rows } = await c.query<{ user_id: string; display_name: string; before: boolean; after: boolean }>(
+    `with cur as (select folder_id from profile_folders where org_id = $1 and profile_id = $2)
+     select g.user_id, coalesce(u.display_name, '') as display_name,
+            bool_or(g.profile_id = p.id or (g.client_id is not null and g.client_id = p.client_id) or g.all_profiles
+                    or (g.folder_id is not null and g.folder_id = (select folder_id from cur))) as before,
+            bool_or(g.profile_id = p.id or (g.client_id is not null and g.client_id = p.client_id) or g.all_profiles
+                    or (g.folder_id is not null and g.folder_id = $3::text)) as after
+       from permission_grants g
+       join memberships m on m.org_id = g.org_id and m.user_id = g.user_id and m.role in ('operator', 'viewer')
+       join profiles p on p.org_id = g.org_id and p.id = $2
+       left join users u on u.id = g.user_id
+      where g.org_id = $1
+      group by g.user_id, u.display_name
+      order by lower(coalesce(u.display_name, '')), g.user_id`,
+    [orgId, profileId, target],
+  );
+  return {
+    gains: rows
+      .filter((r) => !r.before && r.after)
+      .map(({ user_id, display_name }) => ({ user_id, display_name })),
+    losses: rows
+      .filter((r) => r.before && !r.after)
+      .map(({ user_id, display_name }) => ({ user_id, display_name })),
+  };
 }

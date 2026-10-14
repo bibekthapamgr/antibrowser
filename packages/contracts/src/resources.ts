@@ -134,6 +134,8 @@ export const PERMISSION_CAPABILITY: Partial<Record<Permission, GrantCapability>>
 export function defaultCapabilities(role: Role): GrantCapability[] {
   return role === 'operator' ? ['launch', 'backup_download'] : [];
 }
+/** R3: what the Member preset gets when access is chosen in one step: open and use, nothing else. */
+export const MEMBER_DEFAULT_CAPABILITIES: GrantCapability[] = ['launch'];
 
 // ---------------------------------------------------------------- Identity, sessions and devices
 const Email = Type.String({ minLength: 3, maxLength: 254, format: 'email' });
@@ -316,11 +318,60 @@ export const OwnershipTransfer = Type.Object(
 );
 
 // ---------------------------------------------------------------- Invitations
+/**
+ * R3 (ADR-0022): which profiles a member reaches, chosen in one step. `all` and `folder` follow future profiles only
+ * when `include_future` is true (the rule is shown in the preview); otherwise the profiles there now are granted one
+ * by one. `profiles` names them; `client` keeps the agency module's whole-client grant.
+ */
+export const AccessScope = Type.Union([
+  Type.Object({ kind: Type.Literal('all'), include_future: Type.Boolean() }, { additionalProperties: false }),
+  Type.Object(
+    { kind: Type.Literal('folder'), folder_id: Id('fld'), include_future: Type.Boolean() },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal('profiles'),
+      profile_ids: Type.Array(Id('prf'), { minItems: 1, maxItems: 500, uniqueItems: true }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object({ kind: Type.Literal('client'), client_id: Id('cli') }, { additionalProperties: false }),
+]);
+export type AccessScope = Static<typeof AccessScope>;
+const AccessCapabilities = Type.Array(Type.Enum(GRANT_CAPABILITIES), { uniqueItems: true, maxItems: 3 });
+export const AccessSpec = Type.Object(
+  {
+    scope: AccessScope,
+    /** Default for members (operators): open and use only — no restore/export of backups, no editing. */
+    capabilities: Type.Optional(AccessCapabilities),
+  },
+  { additionalProperties: false },
+);
+export type AccessSpec = Static<typeof AccessSpec>;
+/** What a scope reaches now, shown before anything is granted. */
+export const AccessPreview = Type.Object(
+  {
+    profile_count: Type.Integer({ minimum: 0 }),
+    /** Up to 50, by name. */
+    profiles: Type.Array(
+      Type.Object({ id: Id('prf'), name: Type.String() }, { additionalProperties: false }),
+    ),
+    /** Profiles added later are included too (a folder or whole-workspace rule). */
+    includes_future: Type.Boolean(),
+    capabilities: AccessCapabilities,
+  },
+  { additionalProperties: false },
+);
+export type AccessPreview = Static<typeof AccessPreview>;
+
 export const InvitationCreate = Type.Object(
   {
     email: Email,
     role: Type.Enum(ASSIGNABLE_ROLES),
     expires_in_days: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: 7 })),
+    /** R3: the access the member gets on acceptance (members and viewers; admins reach everything). */
+    access: Type.Optional(AccessSpec),
   },
   { additionalProperties: false },
 );
@@ -403,6 +454,10 @@ export const Grant = Type.Object(
     user_id: Id('usr'),
     client_id: Type.Union([Id('cli'), Type.Null()]),
     profile_id: Type.Union([Id('prf'), Type.Null()]),
+    /** R3: every profile in this folder, now and later (an explicit rule). */
+    folder_id: Type.Optional(Type.Union([Id('fld'), Type.Null()])),
+    /** R3: every profile of the workspace, now and later. */
+    all_profiles: Type.Optional(Type.Boolean()),
     /** Milestone 08: launch, edit (configuration) and backup_download (restore). Viewers' grants carry none. */
     capabilities: Capabilities,
     created_at: Timestamp,
@@ -419,7 +474,32 @@ export const GrantCreate = Type.Union([
     { user_id: Id('usr'), profile_id: Id('prf'), capabilities: Type.Optional(Capabilities) },
     { additionalProperties: false },
   ),
+  Type.Object(
+    { user_id: Id('usr'), folder_id: Id('fld'), capabilities: Type.Optional(Capabilities) },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { user_id: Id('usr'), all_profiles: Type.Literal(true), capabilities: Type.Optional(Capabilities) },
+    { additionalProperties: false },
+  ),
 ]);
+/** R3: one member's access set in one step (grants are created as the scope says; see AccessScope). */
+export const MemberAccessSet = AccessSpec;
+/** R3: who gains or loses access when a profile moves to another folder (folder grants follow the folder). */
+export const FolderMoveImpact = Type.Object(
+  {
+    gains: Type.Array(
+      Type.Object({ user_id: Id('usr'), display_name: Type.String() }, { additionalProperties: false }),
+    ),
+    losses: Type.Array(
+      Type.Object({ user_id: Id('usr'), display_name: Type.String() }, { additionalProperties: false }),
+    ),
+    /** Whether the caller may make this move (an access change needs grants.manage). */
+    allowed: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type FolderMoveImpact = Static<typeof FolderMoveImpact>;
 export const GrantUpdate = Type.Object({ capabilities: Capabilities }, { additionalProperties: false });
 
 // ---------------------------------------------------------------- Audit

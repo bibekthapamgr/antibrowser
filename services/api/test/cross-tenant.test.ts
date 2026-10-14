@@ -679,6 +679,20 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
       },
     },
     { name: 'migration run', method: 'GET', url: `${base}/migration-runs/${ids.run}` },
+    // R3 (ADR-0022): access in one step, folder move impact.
+    {
+      name: 'access preview',
+      method: 'POST',
+      url: `${base}/access/preview`,
+      payload: { scope: { kind: 'all', include_future: true } },
+    },
+    {
+      name: 'set member access',
+      method: 'PUT',
+      url: `${base}/members/${ids.user}/access`,
+      payload: { scope: { kind: 'all', include_future: true } },
+    },
+    { name: 'folder move impact', method: 'GET', url: `${p}/folder-impact?folder_id=none` },
   ];
 }
 
