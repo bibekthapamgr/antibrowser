@@ -979,8 +979,10 @@ fn run(f: &Fixture, ws: &str, adopt: &[String], sync: bool, batch: u32) -> Resul
     )
 }
 
+/// (name, state) pairs sorted by name: entries are ordered by id, and ids made in the same millisecond are not in
+/// creation order.
 fn entry_states(p: &Value) -> Vec<(String, String)> {
-    p["entries"]
+    let mut v: Vec<(String, String)> = p["entries"]
         .as_array()
         .map(|es| {
             es.iter()
@@ -992,7 +994,9 @@ fn entry_states(p: &Value) -> Vec<(String, String)> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    v.sort();
+    v
 }
 
 #[test]
@@ -1049,19 +1053,25 @@ fn migration_plan_is_a_dry_run_that_keeps_linked_identities_and_blocks_unclean_p
         vec![
             ("Linked".into(), "linked".into()),
             ("Local".into(), "local_only".into()),
-            ("Unclean".into(), "blocked_unclean".into()),
             ("Open".into(), "blocked_running".into()),
+            ("Unclean".into(), "blocked_unclean".into()),
         ]
     );
     assert_eq!(
         p["counts"],
         json!({ "profiles": 4, "linked": 1, "mapped_on_server": 0, "local_only": 1, "blocked": 2, "adopted": 0, "skipped": 0 })
     );
-    assert_eq!(
-        p["entries"][0]["view_key"],
-        "prf_01J9ZSEED0LINKED0000000000"
-    );
-    assert_eq!(p["entries"][1]["view_key"], format!("local:{}", ids[1]));
+    let entry = |id: &str| {
+        p["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|e| e["local_id"] == id)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(entry(&ids[0])["view_key"], "prf_01J9ZSEED0LINKED0000000000");
+    assert_eq!(entry(&ids[1])["view_key"], format!("local:{}", ids[1]));
     assert_eq!(p["run"]["state"], "planned");
     assert_eq!(p["manifest_digest"].as_str().map(str::len), Some(64));
     // Planning changes nothing: only dry runs reached the server, no mapping exists, planning again is the same run.
