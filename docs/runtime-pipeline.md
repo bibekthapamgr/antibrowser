@@ -22,9 +22,12 @@ invalidate the signature. An empty `manifest.json` means "no approved runtime in
 4. Only if all three platforms passed, `manifest.mjs build` writes the manifest (it refuses otherwise) and
    `manifest.mjs sign` signs it with the `RUNTIME_MANIFEST_SIGNING_KEY` secret. Signing refuses a secret that does not
    match the trusted public key, and the result is verified before upload.
-5. Download the `runtime-manifest` artifact, commit `runtimes/manifest.json` and `runtimes/manifest.json.sig`, and
-   build the manager. Installed managers download the new runtime when the user installs it (milestone 12 automates
-   manager updates).
+5. Download the `runtime-manifest` artifact, commit `runtimes/manifest.json` and `runtimes/manifest.json.sig`, set
+   a new manager version, and release it through the update channels
+   ([update runbook](security/update-runbook.md)). Managers that install that update then offer the new runtime.
+   For an actively exploited vulnerability, follow
+   [incident response → browser security patches](security/incident-response.md#browser-security-patches)
+   (assess within 24 hours, roll out within 72 hours).
 
 Target cadence (ADR-0001 proposal): upstream High/Critical security fixes in a released manager within 7 days. An
 older version must not be kept indefinitely; deferring an update needs a named owner who accepts the risk.

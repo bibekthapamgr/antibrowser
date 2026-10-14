@@ -51,6 +51,9 @@ export async function migrate(connectionString: string, opts: MigrateOptions = {
           throw new Error(`Migration ${file} changed after being applied; add a new migration`);
         continue;
       }
+      // Each migration starts from the same settings, whatever ran before it in this session: the app schema first
+      // (0001 creates it). A server that updates one milestone at a time must get the same result as a fresh one.
+      await client.query('set search_path = app, public');
       await client.query('begin');
       try {
         await client.query(sql);

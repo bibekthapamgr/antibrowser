@@ -30,8 +30,10 @@ statements is a security change and needs review.
   - If a computer's keychain is reset, that computer's local backup copies cannot be opened.
 - **Recovery targets, not guarantees.** The service is designed so that, after a server loss, at most about
   15 minutes of recent changes are lost, and service returns within about 4 hours. These are targets that we test
-  regularly. Snapshots uploaded in the last 10 minutes before a total server loss may need to be uploaded again
-  from the computer that made them.
+  regularly. Committed cloud backups are recoverable up to the last one copied off-site, which runs every
+  2 minutes. A backup committed in the last 2–3 minutes before a total server loss may need to be uploaded again
+  from the computer that made it. Changes on a computer that were never backed up cannot be recovered from the
+  service.
 
 ## Installing and updating
 - **Installers are not yet signed by an OS-recognized publisher.**
@@ -68,6 +70,7 @@ When you delete something, this is how long copies remain:
 | Automation screenshots | Deleted after 7 days. Finished jobs and webhook delivery records after 30 days. Off-site residual: up to about 5 weeks. |
 | Your organization after you cancel | Kept until an owner deletes it, or as stated in the retention policy shown to owners. Nothing is deleted automatically today. |
 | Activity and audit logs | Kept. They record actions and ids, never browsing data, passwords or keys. |
+| Caches | The service keeps no separate cache of your data, so a deletion takes effect everywhere at once. Browser caches belong to each profile on your computers. |
 | Data on your computers | Yours. The service cannot reach or delete it. |
 
 Off-site backups are encrypted and access to them is restricted. They are not used to restore one customer's

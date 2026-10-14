@@ -97,7 +97,8 @@ Owner decisions (2026-10-14):
   - Weekly full, daily differential, and WAL pushed at least every 60 s (`archive_timeout`).
   - 4 full backups retained (about 4–5 weeks).
   - At most 2 GiB of queued WAL, so an R2 outage cannot fill the disk.
-- **Snapshot objects:** rclone copies them to R2 every 10 minutes, using a **read-only** storage identity.
+- **Snapshot objects:** rclone copies them to R2 every 2 minutes, using a **read-only** storage identity. A
+  whole-server restore reports any committed snapshot whose object did not reach R2 in time.
   - Objects deleted on the server move to `objects-deleted/<date>/` in R2. An R2 lifecycle rule removes them after
     30 days.
   - Objects are already sealed with organization keys. The root key is never sent to R2; it is kept offline.

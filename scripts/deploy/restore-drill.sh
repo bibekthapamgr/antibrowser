@@ -81,7 +81,7 @@ MARKER=$(psql_live -c "insert into app.recovery_markers (note) values ('restore 
 MARKER_AT=$(now)
 # Close the log segment holding the marker; it must be in R2 before the restore starts.
 seg=$(psql_live -c "select pg_walfile_name(pg_switch_wal())")
-# The objects of those snapshots go off-site too (the timer does this every 10 minutes).
+# The objects of those snapshots go off-site too (the timer does this every 2 minutes).
 systemctl start pb-backup-objects.service
 archived=0
 for _ in $(seq 1 180); do

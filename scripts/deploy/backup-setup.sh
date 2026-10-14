@@ -5,7 +5,7 @@
 #                     daily, and the write-ahead log pushed at least every 60 seconds, to a Cloudflare R2 bucket.
 #                     Encrypted here (AES-256) before upload with a passphrase that exists only on this server and in
 #                     your offline copy. Retention: 4 weekly full backups with their log (about 4-5 weeks).
-#   Snapshot objects  rclone copies the snapshot storage to the same bucket every 10 minutes with a READ-ONLY storage
+#   Snapshot objects  rclone copies the snapshot storage to the same bucket every 2 minutes with a READ-ONLY storage
 #                     identity. Objects deleted here move to objects-deleted/<date>/ there; an R2 lifecycle rule you
 #                     add deletes them after 30 days. Snapshots are already encrypted with organization keys, and the
 #                     root key that unlocks those is never copied to R2.
@@ -360,8 +360,21 @@ RCLONE
     die "copying the objects back failed; run restore-server again (the database step is repeated)"
   fi
   tail -2 "$tmp/copy.log" | sed 's/^/    /'
-  rm -rf "$tmp"
   ok "snapshot objects copied back into $OBJECT_BUCKET (objects newer than the restored database are removed later by the worker's orphan sweep)"
+  # Every committed snapshot in the restored database should have its object. One committed after the last object copy
+  # (at most a few minutes before a total loss) has none: its computer still has the profile, and its next backup
+  # replaces it; the profile's older versions are intact.
+  local db missing
+  db=$(sed -n 's#^DATABASE_URL=.*/\([A-Za-z0-9_]*\)$#\1#p' "$ENV_DIR/api.env")
+  missing=$(comm -23 \
+    <(psql_su -d "$db" -c "select object_key from app.snapshot_manifests where status = 'committed' and object_deleted_at is null" | sort -u) \
+    <(/opt/rclone/current/rclone --config "$tmp/rclone.conf" lsf -R --files-only "store:$OBJECT_BUCKET" | sort -u) | wc -l)
+  rm -rf "$tmp"
+  if (( missing == 0 )); then
+    ok "every committed snapshot has its object"
+  else
+    warn "$missing committed snapshot(s) have no object (committed after the last off-site copy): the computers that made them still have the profiles; their next backups replace them"
+  fi
   # Keycloak keeps its data in the restored cluster; on a new server keycloak-setup.sh gives its role the right password.
   systemctl list-unit-files keycloak.service >/dev/null 2>&1 && { systemctl start keycloak 2>/dev/null || true; }
   printf '\n    Next: run vps-setup.sh twice (new database passwords for the restored roles, log archiving back on, services\n'
@@ -537,10 +550,10 @@ ReadWritePaths=$STATE_DIR
 UNIT
 cat > /etc/systemd/system/pb-backup-objects.timer <<'UNIT'
 [Unit]
-Description=Copy of snapshot objects to R2 every 10 minutes
+Description=Copy of snapshot objects to R2 every 2 minutes
 [Timer]
-OnCalendar=*:0/10
-RandomizedDelaySec=60
+OnCalendar=*:0/2
+RandomizedDelaySec=20
 Persistent=true
 [Install]
 WantedBy=timers.target
@@ -562,7 +575,7 @@ else
 fi
 systemctl start pb-backup-objects.service || { journalctl -u pb-backup-objects -n 20 --no-pager; die "the object copy failed"; }
 ok "snapshot objects copied to r2:$R2_BUCKET/objects/$OBJECT_BUCKET"
-ok "timers: database daily 03:17 UTC (full on Sundays), log every 60 s, objects every 10 min  |  status: bash /usr/local/libexec/pb-backup status"
+ok "timers: database daily 03:17 UTC (full on Sundays), log every 60 s, objects every 2 min  |  status: bash /usr/local/libexec/pb-backup status"
 
 if [[ $NEW_CIPHER == 1 ]]; then
   printf '\n\033[1;33m    IMPORTANT:\033[0m a new backup passphrase was created. Without it the database backups in R2 can\n'

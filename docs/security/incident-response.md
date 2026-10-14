@@ -56,6 +56,41 @@ reachable.
    - add the findings to the [findings register](findings.md);
    - update the [threat model](threat-model.md).
 
+## Browser security patches
+Chromium is the largest attack surface the product ships. These are the proposed operational targets from the
+roadmap (milestone 12). They hold only with staffed on-call coverage.
+
+| Situation | Target |
+|---|---|
+| A Chromium vulnerability **exploited in the wild** (for example in Chrome release notes, or in the CISA Known Exploited Vulnerabilities catalog) | Assess within **24 hours** of notice. Roll out a supported fix within **72 hours** of the upstream fix, after the emergency tests. |
+| Other High or Critical Chromium fixes | In a released manager within **7 days** (ADR-0001) |
+| Deferring an update | Only with a named owner who accepts the risk, recorded in the findings register |
+
+**On-call owner:** the project owner (security contact above) until a team exists. Name a backup person before the
+paid launch.
+
+**Sources to watch:**
+- the Chrome Releases blog (stable channel updates and their security fixes);
+- the CISA Known Exploited Vulnerabilities catalog;
+- the weekly `runtime pipeline` run, which warns when upstream stable has moved.
+
+**Emergency rollout.** The runtime manifest is compiled into the manager, so a new browser ships in a manager
+release:
+1. Actions → **runtime pipeline** → *Run workflow* (`sign` ticked). It runs the real-browser compatibility set,
+   including a profile created by the previous runtime, on Windows, macOS and Linux, then signs the manifest
+   ([runtime pipeline](../runtime-pipeline.md)).
+2. Commit the new `runtimes/manifest.json` and its `.sig`, and set a new manager version
+   (`node scripts/release/set-version.mjs …`).
+3. **desktop release** → `release` on canary. Test on one computer, then `promote` to stable
+   ([update runbook](update-runbook.md)).
+4. Once the fixed release is offered:
+   - `revoke` the vulnerable runtime's archive SHA-256, so it is neither installed nor opened;
+   - if the old manager must not be used, run `minimum` and set `MIN_DESKTOP_VERSION` on the server.
+
+   Profiles that the old runtime already upgraded keep a before-upgrade copy.
+5. Record the timeline (notice → assessment → release → stable) in the incident record. It is the evidence for the
+   24/72-hour targets.
+
 ## Playbooks
 
 ### A vulnerability report arrives (SECURITY.md)

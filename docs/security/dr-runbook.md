@@ -13,7 +13,7 @@ compromise) start in [incident response](incident-response.md). This page covers
 | Data | How | Where | Kept |
 |---|---|---|---|
 | PostgreSQL: the app database and Keycloak's | pgBackRest. Full backup weekly (Sunday), differential daily (03:17 UTC), write-ahead log at least every 60 s. Encrypted on the server (AES-256) before upload. | R2 `pgbackrest/` | 4 full backups with their log: point-in-time recovery for about the last 4–5 weeks |
-| Snapshot objects (sealed profile backups) | rclone every 10 minutes, using a read-only storage identity | R2 `objects/pb-snapshots-dev/` | As long as they exist on the server |
+| Snapshot objects (sealed profile backups) | rclone every 2 minutes, using a read-only storage identity | R2 `objects/pb-snapshots-dev/` | As long as they exist on the server |
 | Snapshot objects deleted on the server | Moved aside by the same copy | R2 `objects-deleted/<date>/` | 30 days, removed by the R2 lifecycle rule |
 | Root key, backup passphrase | **Not** in R2 | Your offline kit (below) | Always |
 
@@ -66,7 +66,7 @@ previous copy for 6 weeks**. A database restored from a backup made before the r
 
 | When | Command | What to look for |
 |---|---|---|
-| Weekly | `bash /usr/local/libexec/pb-backup status` | A full backup within 8 days, `failed 0` (or no recent failure) in log archiving, an object copy in the last 10 minutes |
+| Weekly | `bash /usr/local/libexec/pb-backup status` | A full backup within 8 days, `failed 0` (or no recent failure) in log archiving, an object copy in the last few minutes |
 | After setup, then quarterly, and after any change to backups | `\cp -f /home/pb/antibrowser/scripts/deploy/restore-drill.sh /root/ && bash /root/restore-drill.sh` | `restore drill passed` with the recovery point and time. The report is in `/var/lib/pb-backup/drills/`. |
 | Any time | `bash /usr/local/libexec/pb-backup backup-now full` | A manual full backup and object copy (before risky maintenance) |
 
@@ -128,9 +128,11 @@ Estimated time: 1–2 hours, most of it installation. Restoring the data itself 
 
 What may be missing:
 - database changes from the last minute or so before the loss (the log is archived at least every 60 s);
-- snapshots uploaded in the last 10 minutes, if the object copy had not run yet. Their rows can come back without
-  their objects. The drill's checks would name them; the computer that uploaded them still has the profile, and
-  its next backup replaces them.
+- snapshots committed in the last 2–3 minutes, if the object copy had not run yet. Their rows can come back
+  without their objects. `restore-server` counts them ("committed snapshot(s) have no object"). The computer that
+  uploaded each one still has the profile, and its next backup replaces it; earlier versions of those profiles are
+  intact.
+- activity on a computer that was never backed up (unsynced local changes) cannot be recovered from the server.
 
 ### 2. Data corruption, a bad migration or a destructive mistake (the server itself is fine)
 Point-in-time restore on the same server to just before the problem:
@@ -213,4 +215,5 @@ These figures go into the customer-facing statement in [limitations](limitations
 | Finished automation jobs, webhook deliveries | 30 days | Database backups (as above) |
 | An organization after cancellation | Kept (no automatic deletion in v1; `BILLING_RETENTION_DAYS` states the owner's policy) | — |
 | Platform audit and organization activity logs | Kept (append-only) | Database backups. They hold actions and ids, never browsing data or secrets. |
+| Server caches | None in this deployment: no Redis-type cache is run, so access checks and deletions take effect immediately everywhere | — |
 | Data on customers' computers | The customer's | Not reachable by us |

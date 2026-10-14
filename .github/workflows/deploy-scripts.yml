@@ -251,7 +251,10 @@ jobs:
           fi
           grep -q "Run again with --yes-replace-this-database" "$RUNNER_TEMP/unconfirmed.log" || { cat "$RUNNER_TEMP/unconfirmed.log"; fail "unexpected refusal"; }
           start=$(date +%s)
-          scripts/ci/annotate.sh "restore-server" sudo bash scripts/deploy/backup-setup.sh restore-server --yes-replace-this-database
+          scripts/ci/annotate.sh "restore-server" sudo bash scripts/deploy/backup-setup.sh restore-server --yes-replace-this-database \
+            | tee "$RUNNER_TEMP/restore-server.log"
+          grep -q "every committed snapshot has its object" "$RUNNER_TEMP/restore-server.log" \
+            || fail "committed snapshots lack their objects after the restore"
           scripts/ci/annotate.sh "vps-setup.sh (after the restore)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
           scripts/ci/annotate.sh "keycloak-setup.sh (after the restore)" sudo bash scripts/deploy/keycloak-setup.sh
           took=$(( $(date +%s) - start ))
