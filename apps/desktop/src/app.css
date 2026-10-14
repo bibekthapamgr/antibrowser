@@ -1161,3 +1161,55 @@ ul.deliveries .pb-button,
 ul.runs .pb-button {
   margin-left: var(--pb-space-2);
 }
+
+/* Milestone 11: billing. */
+.billing-banner {
+  margin: 0 0 var(--pb-space-3);
+}
+.billing-limits td progress {
+  display: block;
+  width: min(220px, 100%);
+  margin-top: var(--pb-space-1);
+}
+.billing-limits tr[data-over] th,
+.billing-limits tr[data-over] td {
+  color: var(--pb-warn);
+}
+.over-limit {
+  margin-left: var(--pb-space-2);
+  font-weight: 600;
+}
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--pb-space-3);
+}
+.plan-card {
+  display: grid;
+  align-content: start;
+  gap: var(--pb-space-2);
+  padding: var(--pb-space-3);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+}
+.plan-card h4 {
+  margin: 0;
+}
+.plan-card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+.plan-choose {
+  justify-self: start;
+}
+.plan-price {
+  margin: 0;
+  font-weight: 600;
+}
+.row-actions .pb-button + .pb-button {
+  margin-left: var(--pb-space-2);
+}

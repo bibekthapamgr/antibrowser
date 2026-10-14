@@ -436,6 +436,28 @@ pub const SCREENSHOT_UNAVAILABLE: IpcError = IpcError::new(
 pub const UNKNOWN_JOB: IpcError =
     IpcError::new("UNKNOWN_JOB", "That job is not running on this computer.");
 
+// Milestone 11: billing pages.
+pub const BILLING_FORBIDDEN: IpcError = IpcError::new(
+    "BILLING_FORBIDDEN",
+    "Only the organization's owners can change its subscription.",
+);
+pub const ALREADY_SUBSCRIBED: IpcError = IpcError::new(
+    "ALREADY_SUBSCRIBED",
+    "This organization already has a subscription. Change the plan in the billing portal.",
+);
+pub const PLAN_NOT_AVAILABLE: IpcError = IpcError::new(
+    "PLAN_NOT_AVAILABLE",
+    "This plan cannot be bought on this server yet.",
+);
+pub const BILLING_UNAVAILABLE: IpcError = IpcError::new(
+    "BILLING_UNAVAILABLE",
+    "Billing cannot be reached right now. Nothing else is affected; try again shortly.",
+);
+pub const BILLING_PAGE_UNAVAILABLE: IpcError = IpcError::new(
+    "BILLING_PAGE_UNAVAILABLE",
+    "This invoice has no page to open yet.",
+);
+
 /// A handoff note: plain text, at most 500 characters, never anything that looks like a password or key.
 pub fn clean_handoff_note(value: &str) -> Result<String, IpcError> {
     if value.len() > 500 * 4 {

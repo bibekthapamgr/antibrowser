@@ -1554,6 +1554,30 @@ export const COMMANDS = {
     }),
     result: Type.String({ pattern: '^data:image/(jpeg|png|svg\\+xml);base64,' }),
   },
+  // Milestone 11: the payment provider's pages, created and opened by the shell after checking the host (the window
+  // never receives a payment address).
+  /** Starts checkout for a plan (owners) and opens it in the default browser. */
+  billing_open_checkout: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      planId: Type.String({ pattern: '^[a-z][a-z0-9_]{1,31}$' }),
+    }),
+    result: Type.Null(),
+  },
+  /** Opens the provider's customer portal (plan changes, payment methods, cancellation, invoices). */
+  billing_open_portal: {
+    args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
+    result: Type.Null(),
+  },
+  /** Opens one invoice's page or PDF. */
+  billing_open_invoice: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      invoiceId: Type.String({ pattern: '^in_[A-Za-z0-9]{1,64}$' }),
+      pdf: Type.Boolean(),
+    }),
+    result: Type.Null(),
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;

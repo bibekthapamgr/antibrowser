@@ -1314,3 +1314,65 @@ pub async fn automation_screenshot<Rt: Runtime>(
     .await
     .map_err(|_| ipc::INTERNAL)?
 }
+
+// ---------------------------------------------------------------- milestone 11: billing pages
+
+/// Opens a page of the payment provider in the default browser after checking its host (never in the manager).
+fn open_payment_page<Rt: Runtime>(app: &AppHandle<Rt>, url: url::Url) -> R<()> {
+    let url = crate::billing::payment_url(url.as_str()).ok_or(ipc::DISALLOWED_URL)?;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|_| ipc::INTERNAL)
+}
+
+/// Starts the provider's checkout for a plan (owners) and opens it. The subscription changes only when the provider
+/// confirms the payment.
+#[tauri::command]
+pub async fn billing_open_checkout<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    plan_id: String,
+) -> R<()> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    let url =
+        tauri::async_runtime::spawn_blocking(move || state.billing_checkout(&org_id, &plan_id))
+            .await
+            .map_err(|_| ipc::INTERNAL)??;
+    open_payment_page(&app, url)
+}
+
+/// Opens the provider's customer portal (plan changes, payment methods, cancellation, invoices).
+#[tauri::command]
+pub async fn billing_open_portal<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+) -> R<()> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    let url = tauri::async_runtime::spawn_blocking(move || state.billing_portal(&org_id))
+        .await
+        .map_err(|_| ipc::INTERNAL)??;
+    open_payment_page(&app, url)
+}
+
+/// Opens one invoice's page or PDF from the provider.
+#[tauri::command]
+pub async fn billing_open_invoice<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    invoice_id: String,
+    pdf: bool,
+) -> R<()> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        state.billing_invoice(&org_id, &invoice_id, pdf)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)??;
+    open_payment_page(&app, url)
+}

@@ -172,6 +172,18 @@ async function openOrg(page: Page, section?: string) {
   );
 }
 
+/** Milestone 11: puts the demo organization in a billing state (demo-billing.ts). */
+async function simulateBilling(page: Page, state: string) {
+  await page.waitForFunction(() => '__pbDemo' in window);
+  await page.evaluate(
+    (st) =>
+      (
+        window as unknown as { __pbDemo: { billing: { simulate(s: string): void } } }
+      ).__pbDemo.billing.simulate(st),
+    state,
+  );
+}
+
 const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) => Promise<void> }[] = [
   {
     name: 'profile-backups',
@@ -463,6 +475,24 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
       await clickButton(p, 'main nav[aria-label="Automation sections"]', 'Webhooks');
       await clickInRow(p, 'hooks.example.com', 'Deliveries');
       await p.waitForSelector('main ul.deliveries');
+    },
+  },
+  // Milestone 11: billing.
+  {
+    name: 'org-billing-trial',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Billing');
+      await p.waitForSelector('.plan-list');
+    },
+  },
+  {
+    name: 'org-billing-restricted',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await simulateBilling(p, 'restricted');
+      await openOrg(p, 'Billing');
+      await p.waitForSelector('.billing-banner');
     },
   },
   {
@@ -1665,6 +1695,81 @@ describe('agency workspace and technical health (milestone 09)', () => {
       document.querySelector('main')?.textContent?.includes('Blocked by your organization'),
     );
     await page.close();
+  });
+});
+
+describe('billing (milestone 11)', () => {
+  const opened = (page: Page) =>
+    page.evaluate(
+      () => (window as unknown as { __pbDemo: { billing: { opened: string[] } } }).__pbDemo.billing.opened,
+    );
+
+  it('an owner chooses a plan; the screen waits for the server to confirm, then lists the invoice', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Billing');
+    const main = await text(page, 'main');
+    expect(main).not.toContain('Trial · Trial');
+    expect(main).toMatch(/Trial: \d+ days left/);
+    expect(main).toContain('Choose a plan');
+    expect(main).toContain('this app never sees card details');
+    expect(await text(page, '.plan-list')).toContain('Team');
+    await clickButton(page, '.plan-list', 'Choose Team');
+    await toastContains(page, 'Checkout for Team opened in your browser');
+    expect(await opened(page)).toContain('checkout:team');
+    expect(await text(page, 'main')).toContain('Waiting for the payment provider to confirm');
+    await toastContains(page, 'Subscription updated: Team');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Team · Active'));
+    // Now managed in the portal: no plan list, an invoice to open.
+    expect(await page.$('.plan-list')).toBeNull();
+    await clickButton(page, 'main', 'Manage subscription…');
+    expect(await opened(page)).toContain('portal');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('DEMO-0001'));
+    await clickInRow(page, 'DEMO-0001', 'PDF of invoice DEMO-0001');
+    expect((await opened(page)).some((o: string) => o.endsWith(':pdf'))).toBe(true);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+
+  it('a restricted organization says what still works, on every screen of it', async () => {
+    const page = await open('signedin');
+    await simulateBilling(page, 'restricted');
+    await openOrg(page);
+    await page.waitForSelector('.billing-banner[role=alert]');
+    const banner = await text(page, '.billing-banner');
+    expect(banner).toContain('Restricted.');
+    expect(banner).toContain('close profiles, back up, export and delete');
+    expect(banner).toContain('Nothing is deleted.');
+    await clickButton(page, '.billing-banner', 'Open billing');
+    await page.waitForSelector('#org-billing-title');
+    expect(await text(page, 'main .notice[data-state=restricted]')).toContain(
+      'The subscription needs attention.',
+    );
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+
+  it('members without billing access see the banner but not the billing screen', async () => {
+    const member = await open('member');
+    await member.waitForFunction(() => '__pbDemo' in window);
+    await member.waitForSelector('.workspace option[value^="org:"]');
+    await member.evaluate(() => {
+      const demo = (
+        window as unknown as { __pbDemo: { billing: { simulate(s: string, org?: string): void } } }
+      ).__pbDemo;
+      // The operator's organization is owned by someone else: put it in grace by id.
+      const orgId = [...document.querySelectorAll<HTMLOptionElement>('.workspace option')]
+        .find((o) => o.value.startsWith('org:'))
+        ?.value.slice(4);
+      demo.billing.simulate('grace', orgId);
+    });
+    await openOrg(member);
+    await member.waitForSelector('.billing-banner');
+    expect(await text(member, '.billing-banner')).toContain('Ask an owner of this organization.');
+    const nav = await member.$$eval('.org-nav button', (bs) => bs.map((b) => b.textContent?.trim()));
+    expect(nav).not.toContain('Billing');
+    await member.close();
   });
 });
 

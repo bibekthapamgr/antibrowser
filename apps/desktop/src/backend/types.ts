@@ -357,10 +357,21 @@ export interface AutomationRepository {
   screenshot(orgId: string, jobId: string, artifactId: string): Promise<string>;
 }
 
+/**
+ * Milestone 11: the payment provider's pages. The shell creates them and opens them in the default browser after
+ * checking the host; the window only asks.
+ */
+export interface BillingRepository {
+  openCheckout(orgId: string, planId: string): Promise<null>;
+  openPortal(orgId: string): Promise<null>;
+  openInvoice(orgId: string, invoiceId: string, pdf: boolean): Promise<null>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   agency: AgencyRepository;
   automation: AutomationRepository;
+  billing: BillingRepository;
   account: AccountRepository;
   sync: SyncRepository;
   team: TeamRepository;

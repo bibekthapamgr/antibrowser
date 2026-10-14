@@ -17302,6 +17302,71 @@
         "type": "string",
         "pattern": "^data:image/(jpeg|png|svg\\+xml);base64,"
       }
+    },
+    "billing_open_checkout": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "planId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "planId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,31}$"
+          }
+        }
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "billing_open_portal": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "billing_open_invoice": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "invoiceId",
+          "pdf"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "invoiceId": {
+            "type": "string",
+            "pattern": "^in_[A-Za-z0-9]{1,64}$"
+          },
+          "pdf": {
+            "type": "boolean"
+          }
+        }
+      },
+      "result": {
+        "type": "null"
+      }
     }
   },
   "events": {

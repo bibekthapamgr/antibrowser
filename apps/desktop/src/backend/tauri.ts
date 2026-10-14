@@ -34,6 +34,11 @@ export function tauriBackend(): Backend {
       setDebugging: (allow) => call('automation_set_debugging', { allow }),
       screenshot: (orgId, jobId, artifactId) => call('automation_screenshot', { orgId, jobId, artifactId }),
     },
+    billing: {
+      openCheckout: (orgId, planId) => call('billing_open_checkout', { orgId, planId }),
+      openPortal: (orgId) => call('billing_open_portal', { orgId }),
+      openInvoice: (orgId, invoiceId, pdf) => call('billing_open_invoice', { orgId, invoiceId, pdf }),
+    },
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),

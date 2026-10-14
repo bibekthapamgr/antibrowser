@@ -96,6 +96,9 @@
     "allow-automation-unenroll",
     "allow-automation-stop-job",
     "allow-automation-set-debugging",
-    "allow-automation-screenshot"
+    "allow-automation-screenshot",
+    "allow-billing-open-checkout",
+    "allow-billing-open-portal",
+    "allow-billing-open-invoice"
   ]
 }

@@ -92,6 +92,9 @@ const COMMANDS: &[&str] = &[
     "automation_stop_job",
     "automation_set_debugging",
     "automation_screenshot",
+    "billing_open_checkout",
+    "billing_open_portal",
+    "billing_open_invoice",
 ];
 
 fn main() {

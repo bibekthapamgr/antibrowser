@@ -22,6 +22,7 @@ import { OrgAutomationSection } from './automation.tsx';
 import type { AccountView, AppView, Backend, OrgImportView } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { OrgBackupsSection } from './backups.tsx';
+import { BillingBanner, OrgBillingSection } from './billing.tsx';
 import { OrgClientDashboard } from './clients.tsx';
 import { ApiFailure, can, get, ROLE_HELP, ROLE_LABEL, send } from './cloud.ts';
 import { Dialog, useDebounced } from './components.tsx';
@@ -38,6 +39,7 @@ type Section =
   | 'backups'
   | 'extensions'
   | 'automation'
+  | 'billing'
   | 'activity'
   | 'settings';
 interface Page<T> {
@@ -112,6 +114,7 @@ export function OrganizationScreen(props: {
     ['backups', 'Backups', can(role, 'backups.manage')],
     ['extensions', 'Extensions', can(role, 'org.read') && role !== 'billing'],
     ['automation', 'Automation', can(role, 'automation.read')],
+    ['billing', 'Billing', can(role, 'billing.read')],
     ['activity', 'Activity', can(role, 'audit.read')],
     ['settings', 'Settings', true],
   ];
@@ -132,6 +135,7 @@ export function OrganizationScreen(props: {
         </div>
       </header>
       {org.stale !== false && <Stale at={org.stale} />}
+      <BillingBanner billing={org.data.billing} role={role} onOpenBilling={() => setSection('billing')} />
       <nav aria-label="Organization sections" className="org-nav">
         {visible.map(([id, label]) => (
           <button
@@ -153,6 +157,7 @@ export function OrganizationScreen(props: {
       {current === 'backups' && <OrgBackupsSection {...common} />}
       {current === 'extensions' && <OrgExtensionsSection {...common} />}
       {current === 'automation' && <OrgAutomationSection {...common} />}
+      {current === 'billing' && <OrgBillingSection {...common} onChanged={org.reload} />}
       {current === 'activity' && <ActivitySection {...common} />}
       {current === 'settings' && (
         <SettingsSection

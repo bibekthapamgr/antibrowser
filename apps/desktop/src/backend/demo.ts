@@ -1371,6 +1371,7 @@ export function demoBackend(mode = ''): Backend {
     kind: 'demo',
     agency,
     automation: cloud.automation,
+    billing: cloud.billing,
     account: cloud,
     sync,
     team,

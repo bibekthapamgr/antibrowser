@@ -9,6 +9,8 @@
 //! Milestone 10 adds automation settings, the job dashboard (list, detail, cancel), enrolled computers, API tokens and
 //! webhook endpoints. Enrolling, polling, job reports and screenshot uploads stay with the shell (they act for this
 //! computer), screenshots are downloaded by the shell, and jobs are created through the API (tokens or the SDK).
+//! Milestone 11 adds the organization's subscription, plans, usage and invoices (read-only); payment pages are opened
+//! by the shell.
 
 use crate::http::Method;
 
@@ -155,6 +157,13 @@ const RULES: &[Rule] = &[
         Method::Post,
         "/v1/orgs/{org}/webhook-endpoints/{whk}/deliveries/{dlv}/redeliver",
     ),
+    // Milestone 11: the organization's subscription, plans, usage and invoices (they change with payments: never
+    // shown from the offline cache). Checkout and portal sessions and invoice links are made by the shell, which opens
+    // them in the default browser after checking the host: the window never receives a payment address.
+    live(Method::Get, "/v1/orgs/{org}/billing/subscription"),
+    live(Method::Get, "/v1/orgs/{org}/billing/plans"),
+    live(Method::Get, "/v1/orgs/{org}/billing/usage"),
+    live(Method::Get, "/v1/orgs/{org}/billing/invoices"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -531,6 +540,31 @@ mod tests {
             check("GET", "/v1/invitations/short", &[], None).err(),
             Some(Refused::NotAllowed)
         );
+    }
+
+    #[test]
+    fn billing_is_read_only_for_the_window_and_payment_pages_stay_with_the_shell() {
+        for path in ["subscription", "plans", "usage", "invoices"] {
+            let a = check("GET", &format!("/v1/orgs/{ORG}/billing/{path}"), &[], None);
+            assert_eq!(a.map(|a| a.cache_key), Ok(None), "{path}");
+        }
+        for (method, path) in [
+            ("POST", format!("/v1/orgs/{ORG}/billing/checkout-session")),
+            ("POST", format!("/v1/orgs/{ORG}/billing/portal-session")),
+            (
+                "GET",
+                format!("/v1/orgs/{ORG}/billing/invoices/in_1Abc/links"),
+            ),
+            ("POST", "/v1/webhooks/billing".to_owned()),
+            ("GET", format!("/v1/support/orgs/{ORG}")),
+            ("POST", "/v1/support/sessions".to_owned()),
+        ] {
+            assert_eq!(
+                check(method, &path, &[], None),
+                Err(Refused::NotAllowed),
+                "{method} {path}"
+            );
+        }
     }
 
     #[test]

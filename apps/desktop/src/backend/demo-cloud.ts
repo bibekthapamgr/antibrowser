@@ -17,6 +17,7 @@ import {
   isSensitivePermission,
   validVersionRange,
 } from '@pb/contracts/agency';
+import type { BillingState } from '@pb/contracts/billing';
 import type { EventPayload } from '@pb/contracts/ipc';
 import {
   type ASSIGNABLE_ROLES,
@@ -30,10 +31,12 @@ import {
 } from '@pb/contracts/resources';
 import { secretHint } from '../notes.ts';
 import { demoAutomation } from './demo-automation.ts';
+import { demoBilling } from './demo-billing.ts';
 import type {
   AccountRepository,
   AccountView,
   AutomationRepository,
+  BillingRepository,
   CloudRequest,
   CloudResponse,
   OrgImportView,
@@ -318,7 +321,12 @@ export function demoCloud(opts: {
   localProfiles: (workspaceId: string) => LocalProfile[];
   /** Milestone 10: `automation` events (this computer's jobs). */
   emitAutomation?: (payload: EventPayload<'automation'>) => void;
-}): AccountRepository & { sync: DemoCloudSync; team: DemoCloudTeam; automation: AutomationRepository } {
+}): AccountRepository & {
+  sync: DemoCloudSync;
+  team: DemoCloudTeam;
+  automation: AutomationRepository;
+  billing: BillingRepository & { opened: string[]; simulate: (state: BillingState, orgId?: string) => void };
+} {
   const me = {
     id: rid('usr'),
     display_name: 'Demo Person',
@@ -747,6 +755,9 @@ export function demoCloud(opts: {
     emit: (payload) => opts.emitAutomation?.(payload),
   });
 
+  // Milestone 11: the subscription, plans, usage and invoices (demo-billing.ts).
+  const billing = demoBilling({ meId: me.id, orgs: () => [...orgs.values()], err });
+
   const route = (req: CloudRequest): { status: number; body: unknown } => {
     const q = new Map(req.query ?? []);
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -879,12 +890,21 @@ export function demoCloud(opts: {
     const t = now();
     const automated = automation.route(org, req, parts, version);
     if (automated) return automated;
+    const billed = billing.route(org, req, parts);
+    if (billed) return billed;
 
     if (!c) {
       if (req.method === 'GET')
         return {
           status: 200,
-          body: { id: org.id, name: org.name, role: r, version: org.version, created_at: org.created_at },
+          body: {
+            id: org.id,
+            name: org.name,
+            role: r,
+            version: org.version,
+            created_at: org.created_at,
+            billing: billing.summary(org),
+          },
         };
       const denied = need('org.update');
       if (denied) return denied;
@@ -1947,6 +1967,7 @@ export function demoCloud(opts: {
     sync,
     team,
     automation: automation.computer,
+    billing: Object.assign(billing.computer, { simulate: billing.simulate }),
     async get() {
       return view();
     },

@@ -9,6 +9,7 @@ pub mod account;
 pub mod agency;
 pub mod authz;
 pub mod automation;
+pub mod billing;
 pub mod commands;
 pub mod deeplink;
 pub mod diagnostics;
@@ -142,6 +143,9 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::automation_stop_job,
         commands::automation_set_debugging,
         commands::automation_screenshot,
+        commands::billing_open_checkout,
+        commands::billing_open_portal,
+        commands::billing_open_invoice,
     ]
 }
 
