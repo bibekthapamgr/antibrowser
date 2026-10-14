@@ -90,7 +90,11 @@ Test server setup and update path with the console client, staff sign-in and bil
 client). The update applies migrations 0008 and 0009 (existing organizations move to the `beta` plan with no end;
 fixtures to `internal`), builds the console, creates `/etc/project-browser/billing.env` (yours; never overwritten) and
 says "billing not set up yet" until a Stripe test key is in it. Stripe test mode, the price setup and the console's
-staff roles are step by step in [billing/README.md](billing/README.md#stripe-test-mode-on-the-test-server).
+staff roles are step by step in [billing/README.md](billing/README.md#stripe-test-mode-on-the-test-server). Confirmed on the
+AlmaLinux 8.10 test server at `c51c045` (2026-10-14): migrations 0008 and 0009 applied, 4 existing organizations put
+on `beta`, 627 server tests passed, the console built and served at `/console/` with its CSP, billing reported as not
+set up (no key yet), and `keycloak-setup.sh` created and checked the `project-browser-console` client (console sign-in
+page opens, other redirect addresses refused).
 
 ## Found and fixed during verification
 - Stripe checkout session ids contain underscores (`cs_test_…`): the event envelope check and the database check were
