@@ -18,7 +18,7 @@ stateDiagram-v2
   trial --> restricted: 14 days without a plan (trial_ended)
   active --> past_due: renewal payment failed
   past_due --> active: payment succeeded
-  past_due --> grace: Stripe stopped retrying
+  past_due --> grace: Stripe stopped retrying, or 30 days after the period end
   active --> grace: 72 h after the period end without a confirmed renewal
   grace --> active: payment succeeded
   grace --> restricted: 7 days later, or 10 days after the period end
@@ -32,7 +32,7 @@ stateDiagram-v2
 |---|---|---|---|
 | `trial` | Everything within the trial plan's limits | Days left and "choose a plan" | A paid checkout (→ active) or day 14 (→ restricted) |
 | `active` | Everything within the plan's limits | Renewal date | A failed renewal, a cancellation that takes effect, a missing renewal |
-| `past_due` | Everything | Banner: update the payment method (Stripe retries on its schedule) | Payment succeeds, or Stripe gives up (→ grace) |
+| `past_due` | Everything | Banner: update the payment method (Stripe retries on its schedule) | Payment succeeds, or Stripe gives up, or 30 days after the period end (→ grace, whatever Stripe's retry setting) |
 | `grace` | Everything for 7 days | Banner with the end date: last warning | Payment succeeds, or the 7 days end (→ restricted) |
 | `restricted` | Read, close, back up, export, delete, billing | What still works; nothing is deleted | A paid checkout or a successful payment |
 | `canceled` | Same as restricted | Same, "canceled" | A new checkout |
@@ -40,10 +40,10 @@ stateDiagram-v2
 `restricted` and `canceled` refuse only these actions (`RESTRICTED_ACTIONS` in
 [`packages/contracts/src/billing.ts`](../../packages/contracts/src/billing.ts)), with `SUBSCRIPTION_RESTRICTED`
 (403): creating profiles, clients, invitations, API tokens, webhook endpoints and jobs; opening profiles; computers
-claiming jobs; imports; restoring from the trash. Closing a profile, its closing backup, downloading and restoring
+claiming jobs; imports; restoring from the trash; joining through an invitation made earlier. Closing a profile, its closing backup, downloading and restoring
 backups, exporting, deleting and billing always keep working. **No billing state deletes anything.**
 
-Time-based changes (trial end, grace end, an unconfirmed renewal) take effect at the moment of the request:
+Time-based changes (trial end, grace end, an unconfirmed renewal, a payment failing for 30 days) take effect at the moment of the request:
 `app.billing_effective(org)` computes the state from the stored state, the dates, active overrides and the clock. The
 worker only records them afterwards (history, the organization's activity log).
 
@@ -85,8 +85,10 @@ cancels at the end of the period.
 
 Database triggers lock the organization's `subscriptions` row and count before each new profile (including imports
 and restores from the trash), member and invitation; above the limit they refuse with `PLAN_LIMIT_REACHED` (409:
-`limit`, `used`, `allowed`, and what to do). Concurrent requests queue on the lock, so they cannot overshoot. Storage
-is the smaller of the organization's own quota and the plan's. Job claims use the smaller of the organization's
+`limit`, `used`, `allowed`, and what to do). Concurrent requests queue on the lock, so they cannot overshoot. An
+invitation reserves its seat when it is sent; accepting it is refused while the organization is over its seats (after
+a downgrade: upgrade or withdraw invitations first) or restricted. Storage is the plan's (with overrides), under the
+service operator's ceiling per organization (`organizations.backup_quota_bytes`, 1 TiB by default). Job claims use the smaller of the organization's
 running limit and the plan's. A downgrade never removes anything: what is over the new limit stays usable, only new
 creation stops.
 
@@ -119,8 +121,8 @@ The worker (`services/worker`, with `services/api/src/billing/reconcile.ts`):
 
 | When | What |
 |---|---|
-| Continuously (every half second when idle) | Processes up to 20 pending events: fetches the **current** subscription, checkout session or invoice from Stripe and applies it. Order and duplicates do not matter; an older subscription never replaces a newer one, so a replayed "paid" event cannot undo a cancellation. Stripe unreachable: retried with backoff; the organization keeps its last state |
-| Every 5 minutes | Resyncs subscriptions not confirmed for 24 h, or for 1 h when past due, in grace, or around the period end; checks the event backlog |
+| Continuously (every half second when idle) | Processes up to 20 pending events: fetches the **current** subscription, checkout session or invoice from Stripe and applies it. Order and duplicates do not matter: a fetch that started before the last applied one is ignored, a live subscription is preferred over an ended one and of two alike the newer, so a replayed or late "paid" read cannot undo a cancellation. Stripe unreachable: retried with backoff; the organization keeps its last state |
+| Every 5 minutes | Resyncs subscriptions not confirmed for 24 h, or for 1 h when past due, in grace, or around the period end, and those staff asked for; a failing one backs off (15 minutes, or 6 hours with an alert); checks the event backlog |
 | Every minute | Records time-based transitions in the history and the organization's activity log |
 | Every hour | Samples usage (storage, active profiles, seats) into the ledger |
 
@@ -136,6 +138,7 @@ Reconciliation alerts (support console → Alerts; one open alert per kind and r
 | Missed provider event (`missed_webhook`) | A resync changed the state: an event did not arrive | Check webhook delivery (or the forwarder on the test server) |
 | Refund / Payment dispute | Money moved back | Decide whether the plan should change; nothing is deleted |
 | Signature failures | Requests with bad signatures | A wrong or rotated secret, or someone probing the endpoint |
+| Resync failing (`resync_failed`) | Stripe keeps refusing the resync of one organization (its resyncs back off for 6 hours) | The stored customer or subscription no longer exists in this Stripe mode; fix it in Stripe, then "Confirm with Stripe now" |
 
 Invoices are mirrored from Stripe (number, status, amounts, currency, hosted links) for the owner's invoice list; the
 desktop opens the hosted invoice or PDF in the default browser.
@@ -213,9 +216,10 @@ this server.
 
 | Requirement | How |
 |---|---|
-| A Stripe outage must not lock paid users out | Access is decided from the database only; an `active` organization stays active, and only 72 h after its period end without a confirmed renewal is it treated as grace (10 days before restricted) |
+| A Stripe outage must not lock paid users out | Access is decided from the database only; an `active` organization stays active, and only 72 h after its period end without a confirmed renewal is it treated as grace (10 days before restricted); `past_due` ends after 30 days the same way |
+| Never two paid subscriptions | A new checkout expires the customer's earlier open checkout and is refused while Stripe has a live subscription (even one the worker has not applied yet); duplicates that still happen raise an alert |
 | An unavailable billing service never overrides tenant permissions | Billing only narrows what roles and grants allow; requests never call Stripe to decide access |
-| A replayed paid event cannot reactivate a newer canceled state | Events are applied from the current Stripe object; an older subscription never replaces a newer one |
+| A replayed paid event cannot reactivate a newer canceled state | Events are applied from the current Stripe object; a fetch older than the last applied one is ignored; an ended subscription never replaces a live one |
 | Refunds and reversals reconcile, never delete | Recorded with an alert; nothing is deleted |
 | No card data in logs | Hosted checkout and portal only; webhook payloads are not stored or logged; tests scan the logs |
 

@@ -193,6 +193,20 @@ export function billingRoutes(app: App, deps: Deps): void {
       }
       let customer = row.provider_customer_id;
       try {
+        if (customer) {
+          // Never two paid subscriptions: an earlier checkout still open is expired first, and a subscription the
+          // provider already has (the worker may not have applied it yet) sends the owner to the portal.
+          await stripe.expireOpenCheckoutSessions(customer);
+          const live = (await stripe.listSubscriptions(customer)).some((s) =>
+            LIVE_STATUSES.includes(s.status),
+          );
+          if (live) {
+            throw new ApiError(
+              'ALREADY_SUBSCRIBED',
+              'A subscription is already live; use the billing portal to change it',
+            );
+          }
+        }
         if (!customer) {
           // The same idempotency key for every attempt: concurrent requests get the same customer back.
           const created = await stripe.createCustomer(

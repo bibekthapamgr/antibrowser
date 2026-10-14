@@ -41289,7 +41289,8 @@
                               "missed_webhook",
                               "dispute",
                               "refund",
-                              "signature_failures"
+                              "signature_failures",
+                              "resync_failed"
                             ]
                           },
                           "org_id": {
@@ -44421,7 +44422,8 @@
                               "missed_webhook",
                               "dispute",
                               "refund",
-                              "signature_failures"
+                              "signature_failures",
+                              "resync_failed"
                             ]
                           },
                           "org_id": {
@@ -44714,7 +44716,8 @@
                         "missed_webhook",
                         "dispute",
                         "refund",
-                        "signature_failures"
+                        "signature_failures",
+                        "resync_failed"
                       ]
                     },
                     "org_id": {

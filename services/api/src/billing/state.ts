@@ -67,13 +67,29 @@ const STILL_ALLOWED = ['read', 'close_profiles', 'back_up', 'export', 'delete', 
 export function requireBillingAllows(access: { billing?: BillingAccess }, action: RestrictedAction): void {
   const b = access.billing;
   if (!b?.blocked) return;
-  throw new ApiError(
+  throw restrictedError(b.state, b.reason, action);
+}
+
+/** SUBSCRIPTION_RESTRICTED for a state, reason and refused action (also raised by the database as BILLING_RESTRICTED). */
+export function restrictedError(state: string, reason: string, action: string): ApiError {
+  return new ApiError(
     'SUBSCRIPTION_RESTRICTED',
-    b.state === 'canceled'
+    state === 'canceled'
       ? 'This organization’s subscription has ended. You can still close profiles, back up and export; an owner can subscribe again.'
       : 'This organization’s subscription needs attention. You can still close profiles, back up and export; an owner can fix it in Billing.',
-    { state: b.state, reason: b.reason, action, still_allowed: [...STILL_ALLOWED] },
+    { state, reason, action, still_allowed: [...STILL_ALLOWED] },
   );
+}
+
+/** The database's BILLING_RESTRICTED (P0001, JSON detail) as SUBSCRIPTION_RESTRICTED. */
+export function restrictedFromDatabase(detail: string | undefined): ApiError {
+  let d: { state?: string; reason?: string; action?: string } = {};
+  try {
+    d = JSON.parse(detail ?? '{}') as typeof d;
+  } catch {
+    d = {};
+  }
+  return restrictedError(d.state ?? 'restricted', d.reason ?? 'no_subscription', d.action ?? 'unknown');
 }
 
 export interface Effective {

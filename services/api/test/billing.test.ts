@@ -9,7 +9,9 @@ import { newId, RESTRICTED_ACTIONS } from '@pb/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { syncCatalog } from '../scripts/migrate.ts';
 import {
+  applySubscription,
   checkBacklog,
+  fetchMark,
   observeTransitions,
   processBillingEvents,
   type ReconcileDeps,
@@ -515,6 +517,10 @@ describe('restricted organizations', () => {
     });
     expect(opened.statusCode, opened.body).toBe(201);
     const lease = opened.json().lease;
+    // An invitation made before the restriction cannot be used to join while restricted.
+    const inviteEmail = `late-${randomBytes(3).toString('hex')}@people.test`;
+    const invite = (await post(o, '/invitations', { email: inviteEmail, role: 'viewer' })).json();
+    const invitee = await h.signIn({ email: inviteEmail });
     await h.owner.query(
       "update subscriptions set trial_ends_at = now() - interval '1 minute' where org_id = $1",
       [o.id],
@@ -551,6 +557,12 @@ describe('restricted organizations', () => {
           url: `/v1/orgs/${o.id}/local-import`,
           headers: { ...o.owner.headers, 'idempotency-key': idemKey() },
           payload: { dry_run: true, clients: [], profiles: [] },
+        }),
+      'invitation.accept': () =>
+        h.app.inject({
+          method: 'POST',
+          url: `/v1/invitations/${invite.token}/accept`,
+          headers: invitee.headers,
         }),
     };
     for (const [action, call] of Object.entries(refusals)) {
@@ -619,11 +631,11 @@ describe('plans and limits', () => {
   it('an upgrade raises limits at once; a downgrade keeps everything and stops new creation over the limit', async () => {
     const o = await newOrg();
     const sub = await subscribe(o, 'team');
-    for (let i = 0; i < 3; i++)
-      await post(o, '/invitations', {
-        email: `m${i}-${randomBytes(3).toString('hex')}@people.test`,
-        role: 'viewer',
-      });
+    const invited: { token: string; email: string }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const email = `m${i}-${randomBytes(3).toString('hex')}@people.test`;
+      invited.push({ email, token: (await post(o, '/invitations', { email, role: 'viewer' })).json().token });
+    }
     await deliver(f.changePrice(sub, f.prices.agency));
     await work();
     expect(await subscription(o)).toMatchObject({ plan: { id: 'agency' }, limits: { seats: 20 } });
@@ -646,6 +658,16 @@ describe('plans and limits', () => {
     });
     const pending = (await get(o, '/invitations')).json().items;
     expect(pending.length).toBe(3);
+    // Over the seats after the downgrade, a pending invitation cannot be used to join either (review fix).
+    const first = invited[0] as { token: string; email: string };
+    const joiner = await h.signIn({ email: first.email });
+    const join = await h.app.inject({
+      method: 'POST',
+      url: `/v1/invitations/${first.token}/accept`,
+      headers: joiner.headers,
+    });
+    expect(join.json()).toMatchObject({ code: 'PLAN_LIMIT_REACHED', safe_details: { limit: 'seats' } });
+    expect((await subscription(o)).usage.seats).toBe(4);
     // Starter has no shared profiles feature.
     expect(s.features.team_sessions).toBe(false);
   });
@@ -730,6 +752,18 @@ describe('plans and limits', () => {
       [o.id],
     );
     expect(q2.rows[0].q).toBe(q2.rows[0].own);
+    // The plan's storage applies above the old 20 GiB default (review fix): Agency 200 GiB, an override 500 GiB.
+    const a = await newOrg();
+    await subscribe(a, 'agency');
+    const qa = await h.owner.query('select app.org_backup_quota($1)::float8 as q', [a.id]);
+    expect(qa.rows[0].q).toBe(200 * 1024 ** 3);
+    await h.owner.query(
+      `insert into entitlement_overrides (id, org_id, scope, value, reason, created_by, expires_at)
+       values ($3, $1, 'limit.storage_bytes', $4, 'test: a larger storage allowance', $2, now() + interval '1 day')`,
+      [a.id, a.owner.session.user.id, newId('override'), String(500 * 1024 ** 3)],
+    );
+    const qb = await h.owner.query('select app.org_backup_quota($1)::float8 as q', [a.id]);
+    expect(qb.rows[0].q).toBe(500 * 1024 ** 3);
   });
 });
 
@@ -877,6 +911,122 @@ describe('plan catalog', () => {
     } finally {
       await client.end();
     }
+  });
+});
+
+// ---------------------------------------------------------------- independent review fixes
+describe('review fixes', () => {
+  it('past_due does not last forever: grace 30 days after the period end, restricted 7 days later', async () => {
+    const o = await newOrg();
+    const sub = await subscribe(o, 'team');
+    await deliver(f.failRenewal(sub));
+    await work();
+    expect((await subscription(o)).state).toBe('past_due');
+    const set = (days: number) =>
+      h.owner.query(
+        `update subscriptions set current_period_end = now() - make_interval(days => $2) where org_id = $1`,
+        [o.id, days],
+      );
+    await set(29);
+    expect(await subscription(o)).toMatchObject({ state: 'past_due', reason: 'payment_failed' });
+    await set(31);
+    const g = await subscription(o);
+    expect(g).toMatchObject({ state: 'grace', reason: 'payment_failed' });
+    expect(new Date(g.until).getTime()).toBeGreaterThan(Date.now() + 5 * 86_400_000);
+    expect((await createProfile(o)).statusCode).toBe(201);
+    await set(38);
+    expect(await subscription(o)).toMatchObject({ state: 'restricted', reason: 'grace_ended' });
+    expect((await createProfile(o)).json().code).toBe('SUBSCRIPTION_RESTRICTED');
+  });
+
+  it('an object fetched before the last applied one never overwrites it (two workers, a late read)', async () => {
+    const o = await newOrg();
+    const sub = await subscribe(o, 'team');
+    const before = await fetchMark(deps);
+    const activeRead = await deps.stripe.getSubscription(sub);
+    // Meanwhile the customer cancels and that is applied.
+    await deliver(f.cancel(sub));
+    await work();
+    expect((await subscription(o)).state).toBe('canceled');
+    // The slower worker now commits its earlier "active" read: ignored.
+    const late = await applySubscription(deps, o.id, activeRead, 'test:late', before);
+    expect(late.outcome).toBe('stale');
+    expect((await subscription(o)).state).toBe('canceled');
+  });
+
+  it('a live subscription the customer still pays for wins over a newer one that ended', async () => {
+    const o = await newOrg();
+    const first = await subscribe(o, 'starter');
+    const customer = f.subscriptions.get(first)?.customer as string;
+    // A second subscription (e.g. two checkouts before either was applied); the newer one is canceled.
+    const second = f.createSubscription(customer, f.prices.agency);
+    await deliver([f.event('customer.subscription.created', second)]);
+    await work();
+    expect(await subscription(o)).toMatchObject({ state: 'active', plan: { id: 'agency' } });
+    await deliver(f.cancel(second.id as string));
+    await work();
+    // The first is still active and paid: the resync finds it and the organization stays usable on it.
+    await h.owner.query('select app.billing_request_resync($1)', [o.id]);
+    await resyncSubscriptions(deps, 500);
+    expect(await subscription(o)).toMatchObject({ state: 'active', plan: { id: 'starter' } });
+    // And an ended subscription's late event does not take it back.
+    await deliver([
+      f.event(
+        'customer.subscription.updated',
+        f.subscriptions.get(second.id as string) as Record<string, unknown>,
+      ),
+    ]);
+    await work();
+    expect(await subscription(o)).toMatchObject({ state: 'active', plan: { id: 'starter' } });
+  });
+
+  it('a second checkout expires the first one, and a subscription not applied yet sends the owner to the portal', async () => {
+    const o = await newOrg();
+    const one = await post(o, '/billing/checkout-session', { plan_id: 'team' });
+    const firstId = new URL(one.json().url).pathname.split('/').pop() as string;
+    const two = await post(o, '/billing/checkout-session', { plan_id: 'agency' });
+    expect(two.statusCode, two.body).toBe(201);
+    expect(f.sessions.get(firstId)?.status).toBe('expired');
+    // The customer completes the second checkout; before the worker has applied it, another checkout is refused.
+    const secondId = new URL(two.json().url).pathname.split('/').pop() as string;
+    f.completeCheckout(secondId);
+    expect((await post(o, '/billing/checkout-session', { plan_id: 'starter' })).json().code).toBe(
+      'ALREADY_SUBSCRIBED',
+    );
+  });
+
+  it('a resync that keeps failing backs off and raises an alert instead of blocking the others', async () => {
+    const o = await newOrg();
+    await subscribe(o, 'team');
+    // The stored subscription no longer exists at the provider (another mode's id, a deleted customer).
+    await h.owner.query(
+      `update subscriptions set provider_subscription_id = $2, provider_customer_id = $3, synced_at = null
+        where org_id = $1`,
+      [o.id, `sub_gone${randomBytes(4).toString('hex')}`, `cus_gone${randomBytes(4).toString('hex')}`],
+    );
+    await resyncSubscriptions(deps, 500);
+    const { rows } = await h.owner.query(
+      "select resync_after > now() + interval '5 hours' as backed_off from subscriptions where org_id = $1",
+      [o.id],
+    );
+    expect(rows[0].backed_off).toBe(true);
+    const due = await h.owner.query('select org_id from app.billing_resync_due(500) where org_id = $1', [
+      o.id,
+    ]);
+    expect(due.rowCount).toBe(0);
+    const alert = await h.owner.query(
+      "select count from billing_alerts where kind = 'resync_failed' and org_id = $1 and resolved_at is null",
+      [o.id],
+    );
+    expect(alert.rowCount).toBe(1);
+    // Staff asking for a resync makes it due again at once, without touching the customer's state.
+    const stateBefore = (await subscription(o)).state;
+    await h.owner.query('select app.billing_request_resync($1)', [o.id]);
+    const again = await h.owner.query('select org_id from app.billing_resync_due(500) where org_id = $1', [
+      o.id,
+    ]);
+    expect(again.rowCount).toBe(1);
+    expect((await subscription(o)).state).toBe(stateBefore);
   });
 });
 

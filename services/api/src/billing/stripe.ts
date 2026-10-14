@@ -118,6 +118,11 @@ export interface Stripe {
     returnUrl: string;
     configuration?: string | null;
   }): Promise<string>;
+  /**
+   * Expires the customer's checkout sessions that are still open (an earlier tab or attempt), so two checkouts can
+   * never both be paid. Returns how many were expired; a session that completed meanwhile is left as it is.
+   */
+  expireOpenCheckoutSessions(customer: string): Promise<number>;
   getSubscription(id: string): Promise<StripeSubscription>;
   listSubscriptions(customer: string): Promise<StripeSubscription[]>;
   getCheckoutSession(id: string): Promise<StripeCheckoutSession>;
@@ -384,6 +389,23 @@ export function createStripe(cfg: StripeConfig, fetchImpl: typeof fetch = fetch)
         configuration: p.configuration ?? null,
       });
       return need(str(obj(r).url), 'portal.url');
+    },
+    async expireOpenCheckoutSessions(customer) {
+      const r = await call('GET', '/v1/checkout/sessions', { customer, status: 'open', limit: 20 });
+      const ids = list(r)
+        .map((o) => str(obj(o).id))
+        .filter((id): id is string => typeof id === 'string' && /^cs_[A-Za-z0-9_]{1,200}$/.test(id));
+      let expired = 0;
+      for (const id of ids) {
+        try {
+          await call('POST', `/v1/checkout/sessions/${encodeURIComponent(id)}/expire`, {});
+          expired++;
+        } catch (err) {
+          // Completed or expired in the meantime: not an error here (the live-subscription check follows).
+          if (!(err instanceof StripeError) || err.transient) throw err;
+        }
+      }
+      return expired;
     },
     async getSubscription(id) {
       return parseSubscription(await call('GET', `/v1/subscriptions/${encodeURIComponent(id)}`));

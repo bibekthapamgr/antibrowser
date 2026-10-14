@@ -15,7 +15,7 @@ import { auditAlone } from './audit.ts';
 import { type Authenticator, createAuthenticator, type Principal } from './auth.ts';
 import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
 import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
-import { planLimitError } from './billing/state.ts';
+import { planLimitError, restrictedFromDatabase } from './billing/state.ts';
 import { createStripe, type Stripe, type StripePrice } from './billing/stripe.ts';
 import { withTx } from './db.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
@@ -320,6 +320,10 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     if (pgErr.code === 'P0001' && pgErr.message === 'PLAN_LIMIT') {
       const limit = planLimitError(pgErr.detail);
       return send(limit.code, limit.message, limit.safeDetails);
+    }
+    if (pgErr.code === 'P0001' && pgErr.message === 'BILLING_RESTRICTED') {
+      const restricted = restrictedFromDatabase(pgErr.detail);
+      return send(restricted.code, restricted.message, restricted.safeDetails);
     }
     if (pgErr.code === 'P0001' && pgErr.message === 'LAST_OWNER') {
       return send('LAST_OWNER', 'An organization must keep at least one owner; transfer ownership first');

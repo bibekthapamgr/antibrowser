@@ -653,7 +653,8 @@ describe('retention, quota and trash', () => {
       url: `/v1/orgs/${acme.id}/backup-policy`,
       headers: owner,
     });
-    expect(before.json()).toMatchObject({ retention_days: 7, trash_days: 30, quota_bytes: 21474836480 });
+    // Fixture organizations are internal (no plan storage limit): the operator's ceiling applies (milestone 11).
+    expect(before.json()).toMatchObject({ retention_days: 7, trash_days: 30, quota_bytes: 1099511627776 });
     expect(before.json().used_bytes).toBeGreaterThan(0);
     const patched = await h.app.inject({
       method: 'PATCH',
@@ -693,7 +694,9 @@ describe('retention, quota and trash', () => {
     );
     const full = await initSnapshot(h, owner, acme.id, profile, { base_version: 0, fencing_token: fencing });
     expect(full.json().code).toBe('QUOTA_EXCEEDED');
-    await h.owner.query('update organizations set backup_quota_bytes = 21474836480 where id = $1', [acme.id]);
+    await h.owner.query('update organizations set backup_quota_bytes = 1099511627776 where id = $1', [
+      acme.id,
+    ]);
     await releaseLease(h, owner, acme.id, profile, fencing);
   });
 

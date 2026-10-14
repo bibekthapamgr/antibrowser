@@ -50,7 +50,8 @@ trial ──(checkout paid)──▶ active ──(payment fails)──▶ past_
   outage), the organization is treated as `grace` (`renewal_unconfirmed`) — never restricted at once; 10 days after
   the period end without confirmation → `restricted`. The reconciliation worker normally confirms long before.
 - `past_due`: a payment failed and Stripe is retrying (its retry schedule is the merchant's Stripe setting): full
-  access, an owner banner with the action required.
+  access, an owner banner with the action required — for at most 30 days after the period end, then grace (7 days)
+  and restricted, whatever the retry setting or an outage.
 - `grace`: Stripe stopped retrying (`unpaid`, or canceled for non-payment): full access for 7 days, final warning.
 - `restricted`: read, close, back up, export and billing only (below). Data is kept.
 - `canceled`: the customer canceled and the paid period ended: same access as `restricted`. Data is kept.
@@ -67,7 +68,8 @@ backup is never refused for billing reasons — the existing storage quota still
 pending on the computer); downloading backups and restoring them; configuration export; deleting profiles, clients,
 tokens and webhooks; removing members and revoking invitations; billing. Refused with `SUBSCRIPTION_RESTRICTED` (403,
 naming the state, the reason and what is allowed): creating profiles, clients, invitations, API tokens, webhook
-endpoints and jobs; opening profiles (session leases); computers claiming jobs; importing; restoring from the trash.
+endpoints and jobs; opening profiles (session leases); computers claiming jobs; importing; restoring from the trash;
+joining through an invitation made before the restriction.
 The list is `RESTRICTED_ACTIONS` in contracts and every gated route calls `requireBillingAllows(access, action)`;
 a test walks the list.
 
@@ -78,8 +80,8 @@ a test walks the list.
   serialize on the row lock, so they cannot overshoot.
 - Seats: members plus pending invitations, by the same mechanism on `memberships` and `invitations` (an invitation
   reserves its seat; accepting it converts the reservation).
-- Storage: `app.org_backup_quota` (ADR-0014) becomes the smaller of the organization's own quota and the plan's
-  storage (plus overrides).
+- Storage: `app.org_backup_quota` (ADR-0014) becomes the plan's storage (plus overrides), under the service
+  operator's per-organization ceiling (1 TiB by default since the review below).
 - Automation concurrency: a claim uses the smaller of the organization's running limit (ADR-0017) and the plan's.
   Jobs already running keep their capacity after a downgrade; new claims wait until the organization is under the new
   limit.
@@ -164,6 +166,25 @@ worksheet and future metered units.
   test mode (test clocks) runs when the owner adds `STRIPE_TEST_SECRET_KEY` as a repository secret.
 - [Billing docs](../billing/README.md): state diagram, catalog configuration, reconciliation, admin roles, cost
   worksheet.
+
+## Independent review (2026-10-14)
+A reviewer who had not seen the work checked the state logic against these rules. Fixed in migration
+`0009_billing_review.sql` and `reconcile.ts`, each with a regression test (`billing.test.ts`, "review fixes"):
+1. Accepting an invitation skipped the seat check (its seat was reserved), so an organization over its seats after a
+   downgrade, or a restricted one, could still gain members. Joining now needs the organization within its seats and
+   not restricted (`invitation.accept` is in `RESTRICTED_ACTIONS`).
+2. `past_due` had no end. It is now bounded (30 days after the period end → grace → restricted).
+3. Two fetches of one subscription (two workers, an event and a resync) could commit out of order. Each applied object
+   records the database time its fetch started; an older fetch is ignored.
+4. Of two subscriptions, the newer always won, so a customer still paying for an older one after a newer one ended was
+   locked out. A live subscription now wins over an ended one (of two alike, the newer); checkout expires earlier open
+   checkouts and refuses while Stripe has a live subscription.
+5. One organization whose resync kept failing held the head of every resync batch. Failures back off (with a
+   `resync_failed` alert after a lasting one); a staff resync request no longer clears `synced_at`.
+6. The organization's milestone 07 cost limit (20 GiB by default) capped every plan's storage. It is now an operator
+   ceiling of 1 TiB by default; the plan decides below it.
+Checked and found sound: signature verification, event deduplication, profile-limit locking, seat lock ordering,
+override expiry and `null` limits, support access rules, usage-ledger idempotency, row-level security on the new tables.
 
 ## Revisit when
 Prices and final limits are set (new catalog versions); metered or remote-browser units are added; the retention

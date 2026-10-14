@@ -68,6 +68,8 @@ interface Row {
   provider_subscription_created: Date | null;
   grace_until: Date | null;
   observed_state: string | null;
+  provider_status: string | null;
+  provider_fetched_at: Date | null;
 }
 
 function planOfPrices(
@@ -120,47 +122,67 @@ function stateOf(
 }
 
 export interface ApplyResult {
-  outcome: 'applied' | 'unchanged' | 'older_subscription' | 'incomplete';
+  outcome: 'applied' | 'unchanged' | 'older_subscription' | 'incomplete' | 'stale';
   stateChanged: boolean;
   planChanged: boolean;
   effective: string | null;
 }
 
+/** The database's clock, read just before fetching from the provider (the freshness mark of what is fetched). */
+export async function fetchMark(deps: ReconcileDeps): Promise<Date> {
+  const { rows } = await deps.pool.query<{ t: Date }>('select clock_timestamp() as t');
+  return rows[0]?.t ?? new Date();
+}
+
 /**
  * Applies the provider's current subscription to an organization, inside one transaction with its subscription row
- * locked. `cause` is recorded in the history ('webhook:<type>', 'resync', 'checkout').
+ * locked. `cause` is recorded in the history ('webhook:<type>', 'resync', 'checkout'). `fetchedAt` is the database
+ * time just before the object was fetched: an object fetched before the one last applied is stale and ignored, so two
+ * workers (or an event and a resync) can never put an older answer over a newer one — a late "active" read cannot
+ * undo a cancellation that was already applied.
+ *
+ * Which subscription is the organization's: a live one over an ended one, and of two alike the newer. An ended
+ * subscription therefore never replaces a live one, and a live one the customer still pays for is never ignored
+ * because a newer one ended.
  */
 export async function applySubscription(
   deps: ReconcileDeps,
   orgId: string,
   sub: StripeSubscription,
   cause: string,
+  fetchedAt: Date,
 ): Promise<ApplyResult> {
   return withTx(deps.pool, { orgId, userId: null }, async (c) => {
     const { rows } = await c.query<Row>(
       `select plan_id, plan_version, state, reason, provider_subscription_id, provider_subscription_created,
-              grace_until, observed_state
+              grace_until, observed_state, provider_status, provider_fetched_at
          from subscriptions where org_id = $1 for update`,
       [orgId],
     );
     const row = rows[0];
     if (!row) throw new Error('subscription row missing');
+    if (row.provider_fetched_at && fetchedAt < row.provider_fetched_at) {
+      return { outcome: 'stale', stateChanged: false, planChanged: false, effective: null };
+    }
     const created = new Date(sub.created * 1000);
     if (row.provider_subscription_id && row.provider_subscription_id !== sub.id) {
-      if (row.provider_subscription_created && created <= row.provider_subscription_created) {
-        // An older subscription (ended, or a duplicate): it never replaces the current one.
-        if (LIVE.has(sub.status)) {
+      const storedLive = LIVE.has(row.provider_status ?? '');
+      const incomingLive = LIVE.has(sub.status);
+      const newer = !row.provider_subscription_created || created > row.provider_subscription_created;
+      const replaces = incomingLive !== storedLive ? incomingLive : newer;
+      if (!replaces) {
+        if (incomingLive) {
           await raiseAlert(
             c,
             'duplicate_subscriptions',
             orgId,
             sub.id,
-            'An older subscription is still live',
+            'Another subscription of this customer is still live',
           );
         }
         return { outcome: 'older_subscription', stateChanged: false, planChanged: false, effective: null };
       }
-      if (LIVE.has(sub.status) && ['trial', 'active', 'past_due', 'grace'].includes(row.state)) {
+      if (incomingLive && storedLive) {
         await raiseAlert(
           c,
           'duplicate_subscriptions',
@@ -202,7 +224,8 @@ export async function applySubscription(
       `update subscriptions set plan_id = $2, plan_version = $3, state = $4, reason = $5, provider = 'stripe',
               provider_subscription_id = $6, provider_subscription_created = $7, provider_status = $8,
               trial_ends_at = $9, current_period_end = $10, cancel_at_period_end = $11, grace_until = $12,
-              canceled_at = $13, synced_at = now(), updated_at = now(), version = version + 1
+              canceled_at = $13, provider_fetched_at = $14, synced_at = now(), resync_after = null, resync_requested_at = null,
+              updated_at = now(), version = version + 1
         where org_id = $1`,
       [
         orgId,
@@ -218,6 +241,7 @@ export async function applySubscription(
         sub.cancelAtPeriodEnd,
         next.graceUntil,
         sub.canceledAt ? new Date(sub.canceledAt * 1000) : null,
+        fetchedAt,
       ],
     );
     const planChanged = plan.id !== row.plan_id || plan.version !== row.plan_version;
@@ -331,17 +355,19 @@ async function processEvent(deps: ReconcileDeps, ev: EventRow): Promise<Outcome>
     return { status: 'ignored', orgId: null, note: 'unknown_customer' } as Outcome;
   };
   const subscriptionOf = async (subId: string, orgId: string) => {
+    const at = await fetchMark(deps);
     const sub = await deps.stripe.getSubscription(subId);
     const owner = await orgForCustomer(deps, sub.customer);
     if (owner !== orgId) return null;
-    return applySubscription(deps, orgId, sub, cause);
+    return applySubscription(deps, orgId, sub, cause, at);
   };
 
   if (ev.type.startsWith('customer.subscription.') && id?.startsWith('sub_')) {
+    const at = await fetchMark(deps);
     const sub = await deps.stripe.getSubscription(id);
     const orgId = await orgForCustomer(deps, sub.customer);
     if (!orgId) return unknownCustomer(sub.customer);
-    await applySubscription(deps, orgId, sub, cause);
+    await applySubscription(deps, orgId, sub, cause, at);
     return { status: 'processed', orgId };
   }
   if (ev.type.startsWith('checkout.session.') && id?.startsWith('cs_')) {
@@ -481,29 +507,34 @@ export async function resyncSubscriptions(
   let missed = 0;
   for (const r of due.rows) {
     try {
+      const at = await fetchMark(deps);
       let sub: StripeSubscription | null = null;
+      const all = await deps.stripe.listSubscriptions(r.provider_customer_id);
+      const usable = all.filter((s) => s.status !== 'incomplete' && s.status !== 'incomplete_expired');
+      // The organization's subscription: a live one over an ended one, and of two alike the newer (a missed
+      // checkout.session.completed, or a customer still paying for an older one after a newer one ended).
+      const best = (list: StripeSubscription[]) =>
+        [...list].sort(
+          (a, b) => Number(LIVE.has(b.status)) - Number(LIVE.has(a.status)) || b.created - a.created,
+        )[0] ?? null;
       if (r.provider_subscription_id) {
-        sub = await deps.stripe.getSubscription(r.provider_subscription_id);
-        // A newer subscription of the same customer (a missed checkout.session.completed) wins.
-        const all = await deps.stripe.listSubscriptions(r.provider_customer_id);
-        const newer = all
-          .filter((s) => s.id !== sub?.id && LIVE.has(s.status) && s.created > (sub?.created ?? 0))
-          .sort((a, b) => b.created - a.created)[0];
-        if (newer) sub = newer;
+        const current =
+          usable.find((s) => s.id === r.provider_subscription_id) ??
+          (await deps.stripe.getSubscription(r.provider_subscription_id));
+        sub = best([current, ...usable.filter((s) => s.id !== current.id)]);
       } else {
-        const all = await deps.stripe.listSubscriptions(r.provider_customer_id);
-        sub =
-          all
-            .filter((s) => s.status !== 'incomplete' && s.status !== 'incomplete_expired')
-            .sort((a, b) => b.created - a.created)[0] ?? null;
+        sub = best(usable);
       }
       if (!sub) {
         await withTx(deps.pool, { orgId: r.org_id, userId: null }, (c) =>
-          c.query('update subscriptions set synced_at = now() where org_id = $1', [r.org_id]),
+          c.query(
+            'update subscriptions set synced_at = now(), resync_after = null, resync_requested_at = null where org_id = $1',
+            [r.org_id],
+          ),
         );
         continue;
       }
-      const res = await applySubscription(deps, r.org_id, sub, 'resync');
+      const res = await applySubscription(deps, r.org_id, sub, 'resync', at);
       synced++;
       if (res.stateChanged || res.planChanged) {
         missed++;
@@ -516,10 +547,21 @@ export async function resyncSubscriptions(
         );
       }
     } catch (err) {
-      deps.log('warn', 'billing resync failed', {
-        org: r.org_id,
-        error: err instanceof StripeError ? `${err.status} ${err.type}` : 'error',
-      });
+      const e = err instanceof StripeError ? err : null;
+      const error = e ? `${e.status} ${e.type}` : 'error';
+      deps.log('warn', 'billing resync failed', { org: r.org_id, error });
+      // Back off so one failing organization cannot hold the head of every batch; a lasting failure (a deleted
+      // customer, ids from another Stripe mode) is an alert for staff.
+      const transient = !e || e.transient;
+      await withTx(deps.pool, { orgId: r.org_id, userId: null }, async (c) => {
+        await c.query(
+          `update subscriptions set resync_after = now() + make_interval(secs => $2) where org_id = $1`,
+          [r.org_id, transient ? 900 : 6 * 3600],
+        );
+        if (!transient) {
+          await raiseAlert(c, 'resync_failed', r.org_id, r.provider_customer_id, `Resync failed: ${error}`);
+        }
+      }).catch(() => undefined);
     }
   }
   return { synced, missed };

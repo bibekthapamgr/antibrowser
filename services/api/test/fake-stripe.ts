@@ -349,6 +349,25 @@ export async function fakeStripe(): Promise<FakeStripe> {
       sessions.set(id, s);
       return remember(s);
     }
+    const expire = req.method === 'POST' ? /^\/v1\/checkout\/sessions\/(cs_\w+)\/expire$/.exec(path) : null;
+    if (expire) {
+      const s = sessions.get(expire[1] ?? '');
+      if (!s) return missing();
+      if (s.status !== 'open') {
+        return send(400, { error: { type: 'invalid_request_error', code: 'checkout_session_not_open' } });
+      }
+      s.status = 'expired';
+      return send(200, s);
+    }
+    if (req.method === 'GET' && path === '/v1/checkout/sessions') {
+      return send(200, {
+        object: 'list',
+        data: [...sessions.values()].filter(
+          (o) => o.customer === params.customer && (!params.status || o.status === params.status),
+        ),
+        has_more: false,
+      });
+    }
     if (req.method === 'POST' && path === '/v1/billing_portal/sessions') {
       if (!customers.has(params.customer ?? '')) return missing();
       return send(200, {

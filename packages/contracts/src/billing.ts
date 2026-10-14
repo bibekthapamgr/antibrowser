@@ -154,6 +154,8 @@ export const BILLING_TIMING = {
   renewalConfirmHours: 72,
   /** After the period end without a confirmed renewal: restricted. */
   renewalMaxDays: 10,
+  /** After the period end, a payment still failing (provider retrying) is treated as grace, then restricted. */
+  pastDueMaxDays: 30,
   /** Longest sensitive support access. */
   supportAccessMaxMinutes: 240,
   /** Longest entitlement override. */
@@ -178,6 +180,8 @@ export const RESTRICTED_ACTIONS = [
   'automation.create',
   'automation.claim',
   'import',
+  /** Joining through an invitation made before the restriction. */
+  'invitation.accept',
 ] as const;
 export type RestrictedAction = (typeof RESTRICTED_ACTIONS)[number];
 
@@ -473,6 +477,7 @@ export const BILLING_ALERT_KINDS = [
   'dispute',
   'refund',
   'signature_failures',
+  'resync_failed',
 ] as const;
 export type BillingAlertKind = (typeof BILLING_ALERT_KINDS)[number];
 
