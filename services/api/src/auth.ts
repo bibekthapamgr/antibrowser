@@ -24,7 +24,7 @@ export interface TokenGrant {
  * tokens (milestone 10): they act as the token's owner, limited by the token's organization, scopes and restrictions.
  */
 export interface Principal {
-  kind: 'session' | 'dev' | 'token' | 'staff';
+  kind: 'session' | 'dev' | 'token' | 'staff' | 'web';
   userId: string;
   deviceId: string | null;
   sessionId: string | null;
@@ -32,6 +32,8 @@ export interface Principal {
   authTime: Date;
   token?: TokenGrant;
   /** Milestone 11: support console staff (only on /v1/support routes). Milestone 12: an active break-glass grant. */
+  /** R2: the customer portal's cookie session (the digest of its id; the session id itself is never kept). */
+  web?: { idHash: string };
   staff?: {
     roles: StaffRole[];
     /** Milestone 12: an active break-glass grant, for the organizations it names only. */

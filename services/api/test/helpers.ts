@@ -9,6 +9,7 @@ import { localKeyProvider, type RootKeyProvider } from '../src/backup/keys.ts';
 import { MemoryObjectStore, type ObjectStore, s3ObjectStore } from '../src/backup/objects.ts';
 import { createPool } from '../src/db.ts';
 import { FIXTURES, type FixtureUserKey } from '../src/fixtures.ts';
+import type { IdTokenVerifier } from '../src/oidc.ts';
 import { nonce, TEST_CLIENT_ID, TEST_ISSUER, type TestIdp, testIdp } from './idp.ts';
 
 export interface Harness {
@@ -57,6 +58,9 @@ export interface HarnessOptions {
   consoleClientId?: string;
   /** Milestone 12: another root key provider (an unavailable key service). */
   kms?: RootKeyProvider;
+  /** R2: verifiers for another identity provider (the web portal tests run a local one over HTTP). */
+  idTokens?: IdTokenVerifier;
+  webIdTokens?: IdTokenVerifier;
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -82,21 +86,23 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   if (memory) objects = memory;
   else if (config.objectStore) objects = s3ObjectStore(config.objectStore);
   else throw new Error('storage: s3 needs OBJECT_STORE_* in the test environment');
-  const consoleIdTokens = opts.consoleClientId
-    ? { consoleIdTokens: idp.verifierFor(opts.consoleClientId) }
-    : {};
+  const consoleIdTokens = {
+    ...(opts.consoleClientId ? { consoleIdTokens: idp.verifierFor(opts.consoleClientId) } : {}),
+    ...(opts.webIdTokens ? { webIdTokens: opts.webIdTokens } : {}),
+  };
+  const idTokens = opts.idTokens ?? idp.verifier;
   const app = await buildApp(
     lines ? { ...config, logLevel: 'info' } : config,
     pool,
     lines
       ? {
-          idTokens: idp.verifier,
+          idTokens,
           logStream: { write: (line) => void lines.push(line) },
           objects,
           kms,
           ...consoleIdTokens,
         }
-      : { logger: false, idTokens: idp.verifier, objects, kms, ...consoleIdTokens },
+      : { logger: false, idTokens, objects, kms, ...consoleIdTokens },
   );
   await app.ready();
   const worker = new pg.Pool({

@@ -34,6 +34,10 @@ export const LIMITS = {
   billingWebhookPerIp: { bucket: 'billing.webhook.ip', max: 1200, windowSeconds: 60 },
   billingSessionPerOrg: { bucket: 'billing.session.org', max: 30, windowSeconds: 600 },
   staffSignInPerIp: { bucket: 'staff.signin.ip', max: 20, windowSeconds: 600 },
+  // R2: onboarding (bootstrap) per person and per address; web portal sign-in starts per address.
+  onboardingPerUser: { bucket: 'onboarding.user', max: 20, windowSeconds: 600 },
+  onboardingPerIp: { bucket: 'onboarding.ip', max: 60, windowSeconds: 600 },
+  webSignInPerIp: { bucket: 'web.signin.ip', max: 30, windowSeconds: 600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

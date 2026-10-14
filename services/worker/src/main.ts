@@ -23,6 +23,7 @@ import { createStripe } from '@pb/api/billing/stripe';
 import { loadConfig } from '@pb/config/env';
 import { AGENT_TIMING, BILLING_TIMING, WEBHOOK_LIMITS } from '@pb/contracts';
 import pg from 'pg';
+import { type EmailDeps, processEmailTasks, smtpTransport } from './email.ts';
 import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys, purgeRateLimits } from './outbox.ts';
 import { processWebhooks, sweepAutomation, type WebhookDeps, webhookFanoutConsumer } from './webhooks.ts';
 
@@ -71,6 +72,16 @@ const billing: ReconcileDeps | null = config.billing.stripe
     }
   : null;
 
+// R2: e-mails the API queued (invitation links, welcome). Without SMTP_URL tasks are marked skipped.
+const email: EmailDeps = {
+  pool,
+  key: config.email.taskKey,
+  transport: config.email.smtpUrl ? smtpTransport(config.email.smtpUrl) : null,
+  from: config.email.from,
+  brand: process.env.EMAIL_BRAND || 'Project Browser',
+  log,
+};
+
 let running = true;
 const stop = () => {
   running = false;
@@ -99,6 +110,7 @@ log('info', 'worker started', {
   snapshots: jobs ? 'enabled' : 'not configured',
   webhooks: webhooks ? 'enabled' : 'not configured',
   billing: billing ? 'enabled' : 'not configured',
+  email: email.transport ? 'enabled' : 'not configured',
 });
 while (running) {
   try {
@@ -117,6 +129,9 @@ while (running) {
       });
       lastAutomationSweep = Date.now();
     }
+    const mail = await processEmailTasks(email);
+    const mailed = mail.sent + mail.retried + mail.failed + mail.skipped;
+    if (mailed) log(mail.failed ? 'warn' : 'info', 'e-mail tasks', { ...mail });
     let billed = 0;
     if (billing) {
       const b = await processBillingEvents(billing, 20);
@@ -157,7 +172,7 @@ while (running) {
       await task('orphan objects swept', () => sweepOrphans(jobs));
       lastSweep = Date.now();
     }
-    if (processed === 0 && synced === 0 && sent === 0 && billed === 0)
+    if (processed === 0 && synced === 0 && sent === 0 && billed === 0 && mailed === 0)
       await new Promise((r) => setTimeout(r, 500));
   } catch (err) {
     log('error', 'worker loop error', errorInfo(err));

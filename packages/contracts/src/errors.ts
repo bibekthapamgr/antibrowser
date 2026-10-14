@@ -75,6 +75,15 @@ export const ERROR_CODES = {
   // Milestone 12
   /** This version of the desktop app is below the server's minimum (a known problem): update it. */
   CLIENT_UPDATE_REQUIRED: { status: 426, retryable: false },
+  // R2 (ADR-0021)
+  /** The current terms must be accepted first (safe_details.current_version). */
+  TERMS_REQUIRED: { status: 409, retryable: false },
+  /** The workspace was suspended: it cannot be joined or opened by default. */
+  WORKSPACE_SUSPENDED: { status: 403, retryable: false },
+  /** This address belongs to a suspended account; a new workspace cannot be created for it. */
+  ACCOUNT_SUSPENDED: { status: 403, retryable: false },
+  /** A web portal change without the session's CSRF token, or from another origin. */
+  CSRF_FAILED: { status: 403, retryable: false },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

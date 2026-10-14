@@ -72,6 +72,8 @@ export function organizationRoutes(app: App, deps: Deps): void {
           orgId,
           principal.userId,
         ]);
+        // R2: further workspaces share the person's trial clock instead of starting a fresh trial.
+        await c.query('select app.claim_trial($1, $2)', [orgId, principal.userId]);
         const { rows } = await c.query<Omit<Organization, 'role'>>(
           `select ${ORG_COLUMNS} from organizations o where o.id = $1`,
           [orgId],
@@ -110,7 +112,7 @@ export function organizationRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId',
     {
-      config: { tokens: true },
+      config: { tokens: true, web: true },
       schema: { tags: ['organizations'], params: OrgParams, response: { 200: Organization, ...errors } },
     },
     async (req, reply) => {

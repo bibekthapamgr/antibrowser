@@ -133,7 +133,8 @@ export const FeatureSettingsUpdate = Type.Object(
 );
 
 // ---------------------------------------------------------------- onboarding
-export const ONBOARDING_STATES = ['new', 'invited', 'ready'] as const;
+/** R2 adds `choose`: several owned workspaces, the person picks the default once. */
+export const ONBOARDING_STATES = ['new', 'invited', 'ready', 'choose'] as const;
 export const OnboardingState = Type.Object(
   {
     state: Type.Enum(ONBOARDING_STATES),

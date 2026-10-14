@@ -21,6 +21,7 @@ import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, auditAlone, changeEntry } from '../audit.ts';
 import { requireBillingAllows } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
+import { enqueueEmail } from '../email.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
 import { newInvitationToken, sha256Hex } from '../session.ts';
@@ -34,6 +35,7 @@ import {
   pageWindow,
   TokenParams,
 } from './common.ts';
+import { rotateWebSession } from './web.ts';
 
 const STATUS = `case when i.revoked_at is not null then 'revoked'
                      when i.accepted_at is not null then 'accepted'
@@ -101,6 +103,28 @@ export function invitationRoutes(app: App, deps: Deps): void {
           throw err;
         }
         if (!row) throw new ApiError('INTERNAL', 'Invitation was not created');
+        // R2: the link by e-mail (the worker sends it; the token is sealed, never stored in clear).
+        const names = await c.query<{ org_name: string; inviter: string }>(
+          `select o.name as org_name, u.display_name as inviter from organizations o, users u
+            where o.id = $1 and u.id = $2`,
+          [access.orgId, access.userId],
+        );
+        const origin = deps.config.web.origin;
+        const queued =
+          origin !== null &&
+          (await enqueueEmail(c, deps.config.email.taskKey, {
+            kind: 'invitation',
+            orgId: access.orgId,
+            to: email,
+            dedupeKey: `invitation:${id}`,
+            vars: {
+              org_name: names.rows[0]?.org_name ?? '',
+              inviter_name: names.rows[0]?.inviter ?? '',
+              role: req.body.role,
+              link: `${origin}/app/#/invite/${token}`,
+              expires_at: row.expires_at,
+            },
+          }));
         await audit(
           c,
           changeEntry(access, 'invitation.created', 'invitation', id, {
@@ -108,9 +132,13 @@ export function invitationRoutes(app: App, deps: Deps): void {
             expires_in_days: days,
           }),
         );
-        return row;
+        return { row, queued };
       });
-      return reply.status(201).send({ invitation: created, token });
+      return reply.status(201).send({
+        invitation: created.row,
+        token,
+        email_delivery: created.queued ? 'queued' : 'not_configured',
+      });
     },
   );
 
@@ -182,6 +210,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
   app.get(
     '/invitations/:token',
     {
+      config: { web: true },
       schema: {
         tags: ['invitations'],
         description: 'What an invitation link leads to, and whether the signed-in account can accept it.',
@@ -220,6 +249,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
   app.post(
     '/invitations/:token/accept',
     {
+      config: { web: true },
       schema: {
         tags: ['invitations'],
         description:
@@ -229,7 +259,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
         response: { 200: InvitationAccepted, ...errors },
       },
     },
-    async (req) => {
+    async (req, reply) => {
       const principal = principalOf(req);
       await hit(deps.pool, LIMITS.acceptPerUser, principal.userId);
       await hit(deps.pool, LIMITS.acceptPerIp, req.ip);
@@ -272,6 +302,8 @@ export function invitationRoutes(app: App, deps: Deps): void {
         return r;
       });
       if (result?.outcome === 'accepted' && result.org_id && result.role) {
+        // R2: a privilege change gives a portal session a new id.
+        await rotateWebSession(req, reply, deps);
         return { org_id: result.org_id, role: result.role };
       }
       const outcome = result?.outcome ?? 'invalid';
@@ -301,7 +333,7 @@ async function currentUser(c: pg.PoolClient, userId: string) {
   return rows[0] ?? { email: null, email_verified: false };
 }
 
-function acceptFailure(outcome: string): ApiError {
+export function acceptFailure(outcome: string): ApiError {
   switch (outcome) {
     case 'expired':
       return new ApiError('INVITATION_EXPIRED', 'This invitation has expired; ask for a new one');
@@ -318,6 +350,19 @@ function acceptFailure(outcome: string): ApiError {
       );
     case 'already_member':
       return new ApiError('ALREADY_MEMBER', 'You are already a member of this organization');
+    case 'workspace_suspended':
+      return new ApiError('WORKSPACE_SUSPENDED', 'This workspace is suspended and cannot be joined');
+    case 'seats_full':
+      return new ApiError(
+        'PLAN_LIMIT_REACHED',
+        'This workspace has no free seat; ask its owner to add seats',
+        {
+          limit: 'seats',
+          used: null,
+          allowed: null,
+          remediation: ['upgrade', 'remove_members'],
+        },
+      );
     default:
       return new ApiError('NOT_FOUND', 'Invitation not found');
   }

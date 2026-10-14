@@ -208,7 +208,7 @@ async function verifySignIn(
  * Claims the ID token inside the transaction that uses it: each token starts at most one session. A refused
  * request (for example an unknown device) rolls the claim back, so the same token can still enroll this device.
  */
-async function claimOnce(
+export async function claimOnce(
   c: pg.PoolClient,
   deps: Deps,
   requestId: string,
@@ -236,7 +236,7 @@ async function signInFailed(deps: Deps, requestId: string, reason: string): Prom
 }
 
 /** Finds or creates the user for this identity (matched by issuer and subject, never by e-mail). */
-async function upsertUser(deps: Deps, requestId: string, identity: VerifiedIdentity): Promise<string> {
+export async function upsertUser(deps: Deps, requestId: string, identity: VerifiedIdentity): Promise<string> {
   const { rows } = await withTx(deps.pool, { orgId: null, userId: null }, (c) =>
     c.query<{ user_id: string; disabled: boolean }>(
       'select * from app.upsert_oidc_user($1, $2, $3, $4, $5, $6)',

@@ -167,10 +167,13 @@ describe('roles', () => {
     // before their organization is known, staff, staff sessions, support access requests, alerts and the platform
     // audit). Only the webhook route, the worker and the staff-only support routes use them (ADR-0018).
     // Milestone 12: break-glass grants (staff), the audit chain head and recovery markers (no application access).
+    // R2: the e-mail queue (the API inserts, only the worker reads, like the outbox), trial claims and pending web
+    // sign-ins (reached only through security-definer functions, no grants to the application).
     expect(rows.map((r) => r.relname)).toEqual([
       'billing_alerts',
       'billing_webhook_events',
       'break_glass_grants',
+      'email_tasks',
       'outbox_events',
       'plans',
       'platform_audit',
@@ -180,6 +183,8 @@ describe('roles', () => {
       'recovery_markers',
       'staff_sessions',
       'support_access_requests',
+      'trial_claims',
+      'web_auth_requests',
     ]);
     for (const table of [
       'outbox_events',
@@ -188,6 +193,9 @@ describe('roles', () => {
       'used_id_tokens',
       'platform_audit_head',
       'recovery_markers',
+      'email_tasks',
+      'trial_claims',
+      'web_auth_requests',
     ]) {
       await expect(asApp({}, (c) => c.query(`select * from ${table}`))).rejects.toThrow(/permission denied/);
     }
@@ -201,6 +209,15 @@ describe('roles', () => {
       'app.accept_invitation(text,text)',
       'app.rate_limit_hit(text,text,integer)',
       'app.claim_id_token(text,timestamptz)',
+      // R2
+      'app.claim_trial(text,text)',
+      'app.trial_available(text)',
+      'app.invitations_for_user(text)',
+      'app.email_suspended(text)',
+      'app.web_session_for_auth(text,integer)',
+      'app.web_auth_begin(text,text,text,text)',
+      'app.web_auth_take(text)',
+      'app.email_task_state(text)',
     ];
     for (const fn of fns) {
       const { rows } = await h.owner.query(

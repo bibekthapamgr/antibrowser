@@ -77,7 +77,7 @@ export function workspaceRoutes(app: App, deps: Deps): void {
   app.get(
     '/me/capabilities',
     {
-      config: { tokens: true },
+      config: { tokens: true, web: true },
       schema: {
         tags: ['identity'],
         description:
@@ -98,6 +98,7 @@ export function workspaceRoutes(app: App, deps: Deps): void {
   app.get(
     '/me/onboarding',
     {
+      config: { web: true },
       schema: {
         tags: ['identity'],
         description:

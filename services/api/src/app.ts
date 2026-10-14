@@ -35,12 +35,14 @@ import { importRoutes } from './routes/import.ts';
 import { invitationRoutes } from './routes/invitations.ts';
 import { leaseRoutes } from './routes/leases.ts';
 import { meRoutes } from './routes/me.ts';
+import { onboardingRoutes } from './routes/onboarding.ts';
 import { organizationRoutes } from './routes/organizations.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
 import { supportRoutes } from './routes/support.ts';
 import { tokenRoutes } from './routes/tokens.ts';
+import { authenticateWeb, hasWebCookie, webRoutes } from './routes/web.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { workspaceRoutes } from './routes/workspace.ts';
 import { createSessionKeys, type SessionKeys } from './session.ts';
@@ -67,6 +69,8 @@ export interface Deps {
   billing: BillingDeps;
   /** Milestone 11: ID tokens of the support console's own OIDC client (null: the console cannot sign in). */
   consoleIdTokens: IdTokenVerifier | null;
+  /** R2: ID tokens of the customer portal's own client (backend-for-frontend sign-in). */
+  webIdTokens: IdTokenVerifier | null;
 }
 
 export interface BillingDeps {
@@ -96,11 +100,18 @@ declare module 'fastify' {
     tokens?: boolean;
     /** Milestone 11: a support console route (staff tokens only; organization credentials never work here). */
     staff?: boolean;
+    /** R2: the customer web portal's cookie session may call this route (deny by default; CSRF on changes). */
+    web?: boolean;
   }
 }
 
 /** Header names never written to logs. */
-const REDACT = ['req.headers.authorization', 'req.headers.cookie', 'req.headers["idempotency-key"]'];
+const REDACT = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers["idempotency-key"]',
+  'req.headers["x-csrf-token"]',
+];
 
 /**
  * Invitation tokens travel in URL paths (links), and the support console receives the identity provider's one-time
@@ -128,6 +139,7 @@ export interface BuildOptions {
   stripe?: Stripe;
   /** Tests inject the support console's ID-token verifier. */
   consoleIdTokens?: IdTokenVerifier;
+  webIdTokens?: IdTokenVerifier;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -185,6 +197,15 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
           allowLoopbackHttp: config.appEnv === 'dev' || config.appEnv === 'test',
         })
       : null);
+  const webIdTokens =
+    opts.webIdTokens ??
+    (config.oidc && config.web.oidcClientId
+      ? createIdTokenVerifier({
+          issuer: config.oidc.issuer,
+          clientId: config.web.oidcClientId,
+          allowLoopbackHttp: config.appEnv === 'dev' || config.appEnv === 'test',
+        })
+      : null);
   const deps: Deps = {
     config,
     pool,
@@ -206,6 +227,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       priceCache: new Map(),
     },
     consoleIdTokens,
+    webIdTokens,
   };
 
   await app.register(swagger, {
@@ -272,6 +294,16 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     }
     if (req.routeOptions.config.staff) {
       req.principal = await deps.auth.authenticateStaff(req.headers.authorization);
+      return;
+    }
+    // R2: the customer portal's cookie session, on routes that accept it (a bearer token always wins).
+    if (!req.headers.authorization && hasWebCookie(req, deps)) {
+      if (!req.routeOptions.config.web) {
+        throw new ApiError('UNAUTHENTICATED', 'This route is not available to the web portal', {
+          reason: 'not_for_web',
+        });
+      }
+      req.principal = await authenticateWeb(req, deps);
       return;
     }
     req.principal = await deps.auth.authenticate(req.headers.authorization);
@@ -390,6 +422,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       meRoutes(scoped, deps);
       organizationRoutes(scoped, deps);
       invitationRoutes(scoped, deps);
+      onboardingRoutes(scoped, deps);
+      webRoutes(scoped, deps);
       clientRoutes(scoped, deps);
       grantRoutes(scoped, deps);
       profileRoutes(scoped, deps);

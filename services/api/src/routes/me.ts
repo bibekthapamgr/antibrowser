@@ -5,35 +5,40 @@ import { profileVisible, type TenantAccess } from '../tenancy.ts';
 import { errors } from './common.ts';
 
 export function meRoutes(app: App, deps: Deps): void {
-  app.get('/me', { schema: { tags: ['identity'], response: { 200: Me, ...errors } } }, async (req) => {
-    const { userId } = principalOf(req);
-    return withTx(deps.pool, { orgId: null, userId }, async (c) => {
-      const user = await c.query<{ display_name: string; email: string | null; email_verified: boolean }>(
-        'select display_name, email, email_verified from users where id = $1',
-        [userId],
-      );
-      const memberships = await c.query<{ org_id: string; org_name: string; role: Role }>(
-        `select m.org_id, o.name as org_name, m.role
+  app.get(
+    '/me',
+    { config: { web: true }, schema: { tags: ['identity'], response: { 200: Me, ...errors } } },
+    async (req) => {
+      const { userId } = principalOf(req);
+      return withTx(deps.pool, { orgId: null, userId }, async (c) => {
+        const user = await c.query<{ display_name: string; email: string | null; email_verified: boolean }>(
+          'select display_name, email, email_verified from users where id = $1',
+          [userId],
+        );
+        const memberships = await c.query<{ org_id: string; org_name: string; role: Role }>(
+          `select m.org_id, o.name as org_name, m.role
              from memberships m join organizations o on o.id = m.org_id
             where m.user_id = $1
             order by o.name, m.org_id
             limit 100`,
-        [userId],
-      );
-      const u = user.rows[0];
-      return {
-        user_id: userId,
-        display_name: u?.display_name ?? '',
-        email: u?.email ?? null,
-        email_verified: u?.email_verified ?? false,
-        memberships: memberships.rows,
-      };
-    });
-  });
+          [userId],
+        );
+        const u = user.rows[0];
+        return {
+          user_id: userId,
+          display_name: u?.display_name ?? '',
+          email: u?.email ?? null,
+          email_verified: u?.email_verified ?? false,
+          memberships: memberships.rows,
+        };
+      });
+    },
+  );
 
   app.get(
     '/me/workspaces',
     {
+      config: { web: true },
       schema: {
         tags: ['identity'],
         description:

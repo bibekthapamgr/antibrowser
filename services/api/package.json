@@ -13,7 +13,8 @@
     "./webhooks/signing": "./src/webhooks/signing.ts",
     "./automation": "./src/automation.ts",
     "./billing/reconcile": "./src/billing/reconcile.ts",
-    "./billing/stripe": "./src/billing/stripe.ts"
+    "./billing/stripe": "./src/billing/stripe.ts",
+    "./email": "./src/email.ts"
   },
   "description": "Control-plane API (Fastify modular monolith): identity, organizations, authorization, leases and snapshots.",
   "scripts": {

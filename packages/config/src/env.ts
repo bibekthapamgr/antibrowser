@@ -105,6 +105,24 @@ export interface AppConfig {
   };
   /** The internal support console (milestone 11): static files served at /console/ and its own OIDC client. */
   console: { dir: string | null; oidcClientId: string | null };
+  /** R2 (ADR-0021): the terms a new workspace owner accepts (a version label; the text lives on the website). */
+  onboarding: { termsVersion: string; termsUrl: string | null };
+  /**
+   * R2: the customer web portal (backend-for-frontend). `origin` is the exact public origin it is served from
+   * (cookies, redirects and Origin checks use it); `oidcClientId` its own public OIDC client (PKCE). Null: no portal.
+   */
+  web: {
+    origin: string | null;
+    oidcClientId: string | null;
+    dir: string | null;
+    sessionIdleSeconds: number;
+    sessionAbsoluteSeconds: number;
+  };
+  /**
+   * R2: e-mail the worker sends (invitation links, welcome). `taskKey` (32 bytes, EMAIL_TASK_KEY in base64) encrypts
+   * queued links; the database never holds it. `smtpUrl` is read by the worker only; null: tasks are marked skipped.
+   */
+  email: { taskKey: Buffer | null; smtpUrl: string | null; from: string | null };
 }
 
 export class ConfigError extends Error {
@@ -243,6 +261,43 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const consoleClient = env.OIDC_CONSOLE_CLIENT_ID || null;
   if (consoleClient && !oidc) problems.push('OIDC_CONSOLE_CLIENT_ID needs OIDC_ISSUER');
 
+  const termsVersion = env.TERMS_VERSION || '2026-10-14';
+  if (!/^[A-Za-z0-9._-]{1,32}$/.test(termsVersion))
+    problems.push('TERMS_VERSION must be 1-32 of A-Z a-z 0-9 . _ -');
+  const webOrigin = env.WEB_ORIGIN?.replace(/\/$/, '') || null;
+  if (webOrigin) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(webOrigin);
+    } catch {
+      problems.push('WEB_ORIGIN must be an origin such as https://app.example.com');
+    }
+    if (parsed && (parsed.origin !== webOrigin || !secureOrLoopback(webOrigin, local)))
+      problems.push('WEB_ORIGIN must be an https origin (scheme://host[:port], nothing after it)');
+  }
+  const webClient = env.OIDC_WEB_CLIENT_ID || null;
+  if (webClient && (!oidc || !webOrigin))
+    problems.push('OIDC_WEB_CLIENT_ID needs OIDC_ISSUER and WEB_ORIGIN');
+  const web: AppConfig['web'] = {
+    origin: webOrigin,
+    oidcClientId: webClient,
+    dir: env.WEB_DIR || null,
+    sessionIdleSeconds: seconds('WEB_SESSION_IDLE_SECONDS', 1800, 300, 86400),
+    sessionAbsoluteSeconds: seconds('WEB_SESSION_ABSOLUTE_SECONDS', 12 * 3600, 3600, 7 * 86400),
+  };
+  let taskKey: Buffer | null = null;
+  if (env.EMAIL_TASK_KEY) {
+    taskKey = Buffer.from(env.EMAIL_TASK_KEY, 'base64');
+    if (taskKey.length !== 32) {
+      problems.push('EMAIL_TASK_KEY must be 32 bytes in base64');
+      taskKey = null;
+    }
+  }
+  const smtpUrl = env.SMTP_URL || null;
+  if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) problems.push('SMTP_URL must start with smtp:// or smtps://');
+  const emailFrom = env.EMAIL_FROM || null;
+  if (smtpUrl && !emailFrom) problems.push('EMAIL_FROM is required with SMTP_URL');
+
   const kms = loadKms(env, local, problems);
   if (objectStore && !kms)
     problems.push('a key provider (KMS_LOCAL_KEY_FILE) is required with object storage');
@@ -266,6 +321,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
     billing,
     console: { dir: consoleDir, oidcClientId: consoleClient },
+    onboarding: { termsVersion, termsUrl: env.TERMS_URL || null },
+    web,
+    email: { taskKey, smtpUrl, from: emailFrom },
   };
 }
 

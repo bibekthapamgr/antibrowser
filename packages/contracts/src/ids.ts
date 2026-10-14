@@ -53,6 +53,8 @@ export const ID_PREFIXES = {
   // R1 (ADR-0020): workspace folders and device migration runs.
   folder: 'fld',
   migrationRun: 'mgr',
+  // R2 (ADR-0021): e-mails the worker sends.
+  emailTask: 'eml',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

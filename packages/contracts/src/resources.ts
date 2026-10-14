@@ -339,7 +339,12 @@ export const Invitation = Type.Object(
 export type Invitation = Static<typeof Invitation>;
 /** Returned once at creation: the token is never stored in clear and cannot be shown again. */
 export const InvitationCreated = Type.Object(
-  { invitation: Invitation, token: Type.String() },
+  {
+    invitation: Invitation,
+    token: Type.String(),
+    /** R2: whether the link was also queued as an e-mail to the invited address (`not_configured`: share it). */
+    email_delivery: Type.Optional(Type.Enum(['queued', 'not_configured'])),
+  },
   { additionalProperties: false },
 );
 export const InvitationPreview = Type.Object(
