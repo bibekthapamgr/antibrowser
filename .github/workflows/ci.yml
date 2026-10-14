@@ -125,7 +125,9 @@ jobs:
           pnpm run openapi
           git diff --exit-code docs/openapi.json
       - name: Frontend bundles build
-        run: pnpm --filter @pb/desktop build && pnpm --filter @pb/web-admin build
+        run: |
+          pnpm --filter @pb/desktop build && pnpm --filter @pb/web-admin build
+          pnpm --filter @pb/web-customer build && pnpm --filter @pb/web-public build
       - name: IPC schema document is up to date
         run: |
           pnpm run docs:ipc

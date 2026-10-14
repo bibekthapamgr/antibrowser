@@ -5,6 +5,31 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.16.0 — 2026-10-15 (R4: website, customer portal and checkout)
+Added (see ADR-0023; nothing removed or renamed)
+- `GET /public/plans`: purchasable plans with limits, features, verified prices per interval (`month`, `year` only when
+  configured), currency, tax display, trial days and `catalog_version` (also the ETag; `304` on `If-None-Match`).
+  Unverifiable or disabled prices are omitted and the plan is `available: false` — never a $0 price.
+- `GET /public/downloads`: the stable release verified with the app's release keys — `available` with per-platform
+  URL, SHA-256 and size, or `paused` / `not_available` with no files.
+- `POST /public/contact` (`202`; honeypot `website`; rate limited) and `GET|POST /public/unsubscribe` (signed one-click
+  link for product news).
+- `GET|PUT /me/notifications` (`marketing`, `billing_reminders`); `GET|POST|DELETE /me/deletion-request`.
+- `POST /orgs/{org}/billing/checkout` accepts optional `interval` (`month` | `year`) and `return_to` (`app` | `portal`);
+  an open checkout for the same choice is reused (same URL), another choice replaces it.
+- `POST /orgs/{org}/billing/portal-session?return_to=portal`.
+- `Subscription.checkout` (state, plan, interval, created/expires) while a checkout is open or just finished;
+  `BillingPlan.prices` (all verified intervals).
+- `GET /web/config` adds `account_url` (the identity provider's account page) and `status_url`.
+- Portal cookie accepted (`web: true`) on: billing subscription, plans, checkout, portal session, usage, invoices and
+  invoice links; members list/update/remove; invitations create/list/revoke; grants list, access preview and member
+  access; profiles and folders lists; devices list and revoke.
+- E-mail kinds `welcome`, `payment_succeeded`, `payment_failed`, `trial_ending`, `contact_request`, `deletion_request`.
+
+Changed (visible to clients)
+- Responses set `cache-control: no-store` only when a route has not chosen its own caching (public catalog and
+  website pages are cacheable).
+
 ## 0.15.0 — 2026-10-15 (R3: unified profiles and simple team sharing)
 Added (see ADR-0022; nothing removed or renamed)
 - Grant scopes `folder_id` (a folder's profiles, including ones added later) and `all_profiles` (every profile of the

@@ -181,6 +181,7 @@ export function organizationRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/members',
     {
+      config: { web: true },
       schema: {
         tags: ['members'],
         params: OrgParams,
@@ -209,6 +210,7 @@ export function organizationRoutes(app: App, deps: Deps): void {
   app.patch(
     '/orgs/:orgId/members/:userId',
     {
+      config: { web: true },
       schema: {
         tags: ['members'],
         description:
@@ -276,6 +278,7 @@ export function organizationRoutes(app: App, deps: Deps): void {
   app.delete(
     '/orgs/:orgId/members/:userId',
     {
+      config: { web: true },
       schema: {
         tags: ['members'],
         description:

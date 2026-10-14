@@ -221,7 +221,7 @@ export type SupportAccessScope = (typeof SUPPORT_ACCESS_SCOPES)[number];
 
 // ================================================================ Schemas: organization billing
 const PlanId = Type.String({ pattern: PLAN_ID_PATTERN });
-const Limits = Type.Object(
+export const Limits = Type.Object(
   {
     profiles: Nullable(Type.Integer({ minimum: 0 })),
     seats: Nullable(Type.Integer({ minimum: 0 })),
@@ -230,7 +230,7 @@ const Limits = Type.Object(
   },
   { additionalProperties: false },
 );
-const Features = Type.Object(
+export const Features = Type.Object(
   {
     team_sessions: Type.Boolean(),
     automation: Type.Boolean(),
@@ -277,6 +277,22 @@ export const BillingPlan = Type.Object(
     available: Type.Boolean(),
     /** From the provider; null when it could not be read (the checkout page always shows it). */
     price: Nullable(Price),
+    /** R4: every verified price (month, year), as on the public pricing page. */
+    prices: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            interval: Type.Union([Type.Literal('month'), Type.Literal('year')]),
+            amount_minor: Type.Integer({ minimum: 0 }),
+            currency: Type.String({ pattern: '^[a-z]{3}$' }),
+            tax: Type.Enum(['inclusive', 'exclusive', 'automatic', 'unspecified']),
+            verified_at: Timestamp,
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 2 },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -324,12 +340,56 @@ export const Subscription = Type.Object(
     /** What happens to data after cancellation (the owner's policy; null: kept until an owner deletes it). */
     retention_days: Nullable(Type.Integer({ minimum: 1 })),
     synced_at: Nullable(Timestamp),
+    /**
+     * R4: the newest checkout of this workspace, if one was started: `open` (not paid yet), `completed` (paid at the
+     * provider; the subscription follows when the provider confirms it), `expired`, `replaced` or `failed`.
+     */
+    checkout: Type.Optional(
+      Nullable(
+        Type.Object(
+          {
+            state: Type.Enum(['creating', 'open', 'completed', 'expired', 'replaced', 'failed']),
+            plan_id: PlanId,
+            interval: Type.Enum(['month', 'year']),
+            created_at: Timestamp,
+            expires_at: Nullable(Timestamp),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );
 export type Subscription = Static<typeof Subscription>;
 
-export const CheckoutRequest = Type.Object({ plan_id: PlanId }, { additionalProperties: false });
+// ================================================================ R4: price intervals
+export const PRICE_INTERVALS = ['month', 'year'] as const;
+export type PriceInterval = (typeof PRICE_INTERVALS)[number];
+/**
+ * Keys of BILLING_STRIPE_PRICES: `plan@version` (the plan's first price, normally monthly — milestone 11) and, from R4,
+ * `plan@version/month` and `plan@version/year`. The interval a price really bills at is read from the provider.
+ */
+export function priceKeys(id: string, version: number, interval: PriceInterval): string[] {
+  const base = planKey(id, version);
+  return interval === 'month' ? [`${base}/month`, base] : [`${base}/year`];
+}
+/** The plan a configured price key names (`team@1`, `team@1/year`), or null. */
+export function planOfPriceKey(key: string): { id: string; version: number } | null {
+  const m = /^([a-z][a-z0-9_]{1,31})@([1-9][0-9]{0,5})(?:\/(month|year))?$/.exec(key);
+  return m?.[1] && m[2] ? { id: m[1], version: Number(m[2]) } : null;
+}
+
+export const CheckoutRequest = Type.Object(
+  {
+    plan_id: PlanId,
+    /** R4: the billing interval (only intervals configured on this server are offered). Default: month. */
+    interval: Type.Optional(Type.Enum(PRICE_INTERVALS)),
+    /** R4: where the provider sends the browser back: the desktop's informational page, or the customer portal. */
+    return_to: Type.Optional(Type.Enum(['app', 'portal'])),
+  },
+  { additionalProperties: false },
+);
 export const HostedSession = Type.Object(
   {
     url: Type.String({

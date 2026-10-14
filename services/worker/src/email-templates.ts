@@ -43,11 +43,99 @@ function page(
 </div></body></html>`;
 }
 
-export function renderEmail(
-  kind: 'invitation' | 'welcome',
-  vars: Record<string, string>,
-  brand: string,
-): RenderedEmail {
+export type EmailKind =
+  | 'invitation'
+  | 'welcome'
+  | 'payment_succeeded'
+  | 'payment_failed'
+  | 'trial_ending'
+  | 'contact_request'
+  | 'deletion_request';
+
+const TOPICS: Record<string, string> = {
+  sales: 'Sales',
+  support: 'Support',
+  billing: 'Billing',
+  security: 'Security',
+  privacy: 'Privacy',
+  other: 'Other',
+};
+
+/** R4: payment results, trial reminders, and requests for the owner's support address. */
+function renderR4(kind: EmailKind, vars: Record<string, string>, brand: string): RenderedEmail | null {
+  const ws = line(vars.workspace_name) || 'your workspace';
+  const plan = line(vars.plan_name) || 'your plan';
+  const link = line(vars.link, 600);
+  const button = link ? { label: 'Open billing', href: link } : undefined;
+  const withLink = (text: string) => `${text}${link ? `\n\nOpen billing: ${link}` : ''}\n`;
+  if (kind === 'payment_succeeded') {
+    const lines = [
+      `Your ${plan} subscription for ${ws} is active. Thank you.`,
+      'The payment provider e-mails the receipt separately. Invoices are also in billing.',
+    ];
+    return {
+      subject: line(`${brand}: ${ws} is on the ${plan} plan`, 200),
+      text: withLink(lines.join('\n\n')),
+      html: page(brand, 'Subscription active', lines, button),
+    };
+  }
+  if (kind === 'payment_failed') {
+    const lines = [
+      `A payment for the ${plan} subscription of ${ws} did not go through.`,
+      'Everything keeps working while the payment provider retries. Please check the payment method in billing.',
+      'Your profiles and data are not deleted because of a failed payment.',
+    ];
+    return {
+      subject: line(`${brand}: a payment for ${ws} failed`, 200),
+      text: withLink(lines.join('\n\n')),
+      html: page(brand, 'Payment failed', lines, button),
+    };
+  }
+  if (kind === 'trial_ending') {
+    const ends = vars.ends_at ? new Date(vars.ends_at).toUTCString() : 'soon';
+    const lines = [
+      `The free trial of ${ws} ends on ${ends}.`,
+      'Choose a plan in billing to keep creating and opening profiles. Nothing is deleted when a trial ends.',
+      'You get this reminder because you manage billing for this workspace; you can turn reminders off in your account.',
+    ];
+    return {
+      subject: line(`${brand}: the trial of ${ws} ends soon`, 200),
+      text: withLink(lines.join('\n\n')),
+      html: page(
+        brand,
+        'Your trial ends soon',
+        lines,
+        link ? { label: 'Choose a plan', href: link } : undefined,
+      ),
+    };
+  }
+  if (kind === 'contact_request') {
+    const topic = TOPICS[vars.topic ?? ''] ?? 'Other';
+    const message = [...(vars.message ?? '')].slice(0, 4000).join('');
+    const lines = [`Topic: ${topic}`, `From: ${line(vars.name)} <${line(vars.reply_to, 254)}>`, message];
+    return {
+      subject: line(`Website contact (${topic}) from ${line(vars.name)}`, 200),
+      text: `${lines.join('\n\n')}\n`,
+      html: page(brand, 'Website contact request', lines),
+    };
+  }
+  if (kind === 'deletion_request') {
+    const lines = [
+      `An account asked to be deleted: ${line(vars.user_id, 40)}.`,
+      'Process it under the published policy (support console). Workspaces it owns alone need another owner or closing first.',
+    ];
+    return {
+      subject: line(`Account deletion request (${line(vars.user_id, 40)})`, 200),
+      text: `${lines.join('\n\n')}\n`,
+      html: page(brand, 'Account deletion request', lines),
+    };
+  }
+  return null;
+}
+
+export function renderEmail(kind: EmailKind, vars: Record<string, string>, brand: string): RenderedEmail {
+  const r4 = renderR4(kind, vars, brand);
+  if (r4) return r4;
   if (kind === 'invitation') {
     const org = line(vars.org_name) || 'a team';
     const who = line(vars.inviter_name) || 'Someone';

@@ -17,7 +17,9 @@ export interface FakeStripe {
   url: string;
   secretKey: string;
   webhookSecret: string;
-  prices: { starter: string; team: string; agency: string };
+  prices: { starter: string; team: string; agency: string; teamYear: string };
+  /** R4: changes a price object (e.g. `{ active: false }`, a tax behavior). */
+  setPrice(id: string, patch: Obj): void;
   /** Every request received: method, path, decoded form or query, selected headers. */
   requests: {
     method: string;
@@ -83,6 +85,7 @@ export async function fakeStripe(): Promise<FakeStripe> {
     starter: `price_starter${rnd(6)}`,
     team: `price_team${rnd(6)}`,
     agency: `price_agency${rnd(6)}`,
+    teamYear: `price_teamyear${rnd(6)}`,
   };
   const priceObjects = new Map<string, Obj>([
     [
@@ -103,6 +106,20 @@ export async function fakeStripe(): Promise<FakeStripe> {
         unit_amount: 4900,
         currency: 'usd',
         recurring: { interval: 'month' },
+        tax_behavior: 'exclusive',
+        active: true,
+      },
+    ],
+    [
+      prices.teamYear,
+      {
+        id: prices.teamYear,
+        object: 'price',
+        unit_amount: 49000,
+        currency: 'usd',
+        recurring: { interval: 'year' },
+        tax_behavior: 'exclusive',
+        active: true,
       },
     ],
     [
@@ -178,6 +195,10 @@ export async function fakeStripe(): Promise<FakeStripe> {
     secretKey,
     webhookSecret,
     prices,
+    setPrice(id, patch) {
+      const p = priceObjects.get(id);
+      if (p) Object.assign(p, patch);
+    },
     requests,
     down: false,
     customers,
@@ -417,6 +438,7 @@ export function stripeEnv(f: FakeStripe): Record<string, string> {
       'starter@1': f.prices.starter,
       'team@1': f.prices.team,
       'agency@1': f.prices.agency,
+      'team@1/year': f.prices.teamYear,
     }),
     BILLING_RETURN_URL: 'http://127.0.0.1:8080/v1/billing/return',
   };

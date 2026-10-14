@@ -123,6 +123,19 @@ export interface AppConfig {
    * queued links; the database never holds it. `smtpUrl` is read by the worker only; null: tasks are marked skipped.
    */
   email: { taskKey: Buffer | null; smtpUrl: string | null; from: string | null };
+  /**
+   * R4 (ADR-0023): the public website. `dir`: its built pages, served at / (PUBLIC_DIR; staging serves site, portal
+   * and API from one origin until R6 gives them their own hosts). `supportEmail` receives contact requests and
+   * account deletion requests; `statusUrl` is linked as the service status page; `downloadChannelUrl` is the signed
+   * stable update channel the download page reads; `releaseKeysFile` the public keys the app trusts.
+   */
+  site: {
+    dir: string | null;
+    supportEmail: string | null;
+    statusUrl: string | null;
+    downloadChannelUrl: string | null;
+    releaseKeysFile: string | null;
+  };
 }
 
 export class ConfigError extends Error {
@@ -298,6 +311,26 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const emailFrom = env.EMAIL_FROM || null;
   if (smtpUrl && !emailFrom) problems.push('EMAIL_FROM is required with SMTP_URL');
 
+  const supportEmail = env.SUPPORT_EMAIL?.trim().toLowerCase() || null;
+  if (supportEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(supportEmail))
+    problems.push('SUPPORT_EMAIL must be an e-mail address');
+  const statusUrl = env.STATUS_URL || null;
+  if (statusUrl && !secureOrLoopback(statusUrl, local)) problems.push('STATUS_URL must use https');
+  const channelUrl =
+    env.DOWNLOAD_CHANNEL_URL === 'none'
+      ? null
+      : env.DOWNLOAD_CHANNEL_URL ||
+        'https://github.com/bibekthapamgr/antibrowser/releases/download/channel-stable/stable.json';
+  if (channelUrl && !secureOrLoopback(channelUrl, local))
+    problems.push('DOWNLOAD_CHANNEL_URL must use https (or "none")');
+  const site: AppConfig['site'] = {
+    dir: env.PUBLIC_DIR || null,
+    supportEmail,
+    statusUrl,
+    downloadChannelUrl: channelUrl,
+    releaseKeysFile: env.RELEASE_KEYS_FILE || null,
+  };
+
   const kms = loadKms(env, local, problems);
   if (objectStore && !kms)
     problems.push('a key provider (KMS_LOCAL_KEY_FILE) is required with object storage');
@@ -324,10 +357,12 @@ export function loadConfig(env: Env = process.env): AppConfig {
     onboarding: { termsVersion, termsUrl: env.TERMS_URL || null },
     web,
     email: { taskKey, smtpUrl, from: emailFrom },
+    site,
   };
 }
 
-const PLAN_KEY = /^[a-z][a-z0-9_]{1,31}@[1-9][0-9]{0,5}$/;
+/** `plan@version`, or (R4) `plan@version/month` and `plan@version/year`. */
+const PLAN_KEY = /^[a-z][a-z0-9_]{1,31}@[1-9][0-9]{0,5}(\/(month|year))?$/;
 const PRICE_ID = /^price_[A-Za-z0-9]{1,64}$/;
 
 /**
@@ -373,7 +408,9 @@ function loadBilling(
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
       for (const [plan, price] of Object.entries(parsed as Record<string, unknown>)) {
         if (!PLAN_KEY.test(plan) || typeof price !== 'string' || !PRICE_ID.test(price)) {
-          problems.push('BILLING_STRIPE_PRICES maps "plan@version" to "price_…" ids');
+          problems.push(
+            'BILLING_STRIPE_PRICES maps "plan@version" (or "plan@version/year") to "price_…" ids',
+          );
           break;
         }
         prices[plan] = price;

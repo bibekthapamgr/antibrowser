@@ -121,7 +121,11 @@ describe.runIf(Boolean(base))('Stripe test-mode setup script against stripe-mock
       (m, p, params, k) =>
         // Never "found" in stripe-mock's fixture list, so the configuration is created.
         m === 'GET' ? Promise.resolve({ status: 200, body: { data: [] } }) : call(m, p, params, k),
-      [{ product: 'prod_1Mock', price: 'price_1Mock' }],
+      // R4: one product sold monthly and yearly: both prices under the same product entry.
+      [
+        { product: 'prod_1Mock', price: 'price_1Mock' },
+        { product: 'prod_1Mock', price: 'price_2Mock' },
+      ],
     );
     expect(portal).toMatch(/^bpc_/);
     const session = await createStripe({ secretKey: key, apiBase: base ?? '' }).createPortalSession({

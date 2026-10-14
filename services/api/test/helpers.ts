@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { loadConfig } from '@pb/config/env';
-import type { Session } from '@pb/contracts';
+import type { PublicDownloads, Session } from '@pb/contracts';
 import pg from 'pg';
 import { devToken } from '../scripts/dev-token.ts';
 import { type App, buildApp } from '../src/app.ts';
@@ -61,6 +61,8 @@ export interface HarnessOptions {
   /** R2: verifiers for another identity provider (the web portal tests run a local one over HTTP). */
   idTokens?: IdTokenVerifier;
   webIdTokens?: IdTokenVerifier;
+  /** R4: the download page's source. */
+  downloads?: () => Promise<PublicDownloads>;
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -89,6 +91,7 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   const consoleIdTokens = {
     ...(opts.consoleClientId ? { consoleIdTokens: idp.verifierFor(opts.consoleClientId) } : {}),
     ...(opts.webIdTokens ? { webIdTokens: opts.webIdTokens } : {}),
+    ...(opts.downloads ? { downloads: opts.downloads } : {}),
   };
   const idTokens = opts.idTokens ?? idp.verifier;
   const app = await buildApp(

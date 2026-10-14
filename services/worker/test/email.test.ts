@@ -11,6 +11,7 @@ import nodemailer from 'nodemailer';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type EmailDeps, processEmailTasks } from '../src/email.ts';
+import { type EmailKind, renderEmail } from '../src/email-templates.ts';
 import { type SmtpSink, startSmtpSink } from './smtp-sink.ts';
 
 const key = randomBytes(32);
@@ -52,7 +53,7 @@ const deps = (over: Partial<EmailDeps> = {}): EmailDeps => ({
   ...over,
 });
 
-async function queue(kind: 'invitation' | 'welcome', to: string, vars: Record<string, string>) {
+async function queue(kind: EmailKind, to: string, vars: Record<string, string>) {
   const c = await owner.connect();
   try {
     await enqueueEmail(c, key, {
@@ -192,5 +193,46 @@ describe('sending', () => {
     } finally {
       await app.end();
     }
+  });
+});
+
+describe('R4 e-mails', () => {
+  it('a contact request reaches support with the visitor as Reply-To, the message escaped', async () => {
+    await queue('contact_request', 'support@owner.test', {
+      topic: 'billing',
+      name: 'Visitor <b>',
+      reply_to: 'visitor@people.test',
+      message: 'Can I pay yearly?\r\nBcc: evil@x.test',
+    });
+    expect((await processEmailTasks(deps())).sent).toBe(1);
+    const data = (sink.messages[0]?.data ?? '').replace(/=\r\n/g, '').replace(/\r\n[ \t]+/g, ' ');
+    expect(sink.messages[0]?.to).toEqual(['support@owner.test']);
+    const headers = data.split('\r\n\r\n')[0] ?? '';
+    expect(headers).toMatch(/^Reply-To: visitor@people\.test/im);
+    // Text from the form stays in the body: it never becomes a header.
+    expect(headers).not.toMatch(/^Bcc:/im);
+    expect(data).toContain('Visitor &lt;b&gt;');
+  });
+
+  it('payment results and trial reminders name the workspace and link to billing; nothing promises deletion', () => {
+    const vars = {
+      workspace_name: 'Acme',
+      plan_name: 'Team',
+      link: 'https://app.example.test/app/#/billing',
+    };
+    const ok = renderEmail('payment_succeeded', vars, 'Project Browser');
+    expect(ok.subject).toBe('Project Browser: Acme is on the Team plan');
+    expect(ok.text).toContain('Open billing: https://app.example.test/app/#/billing');
+    const failed = renderEmail('payment_failed', vars, 'Project Browser');
+    expect(failed.text).toContain('not deleted because of a failed payment');
+    const trial = renderEmail(
+      'trial_ending',
+      { ...vars, ends_at: '2026-10-20T00:00:00Z' },
+      'Project Browser',
+    );
+    expect(trial.text).toContain('Nothing is deleted when a trial ends.');
+    expect(trial.text).toContain('turn reminders off');
+    const deletion = renderEmail('deletion_request', { user_id: 'usr_01J9ZSEED0U100000000000000' }, 'PB');
+    expect(deletion.subject).toContain('usr_01J9ZSEED0U100000000000000');
   });
 });

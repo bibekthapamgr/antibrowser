@@ -16,6 +16,7 @@ import {
   observeTransitions,
   processBillingEvents,
   type ReconcileDeps,
+  remindTrials,
   resyncSubscriptions,
   sampleUsage,
 } from '@pb/api/billing/reconcile';
@@ -57,6 +58,14 @@ const webhooks: WebhookDeps | null = config.kms
     }
   : null;
 
+// R4: payment results and trial reminders link to the customer portal's billing page.
+function billingNotify(): NonNullable<ReconcileDeps['notify']> {
+  return {
+    key: config.email.taskKey as Buffer,
+    portalUrl: config.web.origin ? `${config.web.origin}/app/#/billing` : null,
+  };
+}
+
 // Billing reconciliation (milestone 11): provider events, resync, alerts. Time-based transitions and usage samples
 // run with or without a provider.
 const billing: ReconcileDeps | null = config.billing.stripe
@@ -69,6 +78,7 @@ const billing: ReconcileDeps | null = config.billing.stripe
       prices: config.billing.prices,
       log,
       graceDays: BILLING_TIMING.graceDays,
+      ...(config.email.taskKey ? { notify: billingNotify() } : {}),
     }
   : null;
 
@@ -105,6 +115,7 @@ let lastSweep = 0;
 let lastAutomationSweep = 0;
 let lastBillingResync = 0;
 let lastUsageSample = 0;
+let lastTrialReminders = 0;
 log('info', 'worker started', {
   env: config.appEnv,
   snapshots: jobs ? 'enabled' : 'not configured',
@@ -155,6 +166,11 @@ while (running) {
       const counters = await purgeRateLimits(pool);
       if (counters) log('info', 'purged rate-limit counters', { counters });
       await task('billing transitions recorded', () => observeTransitions(pool));
+      // R4: trial-ending reminders (hourly; each person once per trial end), with or without a provider.
+      if (config.email.taskKey && Date.now() - lastTrialReminders > 3_600_000) {
+        await task('trial reminders queued', () => remindTrials(pool, billingNotify()));
+        lastTrialReminders = Date.now();
+      }
       if (Date.now() - lastUsageSample > 3_600_000) {
         await task('usage samples', () => sampleUsage(pool));
         lastUsageSample = Date.now();

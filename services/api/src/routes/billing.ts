@@ -19,6 +19,8 @@ import {
   latestPlan,
   newId,
   PLAN_CATALOG,
+  PRICE_INTERVALS,
+  type PriceInterval,
   planKey,
   Subscription,
   USAGE_TYPES,
@@ -27,16 +29,12 @@ import {
 import Type from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { configuredPrice, offeredPlans, providerPrice, sellablePrice } from '../billing/catalog.ts';
 import { effectiveOf, subscriptionView, usageOf } from '../billing/state.ts';
-import {
-  billingFailure,
-  parseEventEnvelope,
-  type StripePrice,
-  verifyStripeSignature,
-} from '../billing/stripe.ts';
+import { billingFailure, parseEventEnvelope, verifyStripeSignature } from '../billing/stripe.ts';
 import { ts, withTx } from '../db.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
-import { requireInteractive, requirePermission, resolveTenant } from '../tenancy.ts';
+import { requireInteractive, requirePermission, resolveTenant, type TenantAccess } from '../tenancy.ts';
 import { errors, OrgParams } from './common.ts';
 
 /** Provider events the worker acts on; others are recorded (for deduplication and support) and ignored. */
@@ -48,8 +46,6 @@ const HANDLED = [
   /^charge\.dispute\.created$/,
 ];
 const LIVE_STATUSES = ['trialing', 'active', 'past_due', 'unpaid', 'paused'];
-const PRICE_TTL_MS = 3_600_000;
-const PRICE_FAILURE_TTL_MS = 300_000;
 
 const InvoiceParams = Type.Object(
   { orgId: OrgParams.properties.orgId, invoiceId: Type.String({ pattern: '^in_[A-Za-z0-9]{1,64}$' }) },
@@ -62,24 +58,79 @@ function stripeOf(deps: Deps) {
   return stripe;
 }
 
-async function displayPrice(deps: Deps, priceId: string): Promise<StripePrice | null> {
-  const cached = deps.billing.priceCache.get(priceId);
-  const now = Date.now();
-  if (cached && now - cached.at < (cached.price ? PRICE_TTL_MS : PRICE_FAILURE_TTL_MS)) return cached.price;
-  let price: StripePrice | null = null;
-  try {
-    price = deps.billing.stripe ? await deps.billing.stripe.getPrice(priceId) : null;
-  } catch {
-    price = null;
+/**
+ * R4: claims this workspace's one checkout. Answers the open checkout of the same plan and interval while it is valid
+ * for at least ten more minutes (reuse); waits briefly for one another request is creating; otherwise marks the
+ * previous one replaced (or expired) and records a new one being created. The workspace's subscription row is locked
+ * meanwhile, so two requests can never both create.
+ */
+async function claimCheckout(
+  deps: Deps,
+  access: TenantAccess,
+  planId: string,
+  planVersion: number,
+  interval: PriceInterval,
+): Promise<{ reuse: { url: string; expires_at: string } } | { id: string }> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const r = await withTx(deps.pool, access, async (c) => {
+      await c.query('select 1 from subscriptions where org_id = $1 for update', [access.orgId]);
+      const { rows } = await c.query<{
+        id: string;
+        state: 'creating' | 'open';
+        plan_id: string;
+        plan_version: number;
+        interval: string;
+        url: string | null;
+        expires_at: string | null;
+        reusable: boolean;
+        stale: boolean;
+      }>(
+        `select id, state, plan_id, plan_version, interval, url, ${ts('expires_at')} as expires_at,
+                (state = 'open' and expires_at > now() + interval '10 minutes') as reusable,
+                (state = 'creating' and updated_at < now() - interval '2 minutes') as stale
+           from checkout_attempts where org_id = $1 and state in ('creating', 'open')`,
+        [access.orgId],
+      );
+      const cur = rows[0];
+      if (
+        cur?.reusable &&
+        cur.url &&
+        cur.expires_at &&
+        cur.plan_id === planId &&
+        cur.plan_version === planVersion &&
+        cur.interval === interval
+      ) {
+        return { reuse: { url: cur.url, expires_at: cur.expires_at } };
+      }
+      if (cur?.state === 'creating' && !cur.stale) return { wait: true as const };
+      if (cur) {
+        await c.query(
+          `update checkout_attempts
+              set state = case when state = 'open' and expires_at <= now() then 'expired' else 'replaced' end,
+                  updated_at = now()
+            where id = $1`,
+          [cur.id],
+        );
+      }
+      const id = newId('checkoutAttempt');
+      await c.query(
+        `insert into checkout_attempts (id, org_id, plan_id, plan_version, interval, created_by)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [id, access.orgId, planId, planVersion, interval, access.userId],
+      );
+      return { id };
+    });
+    if (!('wait' in r)) return r;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  deps.billing.priceCache.set(priceId, { at: now, price });
-  return price;
+  throw new ApiError('UNAVAILABLE', 'A checkout is still being prepared; try again in a moment');
 }
 
 export function billingRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/billing/subscription',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:
@@ -92,13 +143,23 @@ export function billingRoutes(app: App, deps: Deps): void {
     async (req) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'billing.read');
-      return withTx(deps.pool, access, (c) => subscriptionView(c, access.orgId, deps.billing.retentionDays));
+      return withTx(deps.pool, access, async (c) => {
+        const view = await subscriptionView(c, access.orgId, deps.billing.retentionDays);
+        // R4: the newest checkout, so a return page can say "pending verification" until the provider confirms.
+        const { rows } = await c.query<NonNullable<Subscription['checkout']>>(
+          `select state, plan_id, interval, ${ts('created_at')} as created_at, ${ts('expires_at')} as expires_at
+             from checkout_attempts where org_id = $1 order by created_at desc limit 1`,
+          [access.orgId],
+        );
+        return { ...view, checkout: rows[0] ?? null };
+      });
     },
   );
 
   app.get(
     '/orgs/:orgId/billing/plans',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:
@@ -112,8 +173,7 @@ export function billingRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'billing.read');
       const current = await withTx(deps.pool, access, (c) => effectiveOf(c, access.orgId));
-      const ids = [...new Set(PLAN_CATALOG.filter((p) => p.purchasable).map((p) => p.id))];
-      const offered = ids.map((id) => latestPlan(id)).filter((p) => p !== undefined);
+      const offered = offeredPlans();
       const mine = PLAN_CATALOG.find((p) => p.id === current.planId && p.version === current.planVersion);
       const list =
         mine && !offered.some((p) => p.id === mine.id && p.version === mine.version)
@@ -121,8 +181,21 @@ export function billingRoutes(app: App, deps: Deps): void {
           : offered;
       const items = await Promise.all(
         list.map(async (p) => {
-          const priceId = deps.billing.prices[planKey(p.id, p.version)];
-          const price = priceId ? await displayPrice(deps, priceId) : null;
+          const priceId = configuredPrice(deps, p, 'month') ?? configuredPrice(deps, p, 'year');
+          const price = priceId ? (await providerPrice(deps, priceId)).price : null;
+          // R4: every verified interval (checkout uses the same rule).
+          const prices = [];
+          for (const interval of PRICE_INTERVALS) {
+            const v = await sellablePrice(deps, p, interval);
+            if (v && v.price.unitAmount !== null)
+              prices.push({
+                interval,
+                amount_minor: v.price.unitAmount,
+                currency: v.price.currency,
+                tax: deps.billing.automaticTax ? ('automatic' as const) : v.price.taxBehavior,
+                verified_at: new Date(v.at).toISOString(),
+              });
+          }
           return {
             id: p.id,
             version: p.version,
@@ -130,7 +203,8 @@ export function billingRoutes(app: App, deps: Deps): void {
             description: p.description,
             limits: p.limits,
             features: p.features,
-            available: Boolean(p.purchasable && priceId && deps.billing.stripe),
+            available: Boolean(p.purchasable && prices.length > 0),
+            prices,
             price:
               price && price.unitAmount !== null && price.interval
                 ? { amount_minor: price.unitAmount, currency: price.currency, interval: price.interval }
@@ -145,6 +219,7 @@ export function billingRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/billing/checkout-session',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:
@@ -162,13 +237,20 @@ export function billingRoutes(app: App, deps: Deps): void {
       requirePermission(access, 'billing.manage');
       const stripe = stripeOf(deps);
       await hit(deps.pool, LIMITS.billingSessionPerOrg, access.orgId);
+      const interval: PriceInterval = req.body.interval ?? 'month';
       const plan = latestPlan(req.body.plan_id);
-      const price = plan ? deps.billing.prices[planKey(plan.id, plan.version)] : undefined;
-      if (!plan?.purchasable || !price) {
+      // Live eligibility every time: a configured, readable, active price billing at this interval (R4).
+      const sellable = plan ? await sellablePrice(deps, plan, interval) : null;
+      if (!plan || !sellable) {
         throw new ApiError('PLAN_NOT_AVAILABLE', 'This plan is not offered on this server', {
           plan_id: req.body.plan_id,
+          interval,
         });
       }
+      const returnBase =
+        req.body.return_to === 'portal' && deps.config.web.origin
+          ? `${deps.config.web.origin}/app/#/billing/return`
+          : deps.billing.returnUrl;
       const row = await withTx(deps.pool, access, async (c) => {
         const { rows } = await c.query<{
           provider_customer_id: string | null;
@@ -191,6 +273,17 @@ export function billingRoutes(app: App, deps: Deps): void {
           'A subscription is already live; use the billing portal to change it',
         );
       }
+      // One checkout per workspace (R4): the same plan and interval reuse the open one (a refresh, a second click,
+      // web and desktop at once); a different choice replaces it.
+      const claim = await claimCheckout(deps, access, plan.id, plan.version, interval);
+      if ('reuse' in claim) return reply.status(201).send(claim.reuse);
+      const fail = () =>
+        withTx(deps.pool, access, (c) =>
+          c.query(
+            `update checkout_attempts set state = 'failed', updated_at = now() where id = $1 and state = 'creating'`,
+            [claim.id],
+          ),
+        ).catch(() => undefined);
       let customer = row.provider_customer_id;
       try {
         if (customer) {
@@ -230,29 +323,38 @@ export function billingRoutes(app: App, deps: Deps): void {
         const session = await stripe.createCheckoutSession(
           {
             customer,
-            price,
+            price: sellable.priceId,
             orgId: access.orgId,
-            successUrl: `${deps.billing.returnUrl}?result=success`,
-            cancelUrl: `${deps.billing.returnUrl}?result=canceled`,
+            successUrl: `${returnBase}?result=success`,
+            cancelUrl: `${returnBase}?result=canceled`,
             automaticTax: deps.billing.automaticTax,
           },
-          `pb-checkout-${newId('request')}`,
+          // Stable per attempt: a retried request to the provider never makes a second session.
+          `pb-checkout-${claim.id}`,
         );
         if (!session.url)
           throw new ApiError('BILLING_UNAVAILABLE', 'The payment provider returned no checkout page');
-        await withTx(deps.pool, access, (c) =>
-          audit(
+        const expiresAt = session.expiresAt
+          ? new Date(session.expiresAt * 1000)
+          : new Date(Date.now() + 3_600_000);
+        await withTx(deps.pool, access, async (c) => {
+          await c.query(
+            `update checkout_attempts set state = 'open', provider_session_id = $2, url = $3, expires_at = $4,
+                    updated_at = now()
+              where id = $1`,
+            [claim.id, session.id, session.url, expiresAt],
+          );
+          await audit(
             c,
             changeEntry(access, 'billing.checkout_started', 'organization', access.orgId, {
               plan: planKey(plan.id, plan.version),
+              interval,
             }),
-          ),
-        );
-        return reply.status(201).send({
-          url: session.url,
-          expires_at: session.expiresAt ? new Date(session.expiresAt * 1000).toISOString() : null,
+          );
         });
+        return reply.status(201).send({ url: session.url, expires_at: expiresAt.toISOString() });
       } catch (err) {
+        await fail();
         if (err instanceof ApiError) throw err;
         throw billingFailure(err);
       }
@@ -262,12 +364,17 @@ export function billingRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/billing/portal-session',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:
           'Opens the payment provider’s customer portal (owners): change plan, payment method, cancel, invoices. ' +
           'Changes made there reach this application through the provider’s webhooks.',
         params: OrgParams,
+        querystring: Type.Object(
+          { return_to: Type.Optional(Type.Union([Type.Literal('app'), Type.Literal('portal')])) },
+          { additionalProperties: false },
+        ),
         response: { 201: HostedSession, ...errors },
       },
     },
@@ -292,7 +399,10 @@ export function billingRoutes(app: App, deps: Deps): void {
       try {
         const url = await stripe.createPortalSession({
           customer,
-          returnUrl: `${deps.billing.returnUrl}?result=portal`,
+          returnUrl:
+            req.query.return_to === 'portal' && deps.config.web.origin
+              ? `${deps.config.web.origin}/app/#/billing`
+              : `${deps.billing.returnUrl}?result=portal`,
           configuration: deps.billing.portalConfiguration,
         });
         await withTx(deps.pool, access, (c) =>
@@ -308,6 +418,7 @@ export function billingRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/billing/usage',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:
@@ -379,6 +490,7 @@ export function billingRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/billing/invoices',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description: 'Invoices and receipts mirrored from the payment provider (newest first, at most 24).',
@@ -406,6 +518,7 @@ export function billingRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/billing/invoices/:invoiceId/links',
     {
+      config: { web: true },
       schema: {
         tags: ['billing'],
         description:

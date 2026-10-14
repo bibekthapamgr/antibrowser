@@ -65,6 +65,10 @@ export interface StripePrice {
   unitAmount: number | null;
   currency: string;
   interval: 'month' | 'year' | null;
+  /** R4: `inclusive`, `exclusive` or `unspecified` (the provider's tax_behavior). */
+  taxBehavior: 'inclusive' | 'exclusive' | 'unspecified';
+  /** R4: a disabled (archived) price never starts a checkout. */
+  active: boolean;
 }
 
 export interface StripeEventEnvelope {
@@ -236,6 +240,9 @@ export function parsePrice(raw: unknown): StripePrice {
     unitAmount: num(s.unit_amount),
     currency: (str(s.currency) ?? 'usd').toLowerCase(),
     interval: interval === 'month' || interval === 'year' ? interval : null,
+    taxBehavior:
+      s.tax_behavior === 'inclusive' || s.tax_behavior === 'exclusive' ? s.tax_behavior : 'unspecified',
+    active: s.active !== false,
   };
 }
 

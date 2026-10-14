@@ -12,10 +12,12 @@
  *   records time-based transitions, raises deduplicated alerts for staff and samples usage.
  * Nothing here deletes customer data. No payload or personal data is logged.
  */
-import { newId } from '@pb/contracts';
+import { createHash } from 'node:crypto';
+import { catalogPlan, newId, planOfPriceKey } from '@pb/contracts';
 import type pg from 'pg';
 import { audit } from '../audit.ts';
 import { withTx } from '../db.ts';
+import { enqueueEmail } from '../email.ts';
 import { type Stripe, StripeError, type StripeInvoice, type StripeSubscription } from './stripe.ts';
 
 export interface ReconcileDeps {
@@ -27,6 +29,36 @@ export interface ReconcileDeps {
   log: (level: string, msg: string, extra?: Record<string, unknown>) => void;
   /** Days of grace after the provider stops retrying (BILLING_TIMING.graceDays). */
   graceDays: number;
+  /**
+   * R4: payment results e-mailed to owners and billing managers (queued in the same transaction). `portalUrl`: the
+   * customer portal's billing page, linked from the e-mail. Absent: no e-mails (as before R4).
+   */
+  notify?: { key: Buffer; portalUrl: string | null };
+}
+
+/** R4: queues a payment-result e-mail for each billing contact of a workspace (once per subscription period). */
+async function notifyBilling(
+  c: pg.PoolClient,
+  deps: ReconcileDeps,
+  orgId: string,
+  kind: 'payment_succeeded' | 'payment_failed',
+  dedupe: string,
+  planName: string,
+): Promise<void> {
+  if (!deps.notify) return;
+  const { rows } = await c.query<{ email: string; org_name: string }>(
+    'select email, org_name from app.billing_contacts($1, false)',
+    [orgId],
+  );
+  for (const r of rows) {
+    await enqueueEmail(c, deps.notify.key, {
+      kind,
+      orgId,
+      to: r.email,
+      dedupeKey: `${kind}:${dedupe}:${createHash('sha256').update(r.email).digest('hex').slice(0, 16)}`,
+      vars: { workspace_name: r.org_name, plan_name: planName, link: deps.notify.portalUrl ?? '' },
+    });
+  }
 }
 
 const RETRY_SECONDS = [30, 120, 600, 1800, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600];
@@ -78,10 +110,8 @@ function planOfPrices(
 ): { id: string; version: number } | null {
   for (const price of priceIds) {
     const key = Object.keys(prices).find((k) => prices[k] === price);
-    if (key) {
-      const [id, v] = key.split('@');
-      if (id && v) return { id, version: Number(v) };
-    }
+    const plan = key ? planOfPriceKey(key) : null;
+    if (plan) return plan;
   }
   return null;
 }
@@ -266,6 +296,19 @@ export async function applySubscription(
         ],
       );
       await c.query('update subscriptions set observed_state = $2 where org_id = $1', [orgId, effective]);
+      // R4: the people who pay hear about the result (not on the first sight of a subscription that was already
+      // active, and once per subscription period).
+      const period = sub.currentPeriodEnd ?? 0;
+      const planName = catalogPlan(plan.id, plan.version)?.name ?? plan.id;
+      if (
+        stateChanged &&
+        effective === 'active' &&
+        row.observed_state !== null &&
+        row.observed_state !== 'active'
+      )
+        await notifyBilling(c, deps, orgId, 'payment_succeeded', `${orgId}:${sub.id}:${period}`, planName);
+      if (stateChanged && effective === 'past_due')
+        await notifyBilling(c, deps, orgId, 'payment_failed', `${orgId}:${sub.id}:${period}`, planName);
       await audit(c, {
         orgId,
         actorUserId: null,
@@ -388,6 +431,14 @@ async function processEvent(deps: ReconcileDeps, ev: EventRow): Promise<Outcome>
       );
       return { status: 'ignored', orgId, note: 'reference_mismatch' };
     }
+    // R4: the workspace's checkout is done at the provider (the subscription below is what grants anything).
+    await withTx(deps.pool, { orgId, userId: null }, (c) =>
+      c.query(
+        `update checkout_attempts set state = 'completed', updated_at = now()
+          where org_id = $1 and provider_session_id = $2 and state <> 'completed'`,
+        [orgId, session.id],
+      ),
+    );
     if (session.subscription) await subscriptionOf(session.subscription, orgId);
     return { status: 'processed', orgId };
   }
@@ -595,4 +646,43 @@ export async function sampleUsage(pool: pg.Pool): Promise<number> {
     c.query<{ n: number }>("select app.billing_sample_usage(((now() at time zone 'UTC')::date - 1)) as n"),
   );
   return rows[0]?.n ?? 0;
+}
+
+// ---------------------------------------------------------------- R4: trial reminders
+/**
+ * Reminds the people who pay for a workspace that its free trial ends within three days (once per trial end and
+ * person; those who turned reminders off are skipped). Nothing changes for the workspace.
+ */
+export async function remindTrials(pool: pg.Pool, notify: ReconcileDeps['notify']): Promise<number> {
+  if (!notify) return 0;
+  const { rows } = await withTx(pool, { orgId: null, userId: null }, (c) =>
+    c.query<{ org_id: string; trial_ends_at: Date }>(
+      'select org_id, trial_ends_at from app.trials_ending(3)',
+    ),
+  );
+  let queued = 0;
+  for (const t of rows) {
+    await withTx(pool, { orgId: t.org_id, userId: null }, async (c) => {
+      const contacts = await c.query<{ email: string; org_name: string }>(
+        'select email, org_name from app.billing_contacts($1, true)',
+        [t.org_id],
+      );
+      for (const r of contacts.rows) {
+        const day = t.trial_ends_at.toISOString().slice(0, 10);
+        await enqueueEmail(c, notify.key, {
+          kind: 'trial_ending',
+          orgId: t.org_id,
+          to: r.email,
+          dedupeKey: `trial_ending:${t.org_id}:${day}:${createHash('sha256').update(r.email).digest('hex').slice(0, 16)}`,
+          vars: {
+            workspace_name: r.org_name,
+            ends_at: t.trial_ends_at.toISOString(),
+            link: notify.portalUrl ?? '',
+          },
+        });
+        queued++;
+      }
+    });
+  }
+  return queued;
 }

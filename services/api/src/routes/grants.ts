@@ -63,6 +63,7 @@ export function grantRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/grants',
     {
+      config: { web: true },
       schema: {
         tags: ['grants'],
         params: OrgParams,
@@ -286,6 +287,7 @@ export function grantRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/access/preview',
     {
+      config: { web: true },
       schema: {
         tags: ['grants'],
         description:
@@ -308,6 +310,7 @@ export function grantRoutes(app: App, deps: Deps): void {
   app.put(
     '/orgs/:orgId/members/:userId/access',
     {
+      config: { web: true },
       schema: {
         tags: ['grants'],
         description:

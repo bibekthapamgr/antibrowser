@@ -5,8 +5,11 @@
  * sign-out of one browser and "sign out everywhere", and the same account as the desktop.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createLocalJWKSet, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createIdTokenVerifier } from '../src/oidc.ts';
@@ -102,7 +105,7 @@ beforeAll(async () => {
       OIDC_WEB_CLIENT_ID: WEB_CLIENT,
       WEB_ORIGIN: ORIGIN,
       TERMS_VERSION: TERMS,
-      WEB_DIR: new URL('../../../apps/web-portal/public', import.meta.url).pathname,
+      WEB_DIR: portalFixture(),
       // R2: e-mail is set up, so invitations and welcomes are queued (as the application role).
       EMAIL_TASK_KEY: randomBytes(32).toString('base64'),
     },
@@ -121,6 +124,18 @@ const cookieOf = (setCookie: string | string[] | undefined) => {
   const line = Array.isArray(setCookie) ? setCookie[0] : setCookie;
   return { line: line ?? '', value: /^pb_web=([^;]*)/.exec(line ?? '')?.[1] ?? '' };
 };
+
+/** A built portal as the API sees it (apps/web-customer/dist has the same shape: index.html and hashed assets). */
+function portalFixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'pb-portal-'));
+  mkdirSync(join(dir, 'assets'));
+  writeFileSync(
+    join(dir, 'index.html'),
+    '<!doctype html><html lang="en"><head><script type="module" src="/app/assets/index.0123456789.js"></script></head><body><div id="root"></div></body></html>',
+  );
+  writeFileSync(join(dir, 'assets/index.0123456789.js'), 'export {};');
+  return dir;
+}
 
 /** The whole portal sign-in as a browser does it; returns the cookie value and where it landed. */
 async function webSignIn(person: { sub: string; email: string; verified?: boolean }, query = '') {
@@ -272,9 +287,10 @@ describe('the cookie session', () => {
         url,
       ).toBe(200);
     }
+    // R4: devices, billing and team routes joined the portal; the audit log did not.
     const devices = await h.app.inject({
       method: 'GET',
-      url: '/v1/devices',
+      url: `/v1/orgs/org_${'0'.repeat(26)}/audit-events`,
       headers: withCookie(cookie.value),
     });
     expect(devices.json()).toMatchObject({
@@ -399,9 +415,9 @@ describe('the portal page', () => {
     expect(page.body).not.toMatch(/<script>|\sstyle=|\son[a-z]+=/i);
     const deep = await h.app.inject({ method: 'GET', url: '/app/welcome' });
     expect(deep.body).toBe(page.body);
-    expect((await h.app.inject({ method: 'GET', url: '/app/portal.js' })).headers['content-type']).toContain(
-      'javascript',
-    );
+    expect(
+      (await h.app.inject({ method: 'GET', url: '/app/assets/index.0123456789.js' })).headers['content-type'],
+    ).toContain('javascript');
     expect((await h.app.inject({ method: 'GET', url: '/app/../package.json' })).statusCode).not.toBe(200);
     const cfg = await h.app.inject({ method: 'GET', url: '/v1/web/config' });
     expect(cfg.json()).toEqual({
@@ -410,6 +426,9 @@ describe('the portal page', () => {
       terms_url: null,
       download_url: null,
       sign_in: true,
+      // R4: password, sign-in methods and recovery are managed at the identity provider's account page.
+      account_url: `${issuer}/account/`,
+      status_url: null,
     });
   });
 });

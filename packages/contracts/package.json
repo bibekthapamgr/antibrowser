@@ -12,6 +12,7 @@
     "./ipc": "./src/ipc.ts",
     "./notes": "./src/notes.ts",
     "./onboarding": "./src/onboarding.ts",
+    "./portal": "./src/portal.ts",
     "./resources": "./src/resources.ts",
     "./workspace": "./src/workspace.ts"
   },

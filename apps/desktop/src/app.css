@@ -1274,3 +1274,7 @@ ul.runs .pb-button {
     align-items: stretch;
   }
 }
+/* A screen that is also a stack keeps its parts at the top (no stretched gaps). */
+.screen.stack {
+  align-content: start;
+}

@@ -7,6 +7,7 @@ export * from './ids.ts';
 export * from './notes.ts';
 export * from './onboarding.ts';
 export * from './pagination.ts';
+export * from './portal.ts';
 export * from './resources.ts';
 export * from './workspace.ts';
 

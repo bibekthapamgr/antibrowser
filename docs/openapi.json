@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Project Browser control-plane API",
-    "version": "0.15.0",
+    "version": "0.16.0",
     "description": "Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation jobs. Authentication: OIDC sign-in in the system browser (Authorization Code + PKCE), then API session tokens (ADR-0013); or an API token (`Authorization: Bearer pbt_…`, ADR-0017) on the routes marked \"API tokens: yes\", acting as its owner within its scopes and restrictions. Authorization: organization role combined with client/profile grants, deny by default; identifiers outside the caller’s reach answer 404 exactly like nonexistent ones."
   },
   "components": {
@@ -7015,7 +7015,9 @@
                     "terms_version",
                     "terms_url",
                     "download_url",
-                    "sign_in"
+                    "sign_in",
+                    "account_url",
+                    "status_url"
                   ],
                   "properties": {
                     "brand": {
@@ -7046,6 +7048,2234 @@
                     },
                     "sign_in": {
                       "type": "boolean"
+                    },
+                    "account_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/public/plans": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "description": "The plans this server sells, with prices verified at the payment provider (one per configured interval). A plan whose price cannot be verified is listed without prices and cannot be bought; nothing is shown as free because a price is missing. `catalog_version` changes with the catalog or any price (ETag).",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "catalog_version",
+                    "generated_at",
+                    "trial_days",
+                    "checkout",
+                    "items"
+                  ],
+                  "properties": {
+                    "catalog_version": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{16}$"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC, RFC 3339"
+                    },
+                    "trial_days": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "checkout": {
+                      "type": "boolean"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "version",
+                          "name",
+                          "description",
+                          "limits",
+                          "features",
+                          "prices",
+                          "available"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,31}$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "limits": {
+                            "type": "object",
+                            "required": [
+                              "profiles",
+                              "seats",
+                              "storage_bytes",
+                              "automation_concurrency"
+                            ],
+                            "properties": {
+                              "profiles": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "seats": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "storage_bytes": {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "automation_concurrency": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "features": {
+                            "type": "object",
+                            "required": [
+                              "team_sessions",
+                              "automation",
+                              "api_tokens",
+                              "webhooks"
+                            ],
+                            "properties": {
+                              "team_sessions": {
+                                "type": "boolean"
+                              },
+                              "automation": {
+                                "type": "boolean"
+                              },
+                              "api_tokens": {
+                                "type": "boolean"
+                              },
+                              "webhooks": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "prices": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "interval",
+                                "amount_minor",
+                                "currency",
+                                "tax",
+                                "verified_at"
+                              ],
+                              "properties": {
+                                "interval": {
+                                  "enum": [
+                                    "month",
+                                    "year"
+                                  ]
+                                },
+                                "amount_minor": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "In the currency’s smallest unit."
+                                },
+                                "currency": {
+                                  "type": "string",
+                                  "pattern": "^[a-z]{3}$"
+                                },
+                                "tax": {
+                                  "enum": [
+                                    "inclusive",
+                                    "exclusive",
+                                    "automatic",
+                                    "unspecified"
+                                  ]
+                                },
+                                "verified_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "maxItems": 2
+                          },
+                          "available": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "maxItems": 20
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Default Response"
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/public/downloads": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "description": "The desktop app on the signed stable channel (milestone 12): version, date, release notes and verified files per platform. `not_available` when there is no verified stable release (internal and test builds are never listed); `paused` while the publisher stopped offering it.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "channel",
+                    "status",
+                    "version",
+                    "published_at",
+                    "notes_url",
+                    "platforms",
+                    "checked_at"
+                  ],
+                  "properties": {
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "stable"
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "available",
+                        "paused",
+                        "not_available"
+                      ]
+                    },
+                    "version": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "published_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "notes_url": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "platforms": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "platform",
+                          "label",
+                          "kind",
+                          "url",
+                          "sha256",
+                          "size_bytes"
+                        ],
+                        "properties": {
+                          "platform": {
+                            "enum": [
+                              "windows-x64",
+                              "macos-arm64"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "installer",
+                              "disk-image"
+                            ]
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "sha256": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "size_bytes": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "maxItems": 4
+                    },
+                    "checked_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC, RFC 3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/public/contact": {
+      "post": {
+        "tags": [
+          "public"
+        ],
+        "description": "The website contact form. Rate limited per address and per e-mail. Stored for the support team and e-mailed to the support address when one is configured. Never used for marketing.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "topic",
+                  "name",
+                  "email",
+                  "message"
+                ],
+                "properties": {
+                  "topic": {
+                    "enum": [
+                      "sales",
+                      "support",
+                      "billing",
+                      "security",
+                      "privacy",
+                      "other"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "email": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 254,
+                    "format": "email"
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 4000
+                  },
+                  "website": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "received"
+                  ],
+                  "properties": {
+                    "received": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/notifications": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "description": "Optional e-mails: product news (consent) and trial/renewal reminders.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "marketing",
+                    "billing_reminders"
+                  ],
+                  "properties": {
+                    "marketing": {
+                      "type": "boolean"
+                    },
+                    "billing_reminders": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "description": "Changes optional e-mails. Product news is recorded as consent given or withdrawn; essential e-mails (security, invitations, payment results) cannot be turned off.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "marketing": {
+                    "type": "boolean"
+                  },
+                  "billing_reminders": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "marketing",
+                    "billing_reminders"
+                  ],
+                  "properties": {
+                    "marketing": {
+                      "type": "boolean"
+                    },
+                    "billing_reminders": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/deletion-request": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "description": "The newest account deletion request and what must happen before it can be completed.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "request",
+                    "sole_owner_of"
+                  ],
+                  "properties": {
+                    "request": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "state",
+                            "created_at",
+                            "decided_at"
+                          ],
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "pending",
+                                "withdrawn",
+                                "completed",
+                                "rejected"
+                              ]
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            "decided_at": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sole_owner_of": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "org_id",
+                          "name"
+                        ],
+                        "properties": {
+                          "org_id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "description": "Asks for this account to be deleted (`confirm: true` after reading the policy). Staff process it; asking again while one is pending changes nothing. Nothing is deleted by this call.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "confirm"
+                ],
+                "properties": {
+                  "confirm": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "request",
+                    "sole_owner_of"
+                  ],
+                  "properties": {
+                    "request": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "state",
+                            "created_at",
+                            "decided_at"
+                          ],
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "pending",
+                                "withdrawn",
+                                "completed",
+                                "rejected"
+                              ]
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            "decided_at": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sole_owner_of": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "org_id",
+                          "name"
+                        ],
+                        "properties": {
+                          "org_id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "identity"
+        ],
+        "description": "Withdraws a pending deletion request.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "request",
+                    "sole_owner_of"
+                  ],
+                  "properties": {
+                    "request": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "state",
+                            "created_at",
+                            "decided_at"
+                          ],
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "pending",
+                                "withdrawn",
+                                "completed",
+                                "rejected"
+                              ]
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            "decided_at": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sole_owner_of": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "org_id",
+                          "name"
+                        ],
+                        "properties": {
+                          "org_id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
                     }
                   },
                   "additionalProperties": false
@@ -44232,6 +46462,63 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "checkout": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "state",
+                            "plan_id",
+                            "interval",
+                            "created_at",
+                            "expires_at"
+                          ],
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "creating",
+                                "open",
+                                "completed",
+                                "expired",
+                                "replaced",
+                                "failed"
+                              ]
+                            },
+                            "plan_id": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,31}$"
+                            },
+                            "interval": {
+                              "enum": [
+                                "month",
+                                "year"
+                              ]
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "UTC, RFC 3339"
+                            },
+                            "expires_at": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -44597,6 +46884,60 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "prices": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "interval",
+                                "amount_minor",
+                                "currency",
+                                "tax",
+                                "verified_at"
+                              ],
+                              "properties": {
+                                "interval": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "month"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "year"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "amount_minor": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "currency": {
+                                  "type": "string",
+                                  "pattern": "^[a-z]{3}$"
+                                },
+                                "tax": {
+                                  "enum": [
+                                    "inclusive",
+                                    "exclusive",
+                                    "automatic",
+                                    "unspecified"
+                                  ]
+                                },
+                                "verified_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "maxItems": 2
                           }
                         },
                         "additionalProperties": false
@@ -44804,6 +47145,18 @@
                   "plan_id": {
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]{1,31}$"
+                  },
+                  "interval": {
+                    "enum": [
+                      "month",
+                      "year"
+                    ]
+                  },
+                  "return_to": {
+                    "enum": [
+                      "app",
+                      "portal"
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -45041,6 +47394,27 @@
         ],
         "description": "Opens the payment provider’s customer portal (owners): change plan, payment method, cancel, invoices. Changes made there reach this application through the provider’s webhooks.",
         "parameters": [
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "app"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "portal"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "return_to",
+            "required": false
+          },
           {
             "schema": {
               "type": "string",
@@ -47526,6 +49900,63 @@
                               "type": "string",
                               "format": "date-time",
                               "description": "UTC, RFC 3339"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "checkout": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "required": [
+                                "state",
+                                "plan_id",
+                                "interval",
+                                "created_at",
+                                "expires_at"
+                              ],
+                              "properties": {
+                                "state": {
+                                  "enum": [
+                                    "creating",
+                                    "open",
+                                    "completed",
+                                    "expired",
+                                    "replaced",
+                                    "failed"
+                                  ]
+                                },
+                                "plan_id": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,31}$"
+                                },
+                                "interval": {
+                                  "enum": [
+                                    "month",
+                                    "year"
+                                  ]
+                                },
+                                "created_at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "description": "UTC, RFC 3339"
+                                },
+                                "expires_at": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "description": "UTC, RFC 3339"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false
                             },
                             {
                               "type": "null"

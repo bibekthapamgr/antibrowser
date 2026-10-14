@@ -50,6 +50,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/invitations',
     {
+      config: { web: true },
       schema: {
         tags: ['invitations'],
         description:
@@ -187,6 +188,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/invitations',
     {
+      config: { web: true },
       schema: {
         tags: ['invitations'],
         params: OrgParams,
@@ -215,6 +217,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
   app.post(
     '/orgs/:orgId/invitations/:invitationId/revoke',
     {
+      config: { web: true },
       schema: {
         tags: ['invitations'],
         description: 'Withdraws an open invitation (no effect on one already withdrawn or expired).',

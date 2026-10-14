@@ -5,11 +5,18 @@
  * sealed payload cannot be moved to another task. The worker erases the payload once the e-mail went out or was given
  * up. Without a key nothing is queued and the caller reports that e-mail is not set up.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { newId } from '@pb/contracts';
 import type pg from 'pg';
 
-export type EmailKind = 'invitation' | 'welcome';
+export type EmailKind =
+  | 'invitation'
+  | 'welcome'
+  | 'payment_succeeded'
+  | 'payment_failed'
+  | 'trial_ending'
+  | 'contact_request'
+  | 'deletion_request';
 export type EmailVars = Record<string, string>;
 
 export function sealEmailVars(key: Buffer, taskId: string, vars: EmailVars): Buffer {
@@ -57,4 +64,24 @@ export async function enqueueEmail(
     ],
   );
   return true;
+}
+
+/**
+ * R4: one-click unsubscribe from product news (marketing only; essential service mail has no unsubscribe). The token
+ * names the person and is an HMAC under a key derived from EMAIL_TASK_KEY, so it cannot be made for anyone else.
+ */
+function unsubscribeMac(key: Buffer, userId: string): string {
+  const derived = createHmac('sha256', key).update('pb-unsubscribe-v1').digest();
+  return createHmac('sha256', derived).update(userId).digest('base64url');
+}
+export function unsubscribeToken(key: Buffer, userId: string): string {
+  return `${userId}.${unsubscribeMac(key, userId)}`;
+}
+/** The person a valid token names, or null. */
+export function unsubscribeUser(key: Buffer, token: string): string | null {
+  const m = /^(usr_[0-9A-HJKMNP-TV-Z]{26})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  if (!m?.[1] || !m[2]) return null;
+  const want = Buffer.from(unsubscribeMac(key, m[1]));
+  const got = Buffer.from(m[2]);
+  return want.length === got.length && timingSafeEqual(want, got) ? m[1] : null;
 }

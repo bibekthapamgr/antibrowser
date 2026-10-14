@@ -38,6 +38,11 @@ export const LIMITS = {
   onboardingPerUser: { bucket: 'onboarding.user', max: 20, windowSeconds: 600 },
   onboardingPerIp: { bucket: 'onboarding.ip', max: 60, windowSeconds: 600 },
   webSignInPerIp: { bucket: 'web.signin.ip', max: 30, windowSeconds: 600 },
+  // R4: the website's contact form per address and per e-mail; account deletion requests per person.
+  contactPerIp: { bucket: 'contact.ip', max: 5, windowSeconds: 3600 },
+  contactPerEmail: { bucket: 'contact.email', max: 3, windowSeconds: 3600 },
+  deletionPerUser: { bucket: 'deletion.user', max: 5, windowSeconds: 86_400 },
+  unsubscribePerIp: { bucket: 'unsubscribe.ip', max: 60, windowSeconds: 3600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

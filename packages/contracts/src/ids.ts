@@ -55,6 +55,8 @@ export const ID_PREFIXES = {
   migrationRun: 'mgr',
   // R2 (ADR-0021): e-mails the worker sends.
   emailTask: 'eml',
+  // R4 (ADR-0023): checkout attempts (one in progress per workspace).
+  checkoutAttempt: 'chk',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

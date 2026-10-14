@@ -19,6 +19,7 @@ export function deviceRoutes(app: App, deps: Deps): void {
   app.get(
     '/devices',
     {
+      config: { web: true },
       schema: {
         tags: ['devices'],
         description: 'Devices enrolled for the signed-in account (most recent first, at most 100).',
@@ -44,6 +45,7 @@ export function deviceRoutes(app: App, deps: Deps): void {
   app.post(
     '/devices/:deviceId/revoke',
     {
+      config: { web: true },
       schema: {
         tags: ['devices'],
         description:

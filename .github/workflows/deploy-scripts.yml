@@ -14,7 +14,8 @@ on:
       - 'scripts/ci/signup-check.ts'
       - 'services/worker/test/smtp-sink.ts'
       - 'scripts/ci/totp.ts'
-      - 'apps/web-portal/**'
+      - 'apps/web-customer/**'
+      - 'apps/web-public/**'
       - 'services/api/scripts/snapshot-smoke.ts'
       - 'services/api/scripts/storage-check.ts'
       - 'services/api/scripts/restore-drill.ts'
@@ -149,6 +150,37 @@ jobs:
             echo "::error title=billing::the Stripe forwarder exists without a key"; exit 1
           fi
           echo "::notice title=Support console::served at /console/ with its CSP; Keycloak console client (PKCE, CORS for the console origin only); non-staff refused; staff session after staff.ts add"
+
+      - name: Public website, plan catalog, downloads and portal (R4)
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:8080
+          hdr() { curl -fsS -D - -o /dev/null "$1" | tr -d '\r'; }
+          # The website: prerendered pages with the site's CSP, cacheable; hashed assets cached for a year.
+          h=$(hdr "$base/")
+          echo "$h" | grep -qi "^content-security-policy: default-src 'none'; script-src 'self'" \
+            || { echo "::error title=website::no site CSP on /"; exit 1; }
+          echo "$h" | grep -qi '^cache-control: public' || { echo "::error title=website::/ is not cacheable"; exit 1; }
+          for page in pricing download help contact security legal/privacy legal/terms legal/refund; do
+            curl -fsS -o /dev/null "$base/$page/" || { echo "::error title=website::/$page/ is not served"; exit 1; }
+          done
+          css=$(curl -fsS "$base/pricing/" | grep -o '/assets/site\.[0-9a-f]*\.css' | head -1)
+          hdr "$base$css" | grep -qi 'immutable' || { echo "::error title=website::assets are not immutable"; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/no-such-page/")" = 404 ] \
+            || { echo "::error title=website::unknown pages must answer 404"; exit 1; }
+          # The catalog: no Stripe key on this server, so nothing can be bought and nothing is shown as free.
+          plans=$(curl -fsS "$base/v1/public/plans")
+          echo "$plans" | jq -e '(.catalog_version | test("^[0-9a-f]{16}$")) and (.items | length > 0)
+            and all(.items[]; .available == false and (.prices | length) == 0)' > /dev/null \
+            || { echo "::error title=catalog::unexpected catalog without billing: $plans"; exit 1; }
+          # Downloads: no trusted release key yet, so the release gate says "not yet available".
+          curl -fsS "$base/v1/public/downloads" | jq -e '.status == "not_available" and (.platforms | length) == 0' > /dev/null \
+            || { echo "::error title=downloads::internal builds must never be offered"; exit 1; }
+          # The portal: the built React app at /app/, never cached; account answers are no-store.
+          h=$(hdr "$base/app/")
+          echo "$h" | grep -qi '^cache-control: no-store' || { echo "::error title=portal::/app/ must not be cached"; exit 1; }
+          curl -fsS "$base/app/" | grep -q '/app/assets/' || { echo "::error title=portal::/app/ is not the built portal"; exit 1; }
+          echo "::notice title=Website (R4)::pages with CSP and cache rules, catalog without fabricated prices, downloads gated (not yet available), portal served at /app/"
 
       - name: Self-service signup, verification, onboarding and invitation (R2)
         run: |

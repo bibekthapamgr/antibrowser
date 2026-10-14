@@ -10,7 +10,10 @@
  *
  *   node --env-file=/etc/project-browser/billing.env services/api/scripts/stripe-setup.ts \
  *     --price starter=<amount> --price team=<amount> --price agency=<amount> \
- *     [--currency usd] [--interval month|year] [--write /etc/project-browser/billing.env]
+ *     [--year-price team=<amount> …] [--currency usd] [--interval month|year] [--write /etc/project-browser/billing.env]
+ *
+ * R4: `--year-price` adds a yearly price next to the monthly one (key `plan@version/year`); the website and portal
+ * then offer a monthly/yearly choice for that plan. Plans without one are offered monthly only.
  *
  * The key comes from STRIPE_SECRET_KEY in the environment (never from the command line, which other users of the
  * server can see).
@@ -28,6 +31,8 @@ export interface StripeSetupOptions {
   interval: 'month' | 'year';
   /** plan id → amount in the currency's minor unit. */
   amounts: Record<string, number>;
+  /** R4: plan id → yearly amount (minor units), sold next to the price above. */
+  yearAmounts?: Record<string, number>;
   log?: (line: string) => void;
 }
 
@@ -168,7 +173,11 @@ export async function ensurePortalConfiguration(
           enabled: true,
           default_allowed_updates: ['price'],
           proration_behavior: 'create_prorations',
-          products: offers.map((o) => ({ product: o.product, prices: [o.price] })),
+          // One entry per product with all of its prices (monthly and, where sold, yearly).
+          products: [...new Set(offers.map((o) => o.product))].map((product) => ({
+            product,
+            prices: offers.filter((o) => o.product === product).map((o) => o.price),
+          })),
         },
       },
       metadata: { pb_prices: signature },
@@ -196,6 +205,17 @@ export async function setupStripe(o: StripeSetupOptions): Promise<StripeSetupRes
     offers.push({ product, price });
     log(`ok  ${planKey(plan.id, plan.version)} → ${price} (${product})`);
   }
+  for (const [id, minor] of Object.entries(o.yearAmounts ?? {})) {
+    const plan = latestPlan(id);
+    if (!plan?.purchasable) throw new StripeSetupError(`${id} is not a purchasable plan`);
+    if (o.interval === 'year')
+      throw new StripeSetupError('--year-price goes with monthly prices (--interval month)');
+    const product = await ensureProduct(call, plan);
+    const price = await ensurePrice(call, plan, product, o.currency, 'year', minor);
+    prices[`${planKey(plan.id, plan.version)}/year`] = price;
+    offers.push({ product, price });
+    log(`ok  ${planKey(plan.id, plan.version)}/year → ${price} (${product})`);
+  }
   const portalConfiguration = await ensurePortalConfiguration(call, offers);
   log(`ok  customer portal configuration ${portalConfiguration}`);
   return { prices, portalConfiguration };
@@ -215,6 +235,7 @@ export function writeEnvValues(file: string, values: Record<string, string>): vo
 async function main() {
   const args = process.argv.slice(2);
   const amounts: Record<string, string> = {};
+  const yearAmounts: Record<string, string> = {};
   let currency = 'usd';
   let interval: 'month' | 'year' = 'month';
   let write: string | null = null;
@@ -225,6 +246,12 @@ async function main() {
       const [plan, amount] = v.split('=');
       if (!plan || !amount) throw new StripeSetupError('--price plan=amount, e.g. --price team=49');
       amounts[plan] = amount;
+      i++;
+    } else if (a === '--year-price') {
+      const [plan, amount] = v.split('=');
+      if (!plan || !amount)
+        throw new StripeSetupError('--year-price plan=amount, e.g. --year-price team=490');
+      yearAmounts[plan] = amount;
       i++;
     } else if (a === '--currency') {
       currency = v.toLowerCase();
@@ -251,6 +278,9 @@ async function main() {
     currency,
     interval,
     amounts: minor,
+    yearAmounts: Object.fromEntries(
+      Object.entries(yearAmounts).map(([p, a]) => [p, minorUnits(a, currency)]),
+    ),
     log: (l) => console.log(l),
   });
   const values = {

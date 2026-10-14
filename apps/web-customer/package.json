@@ -1,0 +1,31 @@
+{
+  "name": "@pb/web-customer",
+  "version": "0.16.0",
+  "private": true,
+  "type": "module",
+  "description": "Customer portal (R4, ADR-0023): sign up and onboarding (R2), overview, billing and checkout, team, account. Served by the API at /app/ with the portal's cookie session; it never holds a token.",
+  "scripts": {
+    "dev": "vite --mode demo",
+    "build": "vite build",
+    "build:demo": "vite build --mode demo",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "test:e2e": "vitest run --config e2e/vitest.config.ts"
+  },
+  "dependencies": {
+    "@pb/contracts": "workspace:*",
+    "@pb/ui": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "axe-core": "4.14.0",
+    "puppeteer-core": "25.13.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
+  }
+}

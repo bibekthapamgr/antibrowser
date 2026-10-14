@@ -2,7 +2,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import swagger from '@fastify/swagger';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import type { AppConfig } from '@pb/config/env';
-import { API_PREFIX, ApiError, ERROR_CODES, type ErrorBody, type ErrorCode, newId } from '@pb/contracts';
+import {
+  API_PREFIX,
+  ApiError,
+  ERROR_CODES,
+  type ErrorBody,
+  type ErrorCode,
+  newId,
+  type PublicDownloads,
+} from '@pb/contracts';
 import ajvFormats from 'ajv-formats';
 import Fastify, {
   type FastifyBaseLogger,
@@ -20,6 +28,8 @@ import { createStripe, type Stripe, type StripePrice } from './billing/stripe.ts
 import { withTx } from './db.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
 import { hit, LIMITS } from './ratelimit.ts';
+import { downloadsReader } from './release.ts';
+import { accountRoutes } from './routes/account.ts';
 import { agencyRoutes } from './routes/agency.ts';
 import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
@@ -37,8 +47,9 @@ import { leaseRoutes } from './routes/leases.ts';
 import { meRoutes } from './routes/me.ts';
 import { onboardingRoutes } from './routes/onboarding.ts';
 import { organizationRoutes } from './routes/organizations.ts';
-import { portalConfigRoutes, portalRoutes } from './routes/portal.ts';
+import { portalConfigRoutes, portalRoutes, publicSiteRoutes } from './routes/portal.ts';
 import { profileRoutes } from './routes/profiles.ts';
+import { publicRoutes } from './routes/public.ts';
 import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
 import { supportRoutes } from './routes/support.ts';
@@ -72,6 +83,8 @@ export interface Deps {
   consoleIdTokens: IdTokenVerifier | null;
   /** R2: ID tokens of the customer portal's own client (backend-for-frontend sign-in). */
   webIdTokens: IdTokenVerifier | null;
+  /** R4: the download page's view of the signed stable channel (cached). */
+  downloads: () => Promise<PublicDownloads>;
 }
 
 export interface BillingDeps {
@@ -141,6 +154,8 @@ export interface BuildOptions {
   /** Tests inject the support console's ID-token verifier. */
   consoleIdTokens?: IdTokenVerifier;
   webIdTokens?: IdTokenVerifier;
+  /** Tests inject the download page's source (R4). */
+  downloads?: () => Promise<PublicDownloads>;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -229,6 +244,9 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     },
     consoleIdTokens,
     webIdTokens,
+    downloads:
+      opts.downloads ??
+      downloadsReader({ channelUrl: config.site.downloadChannelUrl, keysFile: config.site.releaseKeysFile }),
   };
 
   await app.register(swagger, {
@@ -236,7 +254,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.15.0',
+        version: '0.16.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +
@@ -279,7 +297,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
 
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-request-id', req.id);
-    reply.header('cache-control', 'no-store');
+    // Private by default (account and billing answers); R4 public pages and catalog set their own cache rules.
+    if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
     reply.header('x-content-type-options', 'nosniff');
   });
 
@@ -415,6 +434,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
   consoleRoutes(app as unknown as App, deps);
   // R2: the customer portal's static page at /app/ (only when WEB_DIR and WEB_ORIGIN are set).
   portalRoutes(app as unknown as App, deps);
+  // R4: the public website's pages at / (only when PUBLIC_DIR is set).
+  publicSiteRoutes(app as unknown as App, deps);
 
   await app.register(
     async (v1) => {
@@ -428,6 +449,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       onboardingRoutes(scoped, deps);
       webRoutes(scoped, deps);
       portalConfigRoutes(scoped, deps);
+      publicRoutes(scoped, deps);
+      accountRoutes(scoped, deps);
       clientRoutes(scoped, deps);
       grantRoutes(scoped, deps);
       profileRoutes(scoped, deps);

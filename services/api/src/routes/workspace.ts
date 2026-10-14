@@ -55,7 +55,7 @@ import {
   versionConflict,
 } from './common.ts';
 
-const SERVER_VERSION = '0.15.0';
+const SERVER_VERSION = '0.16.0';
 const param = (prefix: Parameters<typeof ID_PATTERN>[0]) => Type.String({ pattern: ID_PATTERN(prefix) });
 const FolderParams = Type.Object(
   { orgId: param('org'), folderId: param('fld') },
@@ -143,7 +143,7 @@ export function workspaceRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/folders',
     {
-      config: { tokens: true },
+      config: { tokens: true, web: true },
       schema: {
         tags: ['profiles'],
         description:

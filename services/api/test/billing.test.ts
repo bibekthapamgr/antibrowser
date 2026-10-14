@@ -164,7 +164,7 @@ describe('trial and checkout', () => {
       version: '2025-03-31.basil',
       params: { mode: 'subscription', 'line_items[0][price]': f.prices.team },
     });
-    expect(create?.idempotencyKey).toMatch(/^pb-checkout-req_/);
+    expect(create?.idempotencyKey).toMatch(/^pb-checkout-chk_/); // R4: one key per checkout attempt
     // The browser comes back: informational only.
     const back = await h.app.inject({ method: 'GET', url: '/v1/billing/return?result=success' });
     expect(back.statusCode).toBe(200);

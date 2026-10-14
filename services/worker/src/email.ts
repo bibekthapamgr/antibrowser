@@ -10,7 +10,7 @@
 import { openEmailVars } from '@pb/api/email';
 import nodemailer, { type Transporter } from 'nodemailer';
 import type pg from 'pg';
-import { renderEmail } from './email-templates.ts';
+import { type EmailKind, renderEmail } from './email-templates.ts';
 
 export const EMAIL_MAX_ATTEMPTS = 8;
 
@@ -57,7 +57,7 @@ export async function processEmailTasks(deps: EmailDeps, limit = 20): Promise<Em
       await client.query('begin');
       const { rows } = await client.query<{
         id: string;
-        kind: 'invitation' | 'welcome';
+        kind: EmailKind;
         to_email: string;
         payload_enc: Buffer | null;
         attempts: number;
@@ -103,6 +103,8 @@ export async function processEmailTasks(deps: EmailDeps, limit = 20): Promise<Em
               subject: message.subject,
               text: message.text,
               html: message.html,
+              // R4: a contact request is answered to the visitor, never to the no-reply sender.
+              ...(task.kind === 'contact_request' && vars.reply_to ? { replyTo: vars.reply_to } : {}),
               headers: { 'auto-submitted': 'auto-generated' },
             });
             await finish('sent', null);

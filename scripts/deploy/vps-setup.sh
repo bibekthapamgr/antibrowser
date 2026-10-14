@@ -192,6 +192,15 @@ else
   tail -20 /tmp/pb-console-build.log
   die "the support console did not build; full log: /tmp/pb-console-build.log"
 fi
+# R4: the customer portal (/app/, WEB_DIR, set by keycloak-setup.sh) and the public website (/, PUBLIC_DIR).
+PUBLIC_DIR=$APP_DIR/apps/web-public/dist
+if as_pb bash -c "cd '$APP_DIR' && pnpm --filter @pb/web-customer build && pnpm --filter @pb/web-public build" \
+  > /tmp/pb-web-build.log 2>&1; then
+  ok "customer portal and public website built (the API serves them at /app/ and /)"
+else
+  tail -20 /tmp/pb-web-build.log
+  die "the portal or website did not build; full log: /tmp/pb-web-build.log"
+fi
 
 # ----------------------------------------------------------------------------- snapshot storage + root key (07)
 step "Snapshot storage (SeaweedFS) and the backup root key"
@@ -324,6 +333,7 @@ OBJECT_STORE_SECRET_ACCESS_KEY=$S3_SECRET
 OBJECT_STORE_FORCE_PATH_STYLE=true
 KMS_LOCAL_KEY_FILE=$KMS_FILE
 CONSOLE_DIR=$CONSOLE_DIR
+PUBLIC_DIR=$PUBLIC_DIR
 EOF
 umask 022
 chown root:"$APP_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
@@ -350,6 +360,23 @@ if [[ $RUN_TESTS == 1 ]]; then
     die "tests failed; full log: /tmp/pb-tests.log"
   fi
 fi
+
+# ----------------------------------------------------------------------------- website settings (R4)
+SITE_ENV=$ENV_DIR/site.env
+if [[ ! -f $SITE_ENV ]]; then
+  (umask 027; cat > "$SITE_ENV" <<'SITE'
+# Website and portal settings (R4). Written once by vps-setup.sh; from then on this file is YOURS and never overwritten.
+# After any change: systemctl restart pb-api pb-worker
+#
+# Where messages from the website's contact form are sent (needs the mail server, smtp.env).
+SUPPORT_EMAIL=
+# Optional: your service status page (https://...), linked in the website footer and the portal.
+STATUS_URL=
+SITE
+  )
+  ok "created $SITE_ENV (yours to fill in; never overwritten)"
+fi
+chown root:"$APP_USER" "$SITE_ENV"; chmod 640 "$SITE_ENV"
 
 # ----------------------------------------------------------------------------- billing (milestone 11)
 step "Billing (Stripe test mode)"
@@ -497,6 +524,7 @@ EnvironmentFile=$ENV_FILE
 EnvironmentFile=-$ENV_DIR/billing.env
 EnvironmentFile=-$ENV_DIR/stripe-webhook.env
 EnvironmentFile=-$ENV_DIR/email.env
+EnvironmentFile=-$ENV_DIR/site.env
 ExecStart=$NODE_ROOT/bin/node $4
 Restart=on-failure
 RestartSec=3

@@ -83,7 +83,7 @@ export function profileRoutes(app: App, deps: Deps): void {
   app.get(
     '/orgs/:orgId/profiles',
     {
-      config: { tokens: true },
+      config: { tokens: true, web: true },
       schema: {
         tags: ['profiles'],
         description:
