@@ -80,7 +80,8 @@ endpoint() { if [[ -n $R2_ENDPOINT ]]; then echo "$R2_ENDPOINT"; else echo "$R2_
 
 write_template() {
   [[ -f $BACKUP_ENV ]] && return 0
-  install -d -m 750 -o root -g root "$ENV_DIR" 2>/dev/null || true
+  # The folder exists (vps-setup.sh made it root:pb 0750 for the API); never change its owner or mode here.
+  [[ -d $ENV_DIR ]] || die "$ENV_DIR is missing (run vps-setup.sh)"
   umask 077
   cat > "$BACKUP_ENV" <<'EOF'
 # Off-site backups (milestone 12). Written once by vps-setup.sh; from then on this file is YOURS and never overwritten.
@@ -208,7 +209,7 @@ ok "rclone $RCLONE_VERSION (SHA-256 verified)"
 id "$BACKUP_USER" >/dev/null 2>&1 \
   || useradd --system --home-dir "$STATE_DIR" --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$BACKUP_USER"
 install -d -m 750 -o "$BACKUP_USER" -g "$BACKUP_USER" "$STATE_DIR"
-install -d -m 750 -o "$BACKUP_USER" -g "$BACKUP_USER" "$STATE_DIR/drills"
+install -d -m 750 -o root -g root "$STATE_DIR/drills"
 
 # The passphrase: created once, never replaced (backups made with it cannot be read without it).
 NEW_CIPHER=0
