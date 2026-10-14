@@ -53,6 +53,8 @@ describe.runIf(Boolean(base))('Stripe client against stripe-mock', () => {
       returnUrl: 'https://example.com/v1/billing/return',
     });
     expect(portal).toMatch(/^https:\/\//);
+    // Listing open checkout sessions and expiring them (before a new checkout).
+    expect(await stripe.expireOpenCheckoutSessions(customer)).toBeGreaterThanOrEqual(0);
   });
 
   it('reads subscriptions, sessions, invoices, prices, charges and disputes into the reduced shapes', async () => {
