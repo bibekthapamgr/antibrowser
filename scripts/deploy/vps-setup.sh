@@ -496,6 +496,7 @@ WorkingDirectory=$3
 EnvironmentFile=$ENV_FILE
 EnvironmentFile=-$ENV_DIR/billing.env
 EnvironmentFile=-$ENV_DIR/stripe-webhook.env
+EnvironmentFile=-$ENV_DIR/email.env
 ExecStart=$NODE_ROOT/bin/node $4
 Restart=on-failure
 RestartSec=3

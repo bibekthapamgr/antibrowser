@@ -16,6 +16,8 @@ use serde::Serialize;
 pub const SERVER_URL: &str = "server_url";
 pub const DEVICE_ID: &str = "device_id";
 pub const ACCOUNT: &str = "account";
+/// R2: the build's default server was offered once (clearing the server afterwards is respected).
+pub const SERVER_DEFAULT_APPLIED: &str = "server_default_applied";
 
 /// Cached responses are bounded so a large organization cannot grow the local database without limit.
 pub const MAX_CACHE_ENTRIES: u32 = 500;

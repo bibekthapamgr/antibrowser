@@ -59,8 +59,8 @@ export function tauriBackend(): Backend {
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),
-      signIn: async (reauth) => {
-        await call('begin_sign_in', reauth ? { reauth } : {});
+      signIn: async (reauth, create) => {
+        await call('begin_sign_in', create ? { create } : reauth ? { reauth } : {});
       },
       cancelSignIn: () => call('cancel_sign_in', {}),
       signOut: () => call('sign_out', {}),

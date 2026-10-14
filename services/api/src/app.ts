@@ -37,6 +37,7 @@ import { leaseRoutes } from './routes/leases.ts';
 import { meRoutes } from './routes/me.ts';
 import { onboardingRoutes } from './routes/onboarding.ts';
 import { organizationRoutes } from './routes/organizations.ts';
+import { portalConfigRoutes, portalRoutes } from './routes/portal.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
@@ -235,7 +236,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.13.0',
+        version: '0.14.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +
@@ -412,6 +413,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
 
   // Milestone 11: the support console's static page at /console/ (outside /v1; only when CONSOLE_DIR is set).
   consoleRoutes(app as unknown as App, deps);
+  // R2: the customer portal's static page at /app/ (only when WEB_DIR and WEB_ORIGIN are set).
+  portalRoutes(app as unknown as App, deps);
 
   await app.register(
     async (v1) => {
@@ -424,6 +427,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       invitationRoutes(scoped, deps);
       onboardingRoutes(scoped, deps);
       webRoutes(scoped, deps);
+      portalConfigRoutes(scoped, deps);
       clientRoutes(scoped, deps);
       grantRoutes(scoped, deps);
       profileRoutes(scoped, deps);

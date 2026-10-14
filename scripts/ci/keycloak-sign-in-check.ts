@@ -14,7 +14,8 @@
  * it), then POST /v1/support/sessions. PB_EXPECT_STAFF=0 expects the refusal of a non-staff account, 1 a staff session.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { freshCode, saveSecret, totp } from './totp.ts';
 
 const api = process.env.PB_API ?? 'http://127.0.0.1:8080';
 const consoleMode = process.env.PB_CONSOLE === '1';
@@ -23,6 +24,9 @@ const email = need('PB_EMAIL');
 const password = need('PB_PASSWORD');
 const newPassword = process.env.PB_NEW_PASSWORD ?? '';
 const random = (n = 32) => randomBytes(n).toString('base64url');
+// R2: where one-time-code secrets of test accounts are kept between steps (staff sign in with a code).
+const totpDir = process.env.PB_TOTP_DIR ?? '';
+if (totpDir) mkdirSync(totpDir, { recursive: true, mode: 0o700 });
 
 function need(name: string): string {
   const value = process.env[name];
@@ -137,7 +141,27 @@ for (let step = 0; step < 10 && !callback; step++) {
   const form = findForm(html);
   if (!form) fail(`no form on the provider page (after: ${pages.join(', ') || 'start'})`);
   const f = form.fields;
-  if (form.id.includes('totp') || f.has('totp')) fail('the account must set up an authenticator app first');
+  if (f.has('totpSecret')) {
+    // R2: the staff flow asks to set up an authenticator app; do what a person does with their phone.
+    if (!totpDir)
+      fail('the account must set up an authenticator app (set PB_TOTP_DIR to let this check do it)');
+    const secret = f.get('totpSecret') ?? '';
+    const step = Math.floor(Date.now() / 30_000);
+    f.set('totp', totp(secret, step));
+    if (f.has('userLabel')) f.set('userLabel', 'deploy check');
+    saveSecret(totpDir, email, secret, step);
+    pages.push('set up one-time codes');
+    res = await browse(form.action, new URLSearchParams([...f]));
+    continue;
+  }
+  if (f.has('otp')) {
+    const code = totpDir ? await freshCode(totpDir, email) : null;
+    if (!code) fail('the provider asks for a one-time code but this account has no saved secret');
+    f.set('otp', code);
+    pages.push('one-time code');
+    res = await browse(form.action, new URLSearchParams([...f]));
+    continue;
+  }
   if (f.has('username') && f.has('password')) {
     f.set('username', email);
     f.set('password', password);
@@ -166,6 +190,10 @@ if (callback.searchParams.get('iss') !== config.issuer)
 const expectChange = process.env.PB_EXPECT_PASSWORD_CHANGE;
 if (expectChange === '1' && !pages.includes('new password')) fail('expected to replace a temporary password');
 if (expectChange === '0' && pages.includes('new password')) fail('was asked for a new password again');
+// R2: the support console always asks for a one-time code (or to set one up first).
+if (consoleMode && !pages.some((p) => p === 'one-time code' || p === 'set up one-time codes')) {
+  fail('the support console signed in without a one-time code');
+}
 ok(`provider pages: ${pages.join(' -> ')} -> ${REDIRECT} (state and iss match)`);
 
 const consoleOrigin = new URL(api).origin;

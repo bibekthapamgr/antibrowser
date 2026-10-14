@@ -17,10 +17,9 @@ in the linked documents; this page is the entry point.
 
 ## Result
 **Gate met for this milestone: no open critical or high finding.**
-- 2 medium findings are tracked; both must be resolved before the paid launch:
-  - D1: custody of the signing key against a GitHub admin-account takeover (owner actions are listed);
-  - S1: staff sign-in does not yet enforce a second factor (create staff accounts with `--otp` until the API
-    enforces it).
+- 2 medium findings: D1 is tracked and must be resolved before the paid launch (custody of the signing key against a
+  GitHub admin-account takeover; owner actions are listed). S1 (staff second factor) was fixed in R2: the support
+  console's own sign-in flow asks for a password and a one-time code every time.
 - 10 of 12 low findings are fixed and verified by tests; 2 are tracked with owners (T3, C-L4).
 - A third-party penetration test is still required before the paid launch. The reviews here were independent of the
   code's authors but AI-assisted ([findings](findings.md#how-the-review-was-done)).
@@ -83,8 +82,8 @@ keep the report from `/var/lib/pb-backup/drills/`.
 ## Residual risks and owner actions before the paid launch
 1. **D1:** protect the signing key. Second reviewer with "prevent self-review", no admin bypass, reviews for
    workflow changes, hardware-key 2FA. Preferably offline or hardware signing.
-2. **S1:** enforce a second factor for staff sign-in in the API. Until then, create every staff account with
-   `--otp`.
+2. **S1:** fixed in R2 (the console's own sign-in flow requires a one-time code). Optional: the API also checks
+   the provider's `acr` for staff tokens.
 3. **Third-party penetration test** and cryptography review. Record the results in the findings register.
 4. **OS code signing** (Windows certificate, Apple Developer ID) when affordable. Until then it is disclosed in the
    limitations.

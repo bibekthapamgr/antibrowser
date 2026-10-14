@@ -1119,10 +1119,10 @@ describe('account and organizations (milestone 06)', () => {
     await goTo(page, 'Account');
     const signIn = await page.$$eval('button', (bs) =>
       bs
-        .filter((b) => b.textContent?.trim() === 'Sign in or create an account')
+        .filter((b) => ['Sign in', 'Create account'].includes(b.textContent?.trim() ?? ''))
         .map((b) => (b as HTMLButtonElement).disabled),
     );
-    expect(signIn).toEqual([true]); // no server yet
+    expect(signIn).toEqual([true, true]); // no server yet
     await page.type('input[type=url]', 'http://browser.example.test');
     await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
     await toastContains(page, 'https://');
@@ -1132,13 +1132,49 @@ describe('account and organizations (milestone 06)', () => {
     await page.type('input[type=url]', 'https://browser.example.test');
     await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
     await toastContains(page, 'Server saved.');
-    await clickButton(page, '#main', 'Sign in or create an account');
-    await toastContains(page, 'Signed in.');
+    await clickButton(page, '#main', 'Sign in');
+    // R2: onboarding completes by itself (a returning person: their workspace is selected) and Profiles opens.
+    await toastContains(page, 'Signed in. Demo Agency opens first.');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent?.includes('Profiles'));
+    await goTo(page, 'Account');
     await page.waitForFunction(() => document.body.textContent?.includes('Signed in as Demo Person'));
     expect(await text(page, '#devices-title')).toBe('Your devices');
     await openOrg(page);
     expect(await text(page, '#main')).toContain('North shop admin');
     expect(await text(page, '.sidebar__note')).toContain('signed in as Demo Person');
+    await page.close();
+  });
+
+  it('R2: "Create account" asks for the terms once, creates one workspace with a trial and opens Profiles', async () => {
+    const page = await open('');
+    await goTo(page, 'Account');
+    await page.type('input[type=url]', 'https://browser.example.test');
+    await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
+    await toastContains(page, 'Server saved.');
+    await clickButton(page, '#main', 'Create account');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog]')?.textContent?.includes('Set up your workspace'),
+    );
+    expect(await text(page, '[role=dialog]')).toContain('free trial');
+    // Nothing is created before the terms are accepted.
+    const create = await page.$$eval('[role=dialog] button', (bs) =>
+      bs
+        .filter((b) => b.textContent?.trim() === 'Create workspace')
+        .map((b) => (b as HTMLButtonElement).disabled),
+    );
+    expect(create).toEqual([true]);
+    await page.type('[role=dialog] input[maxlength="120"]', 'Bibek Studio');
+    await page.click('[role=dialog] label.check input');
+    await clickButton(page, '[role=dialog]', 'Create workspace');
+    await toastContains(page, 'Welcome! Bibek Studio is ready.');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent?.includes('Profiles'));
+    expect(await page.$('[role=dialog]')).toBeNull();
+    // Signing in again later lands in the same workspace without asking anything.
+    await goTo(page, 'Account');
+    await clickButton(page, '#main', 'Sign out');
+    await clickButton(page, '#main', 'Sign in');
+    await toastContains(page, 'Signed in. Bibek Studio opens first.');
+    expect(await page.$('[role=dialog]')).toBeNull();
     await page.close();
   });
 

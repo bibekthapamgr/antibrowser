@@ -1015,13 +1015,18 @@ function InvitationsSection(props: SectionProps) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof ASSIGNABLE_ROLES)[number]>('operator');
   const [days, setDays] = useState('7');
-  const [created, setCreated] = useState<{ email: string; code: string; expires: string } | null>(null);
+  const [created, setCreated] = useState<{
+    email: string;
+    code: string;
+    expires: string;
+    emailed: boolean;
+  } | null>(null);
   const codeId = useId();
 
   const invite = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const res = await send<{ invitation: Invitation; token: string }>(
+      const res = await send<{ invitation: Invitation; token: string; email_delivery?: string }>(
         backend,
         'POST',
         `/v1/orgs/${orgId}/invitations`,
@@ -1035,6 +1040,8 @@ function InvitationsSection(props: SectionProps) {
         email: res.data.invitation.email,
         code: res.data.token,
         expires: res.data.invitation.expires_at,
+        // R2: the server e-mails the link when it has a mail server.
+        emailed: res.data.email_delivery === 'queued',
       });
       setEmail('');
       list.reload();
@@ -1104,8 +1111,17 @@ function InvitationsSection(props: SectionProps) {
       {created && (
         <div className="notice stack" role="status">
           <p>
-            Send this code to <strong>{created.email}</strong>. It is shown only now. It works once, only for
-            that e-mail address, until {when(created.expires)}.
+            {created.emailed ? (
+              <>
+                Invitation e-mailed to <strong>{created.email}</strong>. You can also send them this code; it
+                is shown only now.
+              </>
+            ) : (
+              <>
+                Send this code to <strong>{created.email}</strong>. It is shown only now.
+              </>
+            )}{' '}
+            It works once, only for that e-mail address, until {when(created.expires)}.
           </p>
           <div className="row">
             <label className="grow">

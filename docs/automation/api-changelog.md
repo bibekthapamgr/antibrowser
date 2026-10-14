@@ -5,6 +5,26 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.14.0 — 2026-10-15 (R2: self-service accounts and automatic onboarding)
+Added (see ADR-0021; nothing removed or renamed)
+- `GET /onboarding/status`, `POST /onboarding/complete`: onboarding decided by the server (invitations first, one
+  personal workspace with a trial per direct signup, returning people selected, a choice once among several owned
+  workspaces). The body never names a user, role or e-mail; a plan is an intent (catalog id), never a price.
+- Customer portal session (backend-for-frontend): `GET /web/config`, `GET /web/auth/login`, `GET /web/auth/callback`,
+  `GET /web/auth/session`, `POST /web/auth/logout`, `POST /web/auth/revoke-all`. An HttpOnly cookie, CSRF token and
+  Origin check on changes; only routes marked for the portal accept it (`/me`, `/me/workspaces`, `/me/capabilities`,
+  `/me/onboarding`, `/onboarding/*`, `/invitations/{token}` and its accept, `GET /orgs/{org}`). Static page at `/app/`.
+- `POST /orgs/{org}/invitations` answers `email_delivery: "queued" | "not_configured"` (the worker e-mails the link
+  when the server has a mail server).
+- Error codes `TERMS_REQUIRED`, `WORKSPACE_SUSPENDED`, `ACCOUNT_SUSPENDED`, `CSRF_FAILED`.
+
+Changed (visible to clients)
+- A further workspace of the same person or verified address (`POST /organizations` too) shares the earlier trial
+  clock instead of starting a new trial.
+- Accepting an invitation into a suspended workspace answers `WORKSPACE_SUSPENDED`; into a workspace whose seats are
+  now full, `PLAN_LIMIT_REACHED` (`limit: seats`). Retrying an accepted invitation still answers `INVITATION_USED`.
+- `GET /me/onboarding` may report the new state `choose`.
+
 ## 0.13.0 — 2026-10-14 (R1: product contracts and safe migration foundation)
 Added (all additive; no route, table or column was removed or renamed — see ADR-0020)
 - `GET /me/capabilities`: capability negotiation (`features`, `minimum_desktop_version`, `latest_desktop_version`).

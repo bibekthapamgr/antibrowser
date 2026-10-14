@@ -43,6 +43,8 @@ import type {
 } from './types.ts';
 
 const CROCK = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+/** R2: the terms version the demo server asks new workspace owners to accept. */
+export const DEMO_TERMS = '2026-10-14';
 const rid = (prefix: string) =>
   `${prefix}_${Array.from({ length: 26 }, () => CROCK[Math.floor(Math.random() * 32)]).join('')}`;
 const token = () =>
@@ -369,6 +371,16 @@ export function demoCloud(opts: {
   let recentAuthUntil = 0;
   let requests = 0;
   let fencing = 100;
+  // R2: this demo person's onboarding record (see the onboarding route below).
+  const onboarding = {
+    state: 'new' as 'new' | 'invited' | 'ready' | 'choose',
+    default: null as string | null,
+    bootstrap: null as string | null,
+    terms: null as string | null,
+    marketing: false,
+    chosen: false,
+    attempts: 0,
+  };
 
   // A demo organization with clients, profiles and two more members.
   const seedOrg = (myRole: Role) => {
@@ -846,6 +858,87 @@ export function demoCloud(opts: {
       orgs.set(org.id, org);
       audit(org, 'organization.created', org.id);
       return { status: 201, body: { id: org.id, name: org.name, role: 'owner', version: 1, created_at: t } };
+    }
+    // R2 (ADR-0021): self-service onboarding, the same decisions as the server in miniature.
+    if (a === 'onboarding' && (b === 'status' || b === 'complete')) {
+      const mine = () =>
+        [...orgs.values()]
+          .filter((o) => role(o))
+          .map((o) => ({ org_id: o.id, name: o.name, role: role(o) as Role, suspended: false }));
+      const statusBody = () => ({
+        state: onboarding.state,
+        default_org_id: mine().some((w) => w.org_id === onboarding.default) ? onboarding.default : null,
+        bootstrap_org_id: onboarding.bootstrap,
+        workspaces: mine(),
+        email_verified: me.email_verified,
+        terms: { current_version: DEMO_TERMS, accepted_version: onboarding.terms },
+        marketing_consent: onboarding.marketing,
+        plan_intent: null,
+        pending_invitations: [...orgs.values()].flatMap((o) =>
+          o.invitations
+            .filter(
+              (i) => i.email === me.email && invitationRow(i).status === 'open' && !o.members.has(me.id),
+            )
+            .map((i) => ({ org_name: o.name, role: i.role, expires_at: i.expires_at })),
+        ),
+        trial_available: onboarding.bootstrap === null,
+        pending_tasks: [],
+        attempts: onboarding.attempts,
+        last_error: null,
+        completed_at: onboarding.default ? now() : null,
+      });
+      if (b === 'status') return { status: 200, body: statusBody() };
+      onboarding.attempts++;
+      const done = (outcome: string, orgId: string | null, state: typeof onboarding.state) => {
+        onboarding.default = orgId;
+        onboarding.state = state;
+        return { status: 200, body: { outcome, status: statusBody() } };
+      };
+      const stateOf = (orgId: string) =>
+        mine().find((w) => w.org_id === orgId)?.role === 'owner' ? ('ready' as const) : ('invited' as const);
+      if (typeof body.accept_terms_version === 'string') {
+        if (body.accept_terms_version !== DEMO_TERMS)
+          return err(409, 'TERMS_REQUIRED', 'These terms are not the current ones', {
+            current_version: DEMO_TERMS,
+          });
+        onboarding.terms = DEMO_TERMS;
+      }
+      if (typeof body.marketing_consent === 'boolean') onboarding.marketing = body.marketing_consent;
+      if (typeof body.invitation_token === 'string') {
+        const r = route({ method: 'POST', path: `/v1/invitations/${body.invitation_token}/accept` });
+        if (r.status !== 200) return r;
+        const orgId = (r.body as { org_id: string }).org_id;
+        return done('joined', orgId, stateOf(orgId));
+      }
+      if (typeof body.choose_org_id === 'string') {
+        if (!mine().some((w) => w.org_id === body.choose_org_id)) return notFound('Workspace');
+        onboarding.chosen = true;
+        return done('chosen', body.choose_org_id, stateOf(body.choose_org_id));
+      }
+      const ws = mine();
+      if (!body.create_own && ws.length > 0) {
+        if (onboarding.default && ws.some((w) => w.org_id === onboarding.default))
+          return done('existing', onboarding.default, stateOf(onboarding.default));
+        const owned = ws.filter((w) => w.role === 'owner');
+        if (owned.length > 1 && !onboarding.chosen) return done('choice_required', null, 'choose');
+        const pick = owned[0] ?? ws[0];
+        if (pick) return done('selected', pick.org_id, stateOf(pick.org_id));
+      }
+      if (!me.email_verified)
+        return err(403, 'EMAIL_NOT_VERIFIED', 'Verify your e-mail address first; the link is in your inbox');
+      if (!body.create_own && statusBody().pending_invitations.length > 0)
+        return done('invitations_pending', onboarding.default, onboarding.state);
+      if (onboarding.terms !== DEMO_TERMS)
+        return done('terms_required', onboarding.default, onboarding.state);
+      const name =
+        typeof body.workspace_name === 'string' && body.workspace_name.trim()
+          ? body.workspace_name.trim()
+          : `${me.display_name}’s workspace`;
+      const created = route({ method: 'POST', path: '/v1/organizations', body: { name } });
+      const orgId = (created.body as { id: string }).id;
+      onboarding.bootstrap ??= orgId;
+      const keep = body.create_own && onboarding.default && ws.some((w) => w.org_id === onboarding.default);
+      return done('created', keep ? onboarding.default : orgId, keep ? onboarding.state : 'ready');
     }
     if (a === 'invitations' && b) {
       const found = [...orgs.values()]
@@ -2010,7 +2103,7 @@ export function demoCloud(opts: {
       server = next;
       return view();
     },
-    async signIn(reauth) {
+    async signIn(reauth, create) {
       if (!server)
         throw {
           code: 'CLOUD_NOT_CONFIGURED',
@@ -2023,7 +2116,8 @@ export function demoCloud(opts: {
         const first = status !== 'signed_in';
         status = 'signed_in';
         if (reauth) recentAuthUntil = Date.now() + 600_000;
-        if (first && orgs.size === 0 && !opts.mode.includes('fresh')) seedOrg('owner');
+        // A returning demo person has a workspace already; "Create account" (R2) and `fresh` start without one.
+        if (first && orgs.size === 0 && !create && !opts.mode.includes('fresh')) seedOrg('owner');
         opts.emit({ status: 'signed_in', reauth: !!reauth });
       }, 150);
     },

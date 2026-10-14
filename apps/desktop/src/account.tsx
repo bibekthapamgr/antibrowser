@@ -68,10 +68,10 @@ export function AccountScreen(props: {
     else void saveServer(next);
   };
 
-  const signIn = async () => {
+  const signIn = async (create = false) => {
     setBusy(true);
     try {
-      await backend.account.signIn();
+      await backend.account.signIn(false, create);
       onChanged();
     } catch (e) {
       notify(errorMessage(e), 'error');
@@ -196,7 +196,7 @@ export function AccountScreen(props: {
             )}
             <div className="row">
               {!account.user.email_verified && (
-                <button type="button" className="pb-button" disabled={busy} onClick={signIn}>
+                <button type="button" className="pb-button" disabled={busy} onClick={() => void signIn()}>
                   Sign in again
                 </button>
               )}
@@ -221,14 +221,22 @@ export function AccountScreen(props: {
                 className="pb-button"
                 data-variant="primary"
                 disabled={busy || !account.server_url}
-                onClick={signIn}
+                onClick={() => void signIn()}
               >
-                Sign in or create an account
+                Sign in
+              </button>
+              <button
+                type="button"
+                className="pb-button"
+                disabled={busy || !account.server_url}
+                onClick={() => void signIn(true)}
+              >
+                Create account
               </button>
             </div>
             <p className="muted small">
               {account.server_url
-                ? 'Sign-in opens in your web browser. Project Browser never sees your password.'
+                ? 'Both open in your web browser; Project Browser never sees your password. A new account gets its own workspace with a free trial, or joins the team that invited you.'
                 : 'Save the organization server address first.'}
             </p>
           </>

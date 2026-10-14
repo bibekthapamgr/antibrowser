@@ -15,11 +15,18 @@
 #   6. Milestone 11: the support console's own public client `project-browser-console` (Authorization Code + PKCE
 #      S256 from the console page at http://127.0.0.1:<API port>/console/, that origin only for the token endpoint).
 #      Staff roles are not given here: see services/api/scripts/staff.ts.
+#   7. R2 (ADR-0021): self-service accounts. The customer web portal's own public client `project-browser-web`
+#      (PKCE S256, redirect <API>/v1/web/auth/callback only). E-mail verification is required and password reset is
+#      offered; self-registration is switched on only when e-mail can be sent (/etc/project-browser/smtp.env, yours).
+#      The same settings give the worker its mail server (email.env) for invitation and welcome e-mails.
+#      Staff sign in to the console through their own flow: password AND a one-time code every time (no single
+#      sign-on from a customer session). Public signup never creates staff: staff roles live in the API's database.
 #
 # Usage (as root):
 #   bash keycloak-setup.sh --owner-email you@example.com [--otp]   install or update; creates your account
 #   bash keycloak-setup.sh add-user someone@example.com [--otp]     another account (temporary password shown once)
 #   bash keycloak-setup.sh reset-password someone@example.com       new temporary password; also unlocks the account
+#   bash keycloak-setup.sh email-status                             mail server, recent e-mail errors (Keycloak and worker)
 #   --otp: the account must also set up an authenticator app (one-time codes) at its first sign-in.
 # Env overrides: PB_KC_PORT (8081), PB_API_PORT (8080); PB_TEMP_PASSWORD_FILE (tests: write temporary passwords
 #                to this file instead of the screen)
@@ -51,6 +58,15 @@ ADMIN_FILE=$ENV_DIR/keycloak-admin           # Keycloak administrator password (
 BOOTSTRAP_ENV=$ENV_DIR/keycloak-bootstrap.env # exists only until the first administrator is confirmed
 DB_PW_FILE=$ENV_DIR/keycloak-db               # PostgreSQL password of the keycloak role (root only)
 OIDC_ENV=$ENV_DIR/oidc.env
+# R2: the customer portal, e-mail and the staff sign-in flow.
+WEB_CLIENT_ID=project-browser-web
+WEB_ORIGIN=$CONSOLE_ORIGIN
+WEB_REDIRECT=$WEB_ORIGIN/v1/web/auth/callback
+SMTP_ENV=$ENV_DIR/smtp.env      # yours: the mail server (see the summary for the format)
+EMAIL_ENV=$ENV_DIR/email.env    # generated: the worker's mail settings and the API's e-mail sealing key
+APP_DIR=/home/pb/antibrowser
+THEME_SRC=$APP_DIR/scripts/deploy/keycloak-theme/pb
+STAFF_FLOW=pb-staff-browser
 DROPIN=/etc/systemd/system/pb-api.service.d/oidc.conf
 NODE=/opt/node/bin/node
 SELF=$(readlink -f "$0")
@@ -78,6 +94,8 @@ CMD=setup; EMAIL=""; OTP=0
 if [[ ${1:-} == add-user || ${1:-} == reset-password ]]; then
   CMD=$1; EMAIL=${2:-}
   shift $(( $# > 1 ? 2 : 1 ))
+elif [[ ${1:-} == email-status ]]; then
+  CMD=$1; shift
 fi
 while (( $# )); do
   case $1 in
@@ -92,7 +110,7 @@ done
 EMAIL=${EMAIL,,}
 email_re='^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$'
 [[ -z $EMAIL || $EMAIL =~ $email_re ]] || die "not an e-mail address: $EMAIL"
-[[ $CMD == setup || -n $EMAIL ]] || die "usage: bash $SELF $CMD someone@example.com"
+[[ $CMD == setup || $CMD == email-status || -n $EMAIL ]] || die "usage: bash $SELF $CMD someone@example.com"
 [[ $KC_PORT =~ ^[0-9]+$ && $API_PORT =~ ^[0-9]+$ && $KC_PORT != "$API_PORT" ]] || die "invalid PB_KC_PORT / PB_API_PORT"
 
 WORK=$(mktemp -d -p /var/tmp pb-keycloak.XXXXXX)
@@ -177,6 +195,33 @@ reset_password() {  # e-mail -> ACCOUNT_TEXT
   ACCOUNT_TEXT=$(account_box "$1" "$pw")
 }
 
+# R2: the mail server settings (root's own file, KEY=VALUE lines; parsed, never executed).
+SMTP_HOST="" SMTP_PORT="" SMTP_SECURITY="" SMTP_USER="" SMTP_PASSWORD="" SMTP_FROM="" SMTP_FROM_NAME=""
+read_smtp() {  # -> returns 0 when $SMTP_ENV describes a usable mail server
+  [[ -s $SMTP_ENV ]] || return 1
+  local key value
+  while IFS='=' read -r key value; do
+    [[ $key =~ ^SMTP_(HOST|PORT|SECURITY|USER|PASSWORD|FROM|FROM_NAME)$ ]] || continue
+    value=${value%$'\r'}; value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}
+    printf -v "$key" '%s' "$value"
+  done < "$SMTP_ENV"
+  SMTP_SECURITY=${SMTP_SECURITY:-starttls}
+  SMTP_PORT=${SMTP_PORT:-$([[ $SMTP_SECURITY == ssl ]] && echo 465 || echo 587)}
+  SMTP_FROM_NAME=${SMTP_FROM_NAME:-Project Browser}
+  [[ $SMTP_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die "$SMTP_ENV: SMTP_HOST is missing or not a host name"
+  [[ $SMTP_PORT =~ ^[0-9]{2,5}$ ]] || die "$SMTP_ENV: SMTP_PORT must be a port number"
+  [[ $SMTP_SECURITY =~ ^(starttls|ssl|none)$ ]] || die "$SMTP_ENV: SMTP_SECURITY must be starttls, ssl or none"
+  if [[ $SMTP_SECURITY == none && $SMTP_HOST != 127.0.0.1 && $SMTP_HOST != localhost ]]; then
+    die "$SMTP_ENV: SMTP_SECURITY=none is allowed only for a mail server on this machine (127.0.0.1)"
+  fi
+  [[ $SMTP_FROM =~ $email_re ]] || die "$SMTP_ENV: SMTP_FROM must be the sender address your mail server allows"
+  [[ -z $SMTP_USER || -n $SMTP_PASSWORD ]] || die "$SMTP_ENV: SMTP_USER needs SMTP_PASSWORD"
+  [[ $SMTP_FROM_NAME =~ ^[A-Za-z0-9\ ._-]{1,60}$ ]] || die "$SMTP_ENV: SMTP_FROM_NAME may use letters, digits, spaces, . _ - only"
+  [[ $SMTP_PASSWORD != *"'"* && $SMTP_USER != *"'"* ]] || die "$SMTP_ENV: the user name and password may not contain '"
+
+  return 0
+}
+
 # ----------------------------------------------------------------------------- preflight
 step "Preflight"
 [[ $EUID -eq 0 ]] || die "run as root (sudo bash $SELF ...)"
@@ -193,6 +238,24 @@ if ! { [[ -x $NODE && -f $ENV_DIR/api.env && -x $PG_BIN/psql ]] && systemctl cat
 fi
 MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
 ok "${PRETTY_NAME:-$ID} ($FAMILY, $(uname -m)), $(nproc) CPU, $MEM_MB MB RAM"
+
+if [[ $CMD == email-status ]]; then
+  systemctl is-active --quiet keycloak || die "Keycloak is not running"
+  admin_login_or_die
+  if read_smtp; then ok "mail server: $SMTP_HOST:$SMTP_PORT ($SMTP_SECURITY), sender $SMTP_FROM ($SMTP_ENV)"
+  else warn "no mail server set up ($SMTP_ENV): self-registration is off and e-mails are not sent"; fi
+  kc_call GET "/$REALM/events" -G --data-urlencode max=20 \
+    --data-urlencode type=SEND_VERIFY_EMAIL_ERROR --data-urlencode type=SEND_RESET_PASSWORD_ERROR \
+    --data-urlencode type=SEND_VERIFY_EMAIL --data-urlencode type=SEND_RESET_PASSWORD
+  [[ $KC_STATUS == 200 ]] || die "could not read Keycloak's events ($KC_STATUS)"
+  echo "    Keycloak e-mails (newest first; addresses not shown):"
+  js 'd.map(e => `      ${new Date(e.time).toISOString()}  ${e.type}${e.error ? "  " + e.error : ""}`).join("\n") || "      (none in the last 7 days)"' < "$WORK/body"
+  echo "    Worker e-mails (invitations, welcome) in the last 7 days:"
+  (cd /tmp && runuser -u postgres -- "$PG_BIN/psql" -qAtF "  " -d pb_dev -c \
+    "select '      ' || kind, state, coalesce(last_error, ''), count(*) from app.email_tasks
+      where created_at > now() - interval '7 days' group by 1, 2, 3 order by 1, 2") || warn "could not read the e-mail queue"
+  exit 0
+fi
 
 if [[ $CMD != setup ]]; then
   systemctl is-active --quiet keycloak || die "Keycloak is not running. Set it up first: bash $SELF --owner-email you@example.com"
@@ -347,6 +410,18 @@ if [[ ! -f $KC_HOME/lib/.pb-build || "$(<"$KC_HOME/lib/.pb-build")" != "$build_i
   CHANGED=1
   ok "optimized build done"
 fi
+# R2: e-mail texts (verification, password reset) with the product's wording, from the repository.
+if [[ -d $THEME_SRC ]]; then
+  if ! diff -rq "$THEME_SRC" "$KC_HOME/themes/pb" >/dev/null 2>&1; then
+    rm -rf "$KC_HOME/themes/pb"
+    cp -r "$THEME_SRC" "$KC_HOME/themes/pb"
+    chown -R root:"$KC_USER" "$KC_HOME/themes/pb"; chmod -R u=rwX,g=rX,o= "$KC_HOME/themes/pb"
+    CHANGED=1
+  fi
+  ok "e-mail theme 'pb' installed"
+else
+  warn "e-mail theme not found in $THEME_SRC (run vps-setup.sh first); Keycloak's own texts are used"
+fi
 install -d -o "$KC_USER" -g "$KC_USER" -m 750 "$KC_HOME/data"
 chown -R "$KC_USER:$KC_USER" "$KC_HOME/data"
 ok "$CONF (root:$KC_USER 0640): PostgreSQL, HTTP on 127.0.0.1:$KC_PORT, no clustering"
@@ -451,6 +526,77 @@ case $KC_STATUS in
     ;;
   *) die "realm lookup failed ($KC_STATUS): $(<"$WORK/body")" ;;
 esac
+# R2: self-service settings, enforced on every run (other realm settings stay yours). Self-registration only when
+# e-mail can be sent: an account that cannot verify its address cannot create a workspace anyway.
+SMTP_OK=0; if read_smtp; then SMTP_OK=1; fi
+THEME=""; [[ -d $KC_HOME/themes/pb ]] && THEME=pb
+SMTP_OK=$SMTP_OK H=$SMTP_HOST P=$SMTP_PORT S=$SMTP_SECURITY U=$SMTP_USER W=$SMTP_PASSWORD F=$SMTP_FROM N=$SMTP_FROM_NAME \
+T=$THEME mkjson '({ registrationAllowed: e.SMTP_OK === "1", registrationEmailAsUsername: true,
+    loginWithEmailAllowed: true, duplicateEmailsAllowed: false, verifyEmail: true,
+    resetPasswordAllowed: e.SMTP_OK === "1", rememberMe: false, emailTheme: e.T || undefined,
+    eventsEnabled: true, eventsExpiration: 604800,
+    enabledEventTypes: ["REGISTER", "REGISTER_ERROR", "VERIFY_EMAIL", "VERIFY_EMAIL_ERROR", "SEND_VERIFY_EMAIL",
+      "SEND_VERIFY_EMAIL_ERROR", "SEND_RESET_PASSWORD", "SEND_RESET_PASSWORD_ERROR", "RESET_PASSWORD",
+      "RESET_PASSWORD_ERROR", "LOGIN_ERROR", "UPDATE_TOTP"],
+    smtpServer: e.SMTP_OK === "1" ? { host: e.H, port: e.P, from: e.F, fromDisplayName: e.N,
+      ssl: String(e.S === "ssl"), starttls: String(e.S === "starttls"), auth: String(!!e.U),
+      ...(e.U ? { user: e.U, password: e.W } : {}) } : {} })' > "$WORK/self-service.json"
+kc_call PUT "/$REALM" --data-binary @"$WORK/self-service.json"
+rm -f "$WORK/self-service.json"
+[[ $KC_STATUS == 204 ]] || die "could not apply the self-service settings ($KC_STATUS): $(<"$WORK/body")"
+if (( SMTP_OK )); then
+  ok "self-registration on; e-mail verification required; password reset by e-mail ($SMTP_HOST:$SMTP_PORT, $SMTP_SECURITY)"
+else
+  ok "self-registration OFF until a mail server is set up in $SMTP_ENV (accounts: bash $SELF add-user ...)"
+fi
+
+# R2: staff sign in through their own flow — a password and a one-time code every time, never single sign-on from
+# another session of the realm (Cookie and identity-provider redirects off). Rebuilt from Keycloak's browser flow if
+# missing; its required steps are enforced on every run.
+kc_call GET "/$REALM/authentication/flows"
+[[ $KC_STATUS == 200 ]] || die "could not list sign-in flows ($KC_STATUS)"
+staff_flow_id=$(F=$STAFF_FLOW js '(d.find(f => f.alias === process.env.F) || {}).id || ""' < "$WORK/body")
+if [[ -z $staff_flow_id ]]; then
+  F=$STAFF_FLOW mkjson '({ newName: e.F })' > "$WORK/copy.json"
+  kc_call POST "/$REALM/authentication/flows/browser/copy" --data-binary @"$WORK/copy.json"
+  [[ $KC_STATUS == 201 ]] || die "could not create the staff sign-in flow ($KC_STATUS): $(<"$WORK/body")"
+  kc_call GET "/$REALM/authentication/flows"
+  staff_flow_id=$(F=$STAFF_FLOW js '(d.find(f => f.alias === process.env.F) || {}).id || ""' < "$WORK/body")
+  [[ -n $staff_flow_id ]] || die "the staff sign-in flow was not created"
+fi
+kc_call GET "/$REALM/authentication/flows/$STAFF_FLOW/executions"
+[[ $KC_STATUS == 200 ]] || die "could not read the staff sign-in flow ($KC_STATUS)"
+# Wanted requirement per step: the password form and the one-time-code form (and every sub-flow above them) are
+# REQUIRED; cookie, identity-provider redirect and the "only if configured" condition are DISABLED.
+"$NODE" -e '
+  const list = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const want = new Map();
+  const otp = list.findIndex((x) => x.providerId === "auth-otp-form");
+  const pw = list.findIndex((x) => x.providerId === "auth-username-password-form");
+  if (otp < 0 || pw < 0) { console.error("the copied flow has no password or one-time-code step"); process.exit(1); }
+  for (const i of [otp, pw]) {
+    want.set(list[i].id, "REQUIRED");
+    let level = list[i].level;
+    for (let j = i - 1; j >= 0 && level > 0; j--) {
+      if (list[j].level === level - 1) { if (list[j].authenticationFlow) want.set(list[j].id, "REQUIRED"); level--; }
+    }
+  }
+  for (const x of list) {
+    if (["auth-cookie", "identity-provider-redirector", "auth-spnego", "conditional-user-configured",
+         "webauthn-authenticator", "auth-recovery-authn-code-form"].includes(x.providerId)) want.set(x.id, "DISABLED");
+  }
+  const changes = list.filter((x) => want.has(x.id) && want.get(x.id) !== x.requirement)
+    .map((x) => ({ ...x, requirement: want.get(x.id) }));
+  process.stdout.write(JSON.stringify(changes));
+' "$WORK/body" > "$WORK/staff-changes.json" || die "unexpected shape of the staff sign-in flow"
+n=$(js 'd.length' < "$WORK/staff-changes.json")
+for i in $(seq 0 $(( n - 1 ))); do
+  I=$i js 'JSON.stringify(d[Number(process.env.I)])' < "$WORK/staff-changes.json" > "$WORK/exec.json"
+  kc_call PUT "/$REALM/authentication/flows/$STAFF_FLOW/executions" --data-binary @"$WORK/exec.json"
+  [[ $KC_STATUS == 202 || $KC_STATUS == 204 ]] || die "could not set a staff sign-in step ($KC_STATUS): $(<"$WORK/body")"
+done
+ok "staff sign-in flow '$STAFF_FLOW': password and one-time code every time, no single sign-on ($n step(s) adjusted)"
+
 # The client's security settings are what the API and the desktop rely on, so they are enforced on every run.
 C=$CLIENT_ID U=$REDIRECT mkjson '({ clientId: e.C, name: "Project Browser desktop", enabled: true,
     protocol: "openid-connect", publicClient: true, standardFlowEnabled: true, implicitFlowEnabled: false,
@@ -475,11 +621,12 @@ ok "public client, Authorization Code + PKCE (S256) only, redirect $REDIRECT onl
 
 # Milestone 11: the support console signs staff in from its page in the browser, so its token endpoint calls come from
 # the console's origin (CORS for exactly that origin). Enforced on every run like the desktop client.
-C=$CONSOLE_CLIENT_ID U=$CONSOLE_REDIRECT O=$CONSOLE_ORIGIN mkjson '({ clientId: e.C,
+C=$CONSOLE_CLIENT_ID U=$CONSOLE_REDIRECT O=$CONSOLE_ORIGIN FL=$staff_flow_id mkjson '({ clientId: e.C,
     name: "Project Browser support console", enabled: true,
     protocol: "openid-connect", publicClient: true, standardFlowEnabled: true, implicitFlowEnabled: false,
     directAccessGrantsEnabled: false, serviceAccountsEnabled: false, consentRequired: false,
     frontchannelLogout: false, redirectUris: [e.U], webOrigins: [e.O],
+    authenticationFlowBindingOverrides: { browser: e.FL },
     attributes: { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "",
                   "oauth2.device.authorization.grant.enabled": "false", "oidc.ciba.grant.enabled": "false" } })' \
   > "$WORK/console-client.json"
@@ -495,7 +642,29 @@ else
   [[ $KC_STATUS == 204 ]] || die "could not update the console client ($KC_STATUS): $(<"$WORK/body")"
   ok "client '$CONSOLE_CLIENT_ID' checked"
 fi
-ok "support console client: PKCE (S256) only, redirect $CONSOLE_REDIRECT only, browser origin $CONSOLE_ORIGIN only"
+ok "support console client: PKCE (S256) only, redirect $CONSOLE_REDIRECT only, browser origin $CONSOLE_ORIGIN only, staff flow"
+
+# R2: the customer web portal. The API exchanges the code itself (server side), so the browser origin needs no CORS.
+C=$WEB_CLIENT_ID U=$WEB_REDIRECT mkjson '({ clientId: e.C, name: "Project Browser customer portal", enabled: true,
+    protocol: "openid-connect", publicClient: true, standardFlowEnabled: true, implicitFlowEnabled: false,
+    directAccessGrantsEnabled: false, serviceAccountsEnabled: false, consentRequired: false,
+    frontchannelLogout: false, redirectUris: [e.U], webOrigins: [],
+    attributes: { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "",
+                  "oauth2.device.authorization.grant.enabled": "false", "oidc.ciba.grant.enabled": "false" } })' \
+  > "$WORK/web-client.json"
+kc_call GET "/$REALM/clients" -G --data-urlencode "clientId=$WEB_CLIENT_ID"
+[[ $KC_STATUS == 200 ]] || die "web client lookup failed ($KC_STATUS)"
+web_uuid=$(js 'd.length ? d[0].id : ""' < "$WORK/body")
+if [[ -z $web_uuid ]]; then
+  kc_call POST "/$REALM/clients" --data-binary @"$WORK/web-client.json"
+  [[ $KC_STATUS == 201 ]] || die "could not create the web client ($KC_STATUS): $(<"$WORK/body")"
+  ok "client '$WEB_CLIENT_ID' created"
+else
+  kc_call PUT "/$REALM/clients/$web_uuid" --data-binary @"$WORK/web-client.json"
+  [[ $KC_STATUS == 204 ]] || die "could not update the web client ($KC_STATUS): $(<"$WORK/body")"
+  ok "client '$WEB_CLIENT_ID' checked"
+fi
+ok "customer portal client: PKCE (S256) only, redirect $WEB_REDIRECT only"
 
 if [[ -n $EMAIL ]]; then
   create_user "$EMAIL"
@@ -522,6 +691,9 @@ env_text=$(cat <<EOF
 OIDC_ISSUER=$ISSUER
 OIDC_CLIENT_ID=$CLIENT_ID
 OIDC_CONSOLE_CLIENT_ID=$CONSOLE_CLIENT_ID
+OIDC_WEB_CLIENT_ID=$WEB_CLIENT_ID
+WEB_ORIGIN=$WEB_ORIGIN
+WEB_DIR=$APP_DIR/apps/web-portal/public
 SESSION_SIGNING_KEY='$key'
 EOF
 )
@@ -546,7 +718,40 @@ if [[ ! -f $DROPIN || "$(<"$DROPIN")" != "$dropin_text" ]]; then
   printf '%s\n' "$dropin_text" > "$DROPIN"
   API_CHANGED=1
 fi
+# R2: the worker's mail server and the key that seals queued links (shared by the API and the worker, kept across
+# runs). Without a mail server there is no key: invitations then show their link in the app, as before.
+WORKER_CHANGED=0
+task_key=""
+if [[ -f $EMAIL_ENV ]]; then task_key=$(sed -nE 's/^EMAIL_TASK_KEY=([A-Za-z0-9+/=]{44})$/\1/p' "$EMAIL_ENV"); fi
+if (( SMTP_OK )); then
+  [[ -n $task_key ]] || task_key=$(head -c 32 /dev/urandom | base64)
+  smtp_url=$(S=$SMTP_SECURITY H=$SMTP_HOST P=$SMTP_PORT U=$SMTP_USER W=$SMTP_PASSWORD "$NODE" -e '
+    const e = process.env; const auth = e.U ? `${encodeURIComponent(e.U)}:${encodeURIComponent(e.W)}@` : "";
+    const q = e.S === "none" ? "?ignoreTLS=true" : e.S === "starttls" ? "?requireTLS=true" : "";
+    process.stdout.write(`${e.S === "ssl" ? "smtps" : "smtp"}://${auth}${e.H}:${e.P}${q}`)')
+  email_text=$(cat <<EOF
+# Generated by scripts/deploy/keycloak-setup.sh from $SMTP_ENV (re-run it after changing that file).
+# Read by pb-api (sealing key) and pb-worker (mail server). Root only.
+EMAIL_TASK_KEY=$task_key
+SMTP_URL='$smtp_url'
+EMAIL_FROM='$SMTP_FROM_NAME <$SMTP_FROM>'
+EMAIL_BRAND='$SMTP_FROM_NAME'
+BRAND_NAME='$SMTP_FROM_NAME'
+EOF
+)
+else
+  email_text="# Generated by scripts/deploy/keycloak-setup.sh: no mail server ($SMTP_ENV), so no e-mail is queued."
+fi
+if [[ ! -f $EMAIL_ENV || "$(<"$EMAIL_ENV")" != "$email_text" ]]; then
+  (umask 077; printf '%s\n' "$email_text" > "$EMAIL_ENV")
+  API_CHANGED=1; WORKER_CHANGED=1
+fi
+chown root:root "$EMAIL_ENV"; chmod 600 "$EMAIL_ENV"
 systemctl daemon-reload
+if (( WORKER_CHANGED )) && systemctl cat pb-worker >/dev/null 2>&1; then
+  systemctl restart pb-worker
+  ok "pb-worker restarted with the e-mail settings"
+fi
 api=http://127.0.0.1:$API_PORT/v1
 current=$(curl -fsS "$api/auth/config" 2>/dev/null | js 'd.issuer' 2>/dev/null || true)
 if (( API_CHANGED )) || [[ $current != "$ISSUER" ]]; then
@@ -561,6 +766,10 @@ ok "the API offers sign-in through $ISSUER ($OIDC_ENV, root only)"
 ccfg=$(curl -fsS "$api/support/auth/config") || die "the API does not offer the support console sign-in ($api/support/auth/config)"
 [[ $(js 'd.client_id' <<<"$ccfg") == "$CONSOLE_CLIENT_ID" ]] || die "the API reports another console client: $ccfg"
 ok "the support console signs in with '$CONSOLE_CLIENT_ID' ($CONSOLE_REDIRECT)"
+wcfg=$(curl -fsS "$api/web/config") || die "the API does not offer the customer portal ($api/web/config)"
+[[ $(js 'String(d.sign_in)' <<<"$wcfg") == true ]] || die "the API does not offer the portal sign-in: $wcfg"
+curl -fsS -o /dev/null "http://127.0.0.1:$API_PORT/app/" || die "the customer portal page is not served at /app/"
+ok "the customer portal is served at $WEB_ORIGIN/app/ and signs in with '$WEB_CLIENT_ID'"
 
 # ----------------------------------------------------------------------------- checks
 step "Checks"
@@ -590,6 +799,13 @@ read -r code _ <<<"$(auth_try "$cq&redirect_uri=$console_cb&$pkce")"
 read -r code _ <<<"$(auth_try "$cq&redirect_uri=$cb&$pkce")"
 [[ $code == 400 ]] || die "the console client accepts the desktop's redirect address (HTTP $code)"
 ok "the console sign-in page opens; the console client refuses other redirect addresses"
+wq="response_type=code&client_id=$WEB_CLIENT_ID&scope=openid&state=check&nonce=check"
+web_cb=$("$NODE" -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$WEB_REDIRECT")
+read -r code _ <<<"$(auth_try "$wq&redirect_uri=$web_cb&$pkce")"
+[[ $code == 200 ]] || die "the customer portal sign-in page does not open (HTTP $code)"
+read -r code _ <<<"$(auth_try "$wq&redirect_uri=$console_cb&$pkce")"
+[[ $code == 400 ]] || die "the portal client accepts another redirect address (HTTP $code)"
+ok "the portal sign-in page opens; the portal client refuses other redirect addresses"
 pids=$(pgrep -d'|' -u "$KC_USER" || true)
 [[ -n $pids ]] || die "no Keycloak process is running"
 listening=$(ss -ltnpH | { grep -E "pid=($pids)," || true; } | awk '{print $4}' | sort -u | tr '\n' ' ')
@@ -610,6 +826,11 @@ cat <<EOF
     Admin:     http://127.0.0.1:$KC_PORT/admin/ (through the tunnel), user '$KC_ADMIN_USER', password: cat $ADMIN_FILE
     Accounts:  bash $SELF add-user someone@example.com
                bash $SELF reset-password someone@example.com
+    Portal:    $WEB_ORIGIN/app/ through the tunnel: create an account, accept invitations, download the app
+    E-mail:    $SMTP_ENV (yours, root only), then re-run this script. Format:
+                 SMTP_HOST=smtp.example.com   SMTP_PORT=587   SMTP_SECURITY=starttls   (or ssl with 465)
+                 SMTP_USER=...   SMTP_PASSWORD=...   SMTP_FROM=no-reply@example.com   SMTP_FROM_NAME=Project Browser
+               status and recent errors: bash $SELF email-status
     Update:    \\cp -f /home/pb/antibrowser/scripts/deploy/keycloak-setup.sh /root/ && bash /root/keycloak-setup.sh
                (after vps-setup.sh; keeps accounts, passwords and the signing key)
 

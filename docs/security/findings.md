@@ -26,7 +26,7 @@ owner (security contact in [SECURITY.md](../../SECURITY.md)).
 |---|---|---|---|
 | Critical | 0 | — | — |
 | High | 0 | — | — |
-| Medium | 2 | partly (D1 pipeline side; S1 mitigation available) | 2 tracked (owner actions; due before paid launch) |
+| Medium | 2 | 1 (S1, in R2) | 1 tracked (D1, owner actions; due before paid launch) |
 | Low | 12 | 10 | 2 tracked (T3, C-L4) |
 | Informational | 4 | 1 | 3 documented |
 
@@ -37,7 +37,7 @@ owner (security contact in [SECURITY.md](../../SECURITY.md)).
 | ID | Area | Finding | Owner | Status | Verification |
 |---|---|---|---|---|---|
 | D1 | Release | **A takeover of the repository's admin account can get any build signed.** The release key is a GitHub environment secret. With one maintainer, an admin can change the environment's reviewers and branch rules, or push a workflow change to `main` and approve the run, and so obtain a correctly signed installer that every manager offers as an update. | Repository owner + release engineering | **Tracked. Must be resolved before the paid launch (milestone 14).** Done in code: build jobs hold no secrets; publishing runs only in the protected `release` environment from `main`; every signature is verified against the compiled-in keys before upload; signed SBOM and provenance attestations; revocation and minimum-version controls exist for recovery. Owner actions (see [update runbook](update-runbook.md#protecting-the-signing-key)): add a second required reviewer and enable "prevent self-review"; turn off admin bypass on the environment and on `main`; require reviews for `.github/workflows/**`; turn on two-factor authentication with a hardware key for every admin. Preferred end state: offline or hardware-backed signing, with CI only building. | GitHub settings screenshot or export attached to the release checklist; a test run where a workflow change on a branch cannot reach the `release` environment. |
-| S1 | Support staff | **Staff sign-in does not enforce a second factor.** Carried over from milestone 11 (known limitation). A stolen staff password gives console access within that person's role. The two-person approval, time limits, the audit and the server-only break-glass still apply. | Backend + owner | **Tracked. Must be resolved before the paid launch.** Available now: give every staff account an authenticator app with `bash /root/keycloak-setup.sh add-user EMAIL --otp`, or for an existing account `reset-password EMAIL --otp`; Keycloak then asks for a one-time code at every sign-in. Planned: the API refuses staff sign-ins without a second factor (Keycloak `amr`/`acr` for the console client, or a console-only flow requiring OTP or WebAuthn), with tests. | A staff sign-in without a second factor is refused (test to be added with the enforcement). |
+| S1 | Support staff | **Staff sign-in did not enforce a second factor.** Carried over from milestone 11. A stolen staff password gave console access within that person's role. | Backend + owner | **Fixed in R2 (ADR-0021).** The console client signs in through its own flow (`pb-staff-browser`, enforced by `keycloak-setup.sh` on every run): password **and** a one-time code every time, an authenticator app set up at the first sign-in, and no single sign-on from another session of the realm (cookie and identity-provider redirect off). Customer self-registration never creates staff: staff roles live only in the API's `platform_staff` table (`staff.ts`). Defence in depth still open (low): the API could additionally require the provider's `acr` for staff tokens. | `deploy-scripts.yml`: the non-staff and staff console sign-ins are asked to set up and then enter a one-time code; `keycloak-sign-in-check.ts` fails if the console signs in without one. |
 
 ### Low
 
@@ -101,7 +101,7 @@ here.
 ## Before the paid launch (milestone 14)
 
 1. Resolve D1 (owner actions above). Preferably move to offline or hardware-backed signing.
-2. Resolve S1: enforce a second factor for staff sign-in in the API (until then, create staff accounts with `--otp`).
+2. (S1 resolved in R2.) Optionally also check the provider's `acr` for staff tokens in the API.
 3. Commission a third-party penetration test of the API, the support console and the desktop boundary, and a
    cryptography review of the sealed-archive format and the key hierarchy. Record the findings here.
 4. Close T3 and C-L4 or re-accept them with a dated decision.

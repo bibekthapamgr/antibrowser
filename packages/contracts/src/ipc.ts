@@ -1502,7 +1502,8 @@ export const COMMANDS = {
     result: AccountView,
   },
   begin_sign_in: {
-    args: Type.Object({ reauth: Type.Optional(Type.Boolean()) }),
+    /** `create` (R2): open the provider's "Create account" page instead of the sign-in page. */
+    args: Type.Object({ reauth: Type.Optional(Type.Boolean()), create: Type.Optional(Type.Boolean()) }),
     result: Type.Object({ opened: Type.Boolean() }),
   },
   cancel_sign_in: { args: Type.Object({}), result: AccountView },

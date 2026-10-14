@@ -272,7 +272,8 @@ export interface AccountRepository {
   get(): Promise<AccountView>;
   setServer(url: string | null): Promise<AccountView>;
   /** Opens the sign-in page in the system browser; the result arrives as an `account` event. */
-  signIn(reauth?: boolean): Promise<void>;
+  /** `create` (R2): open the provider's "Create account" page instead of the sign-in page. */
+  signIn(reauth?: boolean, create?: boolean): Promise<void>;
   cancelSignIn(): Promise<AccountView>;
   signOut(): Promise<AccountView>;
   request(req: CloudRequest): Promise<CloudResponse>;

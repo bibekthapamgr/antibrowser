@@ -11,7 +11,9 @@
     "./billing": "./src/billing.ts",
     "./ipc": "./src/ipc.ts",
     "./notes": "./src/notes.ts",
-    "./resources": "./src/resources.ts"
+    "./onboarding": "./src/onboarding.ts",
+    "./resources": "./src/resources.ts",
+    "./workspace": "./src/workspace.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

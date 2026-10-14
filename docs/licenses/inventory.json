@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14T04:24:40.586Z",
+  "generated_at": "2026-10-14T15:32:48.578Z",
   "dependencies": [
     {
       "ecosystem": "cargo",
@@ -370,6 +370,12 @@
     {
       "ecosystem": "cargo",
       "name": "cipher",
+      "version": "0.4.4",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cipher",
       "version": "0.5.2",
       "license": "MIT OR Apache-2.0"
     },
@@ -522,6 +528,12 @@
       "name": "csv-core",
       "version": "0.1.13",
       "license": "Unlicense/MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ct-codecs",
+      "version": "1.1.8",
+      "license": "MIT"
     },
     {
       "ecosystem": "cargo",
@@ -1125,6 +1137,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "hmac",
+      "version": "0.12.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "html5ever",
       "version": "0.39.0",
       "license": "MIT OR Apache-2.0"
@@ -1272,6 +1290,12 @@
       "name": "infer",
       "version": "0.22.0",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "inout",
+      "version": "0.1.4",
+      "license": "MIT OR Apache-2.0"
     },
     {
       "ecosystem": "cargo",
@@ -1524,6 +1548,18 @@
       "name": "minimal-lexical",
       "version": "0.2.1",
       "license": "MIT/Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "minisign",
+      "version": "0.10.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "minisign-verify",
+      "version": "0.3.0",
+      "license": "MIT"
     },
     {
       "ecosystem": "cargo",
@@ -1815,6 +1851,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "pbkdf2",
+      "version": "0.12.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "pem",
       "version": "4.0.0",
       "license": "MIT"
@@ -2085,9 +2127,21 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "rpassword",
+      "version": "7.5.4",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "rsqlite-vfs",
       "version": "0.1.1",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rtoolbox",
+      "version": "0.0.6",
+      "license": "Apache-2.0"
     },
     {
       "ecosystem": "cargo",
@@ -2175,6 +2229,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "salsa20",
+      "version": "0.10.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "same-file",
       "version": "1.0.6",
       "license": "Unlicense/MIT"
@@ -2213,6 +2273,12 @@
       "ecosystem": "cargo",
       "name": "scopeguard",
       "version": "1.2.0",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "scrypt",
+      "version": "0.11.0",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -4266,6 +4332,12 @@
       "name": "nanoid",
       "version": "3.3.20",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "nodemailer",
+      "version": "10.0.13",
+      "license": "MIT-0"
     },
     {
       "ecosystem": "npm",

@@ -134,8 +134,16 @@ disclosed, and every update is still signature-checked.
 | Audit tampering | Append-only triggers, hash chain, head out of the application's reach, separator constraint (C-L3), exports that verify independently. | `security.test.ts` |
 | Console token theft | 30-minute staff tokens, memory only, own OIDC client with PKCE, recent sign-in at sign-in, strict CSP, no framing. | `support.test.ts`, console e2e |
 
-Residual: S1 (medium). The API does not yet require a second factor for staff sign-in. Until it does, staff accounts
-are created with `--otp`, so Keycloak asks for a one-time code.
+R2 (ADR-0021): S1 is fixed. The console client signs in through its own flow (`pb-staff-browser`): a password and a
+one-time code every time, and no single sign-on from a customer's session. Customer self-registration cannot create
+staff: staff roles exist only in the API's database. Residual (low): the API itself does not also check the
+provider's `acr` claim for staff tokens.
+
+R2 also adds the customer web portal: a backend-for-frontend cookie session (HttpOnly, SameSite=Lax, digest-only in
+the database, CSRF token + exact Origin on every change, deny-by-default routes, new id at sign-in and after a
+privilege change). Tests: `web.test.ts`. Self-service signup and onboarding: `onboarding.test.ts` (one workspace and
+one trial under concurrency, invitations only for the verified invited address, no trial reset by new identities,
+suspended accounts and workspaces stay closed).
 
 ### 11. Server and recovery
 

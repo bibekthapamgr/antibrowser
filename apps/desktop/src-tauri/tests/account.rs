@@ -1258,3 +1258,38 @@ fn migration_respects_the_workspace_quota_and_a_reinstalled_device_restores_link
     assert_eq!(mock.world().created, created_before);
     assert_eq!(r["mappings"][&ids[0]], mock.world().identity_map[&ids[0]]);
 }
+
+// ----------------------------------------------------------------------------- R2: self-service (ADR-0021)
+#[test]
+fn a_build_default_server_is_offered_once_and_create_account_opens_registration() {
+    let f = fixture();
+    keychain(&f);
+    let mock = Mock::start();
+    f.state
+        .apply_default_server(Some(&format!("{}/", mock.base)))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let view = ok(invoke(&f, "get_account", json!({})));
+    assert_eq!(view["server_url"], json!(mock.base.clone()));
+    // "Create account": the provider's registration page with the same PKCE, state and nonce.
+    let url = f.state.begin_sign_up().unwrap_or_else(|e| panic!("{e:?}"));
+    let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    assert_eq!(q.get("prompt").map(String::as_str), Some("create"));
+    assert_eq!(
+        q.get("code_challenge_method").map(String::as_str),
+        Some("S256")
+    );
+    assert!(q.contains_key("state") && q.contains_key("nonce"));
+    // Clearing the server is respected: the default is not applied again.
+    ok(invoke(&f, "set_cloud_server", json!({ "url": null })));
+    f.state
+        .apply_default_server(Some("https://browser.example.test"))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        ok(invoke(&f, "get_account", json!({})))["server_url"],
+        Value::Null
+    );
+    // No default in the build: nothing happens.
+    f.state
+        .apply_default_server(None)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+}

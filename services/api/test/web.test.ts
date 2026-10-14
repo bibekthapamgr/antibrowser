@@ -102,6 +102,7 @@ beforeAll(async () => {
       OIDC_WEB_CLIENT_ID: WEB_CLIENT,
       WEB_ORIGIN: ORIGIN,
       TERMS_VERSION: TERMS,
+      WEB_DIR: new URL('../../../apps/web-portal/public', import.meta.url).pathname,
     },
     idTokens: createIdTokenVerifier({ issuer, clientId: DESKTOP_CLIENT, allowLoopbackHttp: true, keys }),
     webIdTokens: createIdTokenVerifier({ issuer, clientId: WEB_CLIENT, allowLoopbackHttp: true, keys }),
@@ -382,5 +383,31 @@ describe('the cookie session', () => {
     const id = (await session(cookie.value)).json().user.id;
     await h.owner.query('update users set disabled_at = now() where id = $1', [id]);
     expect((await session(cookie.value)).statusCode).toBe(401);
+  });
+});
+
+describe('the portal page', () => {
+  it('is served at /app/ with a strict policy and no inline code; its settings are public and secret-free', async () => {
+    const page = await h.app.inject({ method: 'GET', url: '/app/' });
+    expect(page.statusCode).toBe(200);
+    expect(page.headers['content-security-policy']).toBe(
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+    );
+    expect(page.headers['x-frame-options']).toBe('DENY');
+    expect(page.body).not.toMatch(/<script>|\sstyle=|\son[a-z]+=/i);
+    const deep = await h.app.inject({ method: 'GET', url: '/app/welcome' });
+    expect(deep.body).toBe(page.body);
+    expect((await h.app.inject({ method: 'GET', url: '/app/portal.js' })).headers['content-type']).toContain(
+      'javascript',
+    );
+    expect((await h.app.inject({ method: 'GET', url: '/app/../package.json' })).statusCode).not.toBe(200);
+    const cfg = await h.app.inject({ method: 'GET', url: '/v1/web/config' });
+    expect(cfg.json()).toEqual({
+      brand: 'Project Browser',
+      terms_version: TERMS,
+      terms_url: null,
+      download_url: null,
+      sign_in: true,
+    });
   });
 });

@@ -266,6 +266,32 @@ impl AppState {
 
     /// Prepares a sign-in and returns the provider URL to open in the system browser.
     pub fn begin_sign_in(&self, reauth: bool) -> Result<Url, IpcError> {
+        self.begin_sign_in_with(reauth, false)
+    }
+
+    /// R2: "Create account": the provider's registration page; the rest is a normal sign-in.
+    pub fn begin_sign_up(&self) -> Result<Url, IpcError> {
+        self.begin_sign_in_with(false, true)
+    }
+
+    /// R2: the production server a build was made for (PB_DEFAULT_SERVER at build time) is used until the person
+    /// chooses another one; it is applied once, so clearing the server later is respected.
+    pub fn apply_default_server(&self, default: Option<&str>) -> Result<(), IpcError> {
+        let Some(default) = default.filter(|d| !d.trim().is_empty()) else {
+            return Ok(());
+        };
+        let store = self.store()?;
+        if store.cloud_state(cs::SERVER_URL)?.is_none()
+            && store.cloud_state(cs::SERVER_DEFAULT_APPLIED)?.is_none()
+        {
+            let url = normalize_server(default)?;
+            store.set_cloud_state(cs::SERVER_URL, Some(&url))?;
+        }
+        store.set_cloud_state(cs::SERVER_DEFAULT_APPLIED, Some("1"))?;
+        Ok(())
+    }
+
+    fn begin_sign_in_with(&self, reauth: bool, create: bool) -> Result<Url, IpcError> {
         let store = self.store()?;
         let server = store
             .cloud_state(cs::SERVER_URL)?
@@ -294,7 +320,11 @@ impl AppState {
         let discovery = oidc::discover(http, &config.issuer)?;
         let attempt = Attempt::new().map_err(|_| ipc::INTERNAL)?;
         store.begin_auth_transaction(&attempt.state, SIGN_IN_TTL.as_secs() as u32)?;
-        let url = oidc::authorization_url(&discovery, &config, &attempt, reauth);
+        let url = if create {
+            oidc::registration_url(&discovery, &config, &attempt)
+        } else {
+            oidc::authorization_url(&discovery, &config, &attempt, reauth)
+        };
         // A newer attempt replaces an unfinished one (its callback will be refused).
         *self.cloud.pending.lock().map_err(|_| ipc::INTERNAL)? = Some(Pending {
             attempt,

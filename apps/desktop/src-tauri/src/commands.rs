@@ -976,13 +976,19 @@ pub async fn begin_sign_in<Rt: Runtime>(
     app: AppHandle<Rt>,
     webview: Webview<Rt>,
     reauth: Option<bool>,
+    create: Option<bool>,
 ) -> R<SignInStarted> {
     caller(&webview)?;
     let state = blocking_state(&app);
-    let url =
-        tauri::async_runtime::spawn_blocking(move || state.begin_sign_in(reauth.unwrap_or(false)))
-            .await
-            .map_err(|_| ipc::INTERNAL)??;
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        if create.unwrap_or(false) {
+            state.begin_sign_up()
+        } else {
+            state.begin_sign_in(reauth.unwrap_or(false))
+        }
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)??;
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|_| ipc::INTERNAL)?;

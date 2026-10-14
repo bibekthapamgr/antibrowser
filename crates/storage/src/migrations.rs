@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -29,6 +29,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (9, "agency_workspace", v9),
     (10, "automation", v10),
     (11, "product_model", v11),
+    (12, "self_service", v12),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -804,5 +805,20 @@ fn v11(tx: &Transaction<'_>) -> rusqlite::Result<()> {
            updated_at      text not null default {NOW}
          ) strict;
          create index migration_runs_org_idx on migration_runs (org_id, updated_at desc);"
+    ))
+}
+
+/// R2 (ADR-0021): the cloud state may record that the build's default server was offered once.
+fn v12(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table cloud_state_v12 (
+           key         text primary key
+                       check (key in ('server_url', 'device_id', 'account', 'server_default_applied')),
+           value       text not null check (length(value) <= 4096),
+           updated_at  text not null default {NOW}
+         ) strict;
+         insert into cloud_state_v12 (key, value, updated_at) select key, value, updated_at from cloud_state;
+         drop table cloud_state;
+         alter table cloud_state_v12 rename to cloud_state;"
     ))
 }

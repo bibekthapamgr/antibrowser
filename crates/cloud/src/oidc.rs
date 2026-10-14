@@ -131,6 +131,13 @@ pub fn authorization_url(
     url
 }
 
+/// R2: the same, opening the provider's account registration (OIDC `prompt=create`) for "Create account".
+pub fn registration_url(d: &Discovery, cfg: &ProviderConfig, attempt: &Attempt) -> Url {
+    let mut url = authorization_url(d, cfg, attempt, false);
+    url.query_pairs_mut().append_pair("prompt", "create");
+    url
+}
+
 /// What arrived on the redirect (already validated for shape by the deep-link parser).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Callback {
@@ -266,6 +273,17 @@ mod tests {
         assert!(!url.as_str().contains(&attempt.verifier));
         assert!(!q.contains_key("prompt"));
 
+        let create = registration_url(&discovery(), &cfg(), &attempt);
+        assert!(
+            create
+                .query()
+                .is_some_and(|q| q.ends_with("&prompt=create"))
+        );
+        assert!(
+            create
+                .query()
+                .is_some_and(|q| q.contains("code_challenge_method=S256"))
+        );
         let re = authorization_url(&discovery(), &cfg(), &attempt, true);
         let q: std::collections::HashMap<_, _> = re.query_pairs().into_owned().collect();
         assert_eq!(q.get("prompt").map(String::as_str), Some("login"));

@@ -1,13 +1,20 @@
+import type { OnboardingResult } from '@pb/contracts/onboarding';
 import type { Workspaces } from '@pb/contracts/resources';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountScreen } from './account.tsx';
 import type { AccountView, AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
-import { get, ROLE_LABEL } from './cloud.ts';
+import { ApiFailure, get, ROLE_LABEL } from './cloud.ts';
 import { HealthScreen, type HealthTab } from './health.tsx';
 import { useLauncher } from './launch.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
 import { NoticeCentre, ReconnectBanner, Toasts, useNotifications } from './notices.tsx';
+import {
+  completeOnboarding,
+  OnboardingDialog,
+  type OnboardingNeed,
+  onboardingMessage,
+} from './onboarding.tsx';
 import { OrganizationScreen } from './org.tsx';
 import { type Command, CommandPalette, MOD, ShortcutsHelp, useShortcuts } from './palette.tsx';
 import { ProfilesScreen } from './profiles.tsx';
@@ -99,6 +106,33 @@ export function App({ backend }: { backend: Backend }) {
     void refreshAccount();
   }, [refreshAccount]);
 
+  // R2: after signing in, onboarding completes by itself and the person lands on Profiles; a dialog appears only when
+  // the server needs a decision (terms for a new workspace, a waiting invitation, which owned workspace first).
+  const [onboardingNeed, setOnboardingNeed] = useState<OnboardingNeed | null>(null);
+  const onboarded = useCallback(
+    (r: OnboardingResult) => {
+      setOnboardingNeed(null);
+      notify(onboardingMessage(r));
+      setView('profiles');
+      void refreshAccount();
+      setRefreshKey((k) => k + 1);
+    },
+    [notify, refreshAccount],
+  );
+  const finishOnboarding = useCallback(async () => {
+    try {
+      const r = await completeOnboarding(backend);
+      if (r.done) onboarded(r.done);
+      else setOnboardingNeed(r.need);
+    } catch (err) {
+      // An older server without self-service onboarding: signing in still works as before.
+      notify(
+        err instanceof ApiFailure && err.status === 404 ? 'Signed in.' : errorMessage(err),
+        err instanceof ApiFailure && err.status === 404 ? 'info' : 'error',
+      );
+    }
+  }, [backend, notify, onboarded]);
+
   // An organization the person no longer belongs to (left, removed, signed out) closes its screen.
   useEffect(() => {
     if (orgId && account && !orgs.some((o) => o.org_id === orgId)) {
@@ -113,14 +147,14 @@ export function App({ backend }: { backend: Backend }) {
         void refreshAccount();
         setRefreshKey((k) => k + 1);
         if (e.status === 'failed') notify(e.message ?? 'Sign-in did not complete.', 'error');
-        else if (e.status === 'signed_in' && !e.reauth) notify('Signed in.');
+        else if (e.status === 'signed_in' && !e.reauth) void finishOnboarding();
         else if (e.status === 'expired')
           notify(
             'Your session ended. Sign in again in Account. Your local profiles are not affected.',
             'error',
           );
       }),
-    [backend, notify, refreshAccount],
+    [backend, notify, refreshAccount, finishOnboarding],
   );
 
   // Record manager startup time once the first real screen has rendered (kept separate from browser timings).
@@ -633,6 +667,19 @@ export function App({ backend }: { backend: Backend }) {
         />
       )}
       {shortcuts && <ShortcutsHelp screens={NAV.map(([, l]) => l)} onClose={() => setShortcuts(false)} />}
+      {onboardingNeed && (
+        <OnboardingDialog
+          backend={backend}
+          need={onboardingNeed}
+          onDone={onboarded}
+          onNeed={setOnboardingNeed}
+          onClose={() => setOnboardingNeed(null)}
+          onSignInAgain={() => {
+            setOnboardingNeed(null);
+            void backend.account.signIn().catch((e) => notify(errorMessage(e), 'error'));
+          }}
+        />
+      )}
       {noticesOpen && (
         <NoticeCentre notices={notices} onDismiss={resolve} onClose={() => setNoticesOpen(false)} />
       )}

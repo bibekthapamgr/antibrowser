@@ -11,6 +11,10 @@ on:
     paths:
       - 'scripts/deploy/**'
       - 'scripts/ci/keycloak-sign-in-check.ts'
+      - 'scripts/ci/signup-check.ts'
+      - 'scripts/ci/smtp-sink.ts'
+      - 'scripts/ci/totp.ts'
+      - 'apps/web-portal/**'
       - 'services/api/scripts/snapshot-smoke.ts'
       - 'services/api/scripts/storage-check.ts'
       - 'services/api/scripts/restore-drill.ts'
@@ -36,6 +40,9 @@ jobs:
       PB_REPO: https://github.com/${{ github.repository }}.git
       PB_BRANCH: ${{ github.ref_name }}
       PW_FILE: /root/pb-temp-password
+      # R2: one-time-code secrets of test accounts (staff sign in with a code) and the mail sink's messages.
+      PB_TOTP_DIR: /tmp/pb-ci-totp
+      PB_MAIL_DIR: /tmp/pb-ci-mail
     steps:
       - uses: actions/checkout@v4
 
@@ -90,11 +97,26 @@ jobs:
           sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
             --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --save /tmp/pb-smoke-state.json'
 
+      - name: Mail server stand-in (R2)
+        run: |
+          # Keycloak (verification, password reset) and the worker (invitations, welcome) send here; nothing leaves.
+          mkdir -p "$PB_MAIL_DIR" "$PB_TOTP_DIR"
+          nohup /opt/node/bin/node scripts/ci/smtp-sink.ts --port 2525 --dir "$PB_MAIL_DIR" > "$RUNNER_TEMP/smtp-sink.log" 2>&1 &
+          for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/2525) 2>/dev/null && break; sleep 0.5; done
+          printf '%s\n' 'SMTP_HOST=127.0.0.1' 'SMTP_PORT=2525' 'SMTP_SECURITY=none' 'SMTP_FROM=no-reply@example.test' \
+            'SMTP_FROM_NAME=Project Browser' | sudo tee /etc/project-browser/smtp.env > /dev/null
+          sudo chmod 600 /etc/project-browser/smtp.env
+
       - name: keycloak-setup.sh (first run, creates the owner account)
         run: |
           scripts/ci/annotate.sh "keycloak-setup.sh" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
-            bash scripts/deploy/keycloak-setup.sh --owner-email owner@example.test
+            bash scripts/deploy/keycloak-setup.sh --owner-email owner@example.test | tee "$RUNNER_TEMP/keycloak-setup.log"
           sudo test -s "$PW_FILE"
+          for want in "self-registration on" "staff sign-in flow" "customer portal is served"; do
+            grep -q "$want" "$RUNNER_TEMP/keycloak-setup.log" || { echo "::error title=keycloak-setup::missing: $want"; exit 1; }
+          done
+          [ "$(sudo stat -c '%a %U' /etc/project-browser/email.env)" = "600 root" ] \
+            || { echo "::error title=email::email.env must be root-only"; exit 1; }
 
       - name: Owner signs in (replaces the temporary password)
         run: |
@@ -127,6 +149,52 @@ jobs:
             echo "::error title=billing::the Stripe forwarder exists without a key"; exit 1
           fi
           echo "::notice title=Support console::served at /console/ with its CSP; Keycloak console client (PKCE, CORS for the console origin only); non-staff refused; staff session after staff.ts add"
+
+      - name: Self-service signup, verification, onboarding and invitation (R2)
+        run: |
+          set -euo pipefail
+          api=http://127.0.0.1:8080/v1
+          pw=$(openssl rand -base64 18); echo "::add-mask::$pw"
+          # A new customer: portal -> register -> verify by e-mail -> terms -> one workspace with a trial -> welcome.
+          PB_EMAIL=new.customer@example.test PB_PASSWORD="$pw" PB_ORG_FILE="$RUNNER_TEMP/new-org" \
+            scripts/ci/annotate.sh "signup (new customer)" /opt/node/bin/node scripts/ci/signup-check.ts
+          org=$(cat "$RUNNER_TEMP/new-org")
+          # The same person on the desktop: the same account lands in the same workspace (no second one, no new trial).
+          PB_EMAIL=new.customer@example.test PB_PASSWORD="$pw" PB_HEADER_FILE="$RUNNER_TEMP/new.header" \
+            scripts/ci/annotate.sh "desktop sign-in (new customer)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          again=$(curl -fsS -H @"$RUNNER_TEMP/new.header" -H 'content-type: application/json' -d '{}' "$api/onboarding/complete")
+          [ "$(echo "$again" | /opt/node/bin/node -pe 'const d=JSON.parse(require("fs").readFileSync(0));d.outcome+" "+d.status.default_org_id')" = "existing $org" ] \
+            || { echo "::error title=onboarding::the desktop did not land in the same workspace"; exit 1; }
+          # The customer invites a teammate; the worker e-mails the link; the teammate signs up through it.
+          inv=$(curl -fsS -H @"$RUNNER_TEMP/new.header" -H 'content-type: application/json' \
+            -d '{"email":"invited.mate@example.test","role":"operator"}' "$api/orgs/$org/invitations")
+          [ "$(echo "$inv" | /opt/node/bin/node -pe 'JSON.parse(require("fs").readFileSync(0)).email_delivery')" = queued ] \
+            || { echo "::error title=invitation::the invitation was not queued for e-mail"; exit 1; }
+          link=""
+          for _ in $(seq 1 60); do
+            link=$(/opt/node/bin/node -e '
+              const fs = require("fs"), dir = process.argv[1];
+              for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".eml"))) {
+                const t = fs.readFileSync(dir + "/" + f, "utf8").replace(/=\r?\n/g, "")
+                  .replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+                const m = /^To:.*invited\.mate@example\.test/im.test(t) && /(http:\/\/127\.0\.0\.1:8080\/app\/#\/invite\/[A-Za-z0-9_-]{43})/.exec(t);
+                if (m) { process.stdout.write(m[1]); break; }
+              }' "$PB_MAIL_DIR")
+            [ -n "$link" ] && break; sleep 1
+          done
+          [ -n "$link" ] || { echo "::error title=invitation::no invitation e-mail arrived"; exit 1; }
+          echo "::add-mask::$link"
+          pw2=$(openssl rand -base64 18); echo "::add-mask::$pw2"
+          PB_EMAIL=invited.mate@example.test PB_PASSWORD="$pw2" PB_INVITE_LINK="$link" \
+            scripts/ci/annotate.sh "signup (invited teammate)" /opt/node/bin/node scripts/ci/signup-check.ts
+          # Delivery monitoring: both senders report, without addresses.
+          sudo bash scripts/deploy/keycloak-setup.sh email-status | tee "$RUNNER_TEMP/email-status.log"
+          grep -q "SEND_VERIFY_EMAIL" "$RUNNER_TEMP/email-status.log" || { echo "::error title=email::no verification e-mail in Keycloak's events"; exit 1; }
+          grep -qE "invitation +sent" "$RUNNER_TEMP/email-status.log" || { echo "::error title=email::the invitation e-mail is not reported as sent"; exit 1; }
+          if grep -qE "new\.customer|invited\.mate" "$RUNNER_TEMP/email-status.log"; then
+            echo "::error title=email::the status shows e-mail addresses"; exit 1
+          fi
+          echo "::notice title=Self-service (R2)::registered and verified by e-mail, one workspace with a trial, the desktop in the same workspace, an invitation e-mailed and accepted by a new teammate (invited team only), staff console with one-time codes"
 
       # Milestone 12: a stand-in for Cloudflare R2 (the pinned SeaweedFS the setup installed, on its own ports, over
       # TLS with a throwaway CA), so the update run below sets up pgBackRest and the object copy for real.

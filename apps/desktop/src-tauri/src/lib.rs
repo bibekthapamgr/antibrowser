@@ -311,6 +311,8 @@ pub fn run() {
                 events,
             )?;
             app.manage(state.clone());
+            // R2: a build made for a production server starts with it preconfigured (PB_DEFAULT_SERVER).
+            let _ = state.apply_default_server(option_env!("PB_DEFAULT_SERVER"));
 
             // Keychain availability is probed off the UI thread; until then secrets are disabled.
             let probe_state = state.clone();

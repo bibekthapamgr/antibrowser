@@ -9606,6 +9606,9 @@
         "properties": {
           "reauth": {
             "type": "boolean"
+          },
+          "create": {
+            "type": "boolean"
           }
         }
       },

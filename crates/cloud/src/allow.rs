@@ -168,6 +168,9 @@ const RULES: &[Rule] = &[
     // local import are made by the shell (migration.rs), never from the window.
     rule(Method::Get, "/v1/me/capabilities"),
     rule(Method::Get, "/v1/me/onboarding"),
+    // R2 (ADR-0021): self-service onboarding after sign-in (the body never names a user, role or e-mail).
+    rule(Method::Get, "/v1/onboarding/status"),
+    rule(Method::Post, "/v1/onboarding/complete"),
     rule(Method::Get, "/v1/orgs/{org}/folders"),
     rule(Method::Post, "/v1/orgs/{org}/folders"),
     rule(Method::Patch, "/v1/orgs/{org}/folders/{fld}"),
