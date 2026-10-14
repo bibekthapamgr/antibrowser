@@ -19,6 +19,7 @@ import {
 import type pg from 'pg';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, auditAlone, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
@@ -57,6 +58,7 @@ export function invitationRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'member.invite');
       requirePermission(access, 'members.manage');
       await hit(deps.pool, LIMITS.invitePerOrg, access.orgId);
       await hit(deps.pool, LIMITS.invitePerUser, access.userId);

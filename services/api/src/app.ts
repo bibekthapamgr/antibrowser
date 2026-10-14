@@ -15,6 +15,9 @@ import { auditAlone } from './audit.ts';
 import { type Authenticator, createAuthenticator, type Principal } from './auth.ts';
 import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
 import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
+import { planLimitError } from './billing/state.ts';
+import { createStripe, type Stripe, type StripePrice } from './billing/stripe.ts';
+import { withTx } from './db.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
 import { hit, LIMITS } from './ratelimit.ts';
 import { agencyRoutes } from './routes/agency.ts';
@@ -22,6 +25,7 @@ import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
 import { automationRoutes } from './routes/automation.ts';
 import { backupRoutes } from './routes/backups.ts';
+import { billingRoutes } from './routes/billing.ts';
 import { clientRoutes } from './routes/clients.ts';
 import { deviceRoutes } from './routes/devices.ts';
 import { grantRoutes } from './routes/grants.ts';
@@ -34,6 +38,7 @@ import { organizationRoutes } from './routes/organizations.ts';
 import { profileRoutes } from './routes/profiles.ts';
 import { sessionRoutes } from './routes/sessions.ts';
 import { snapshotRoutes } from './routes/snapshots.ts';
+import { supportRoutes } from './routes/support.ts';
 import { tokenRoutes } from './routes/tokens.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { createSessionKeys, type SessionKeys } from './session.ts';
@@ -56,6 +61,23 @@ export interface Deps {
   idTokens: IdTokenVerifier | null;
   /** Snapshot storage and the root key provider (milestone 07). Null when not configured: snapshot routes answer 503. */
   backup: { objects: ObjectStore; kms: RootKeyProvider } | null;
+  /** Milestone 11: billing (the provider client is null when not configured; DB-only routes still work). */
+  billing: BillingDeps;
+  /** Milestone 11: ID tokens of the support console's own OIDC client (null: the console cannot sign in). */
+  consoleIdTokens: IdTokenVerifier | null;
+}
+
+export interface BillingDeps {
+  stripe: Stripe | null;
+  /** `plan@version` -> provider price id. */
+  prices: Record<string, string>;
+  returnUrl: string;
+  automaticTax: boolean;
+  retentionDays: number | null;
+  webhookSecrets: readonly string[];
+  livemode: boolean;
+  /** Display prices read from the provider (not entitlement data; an hour old at most). */
+  priceCache: Map<string, { at: number; price: StripePrice | null }>;
 }
 
 declare module 'fastify' {
@@ -68,6 +90,8 @@ declare module 'fastify' {
     public?: boolean;
     /** Milestone 10: API tokens may call this route (deny by default; scopes are checked by the route). */
     tokens?: boolean;
+    /** Milestone 11: a support console route (staff tokens only; organization credentials never work here). */
+    staff?: boolean;
   }
 }
 
@@ -88,6 +112,10 @@ export interface BuildOptions {
   /** Tests inject an in-memory object store (and key provider) instead of S3. */
   objects?: ObjectStore;
   kms?: RootKeyProvider;
+  /** Tests inject a provider client (normally built from the configuration). */
+  stripe?: Stripe;
+  /** Tests inject the support console's ID-token verifier. */
+  consoleIdTokens?: IdTokenVerifier;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -135,6 +163,16 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       : null);
   const objects = opts.objects ?? (config.objectStore ? s3ObjectStore(config.objectStore) : null);
   const kms = opts.kms ?? (config.kms ? localKeyProvider(config.kms) : null);
+  const stripeCfg = config.billing.stripe;
+  const consoleIdTokens =
+    opts.consoleIdTokens ??
+    (config.oidc && config.console.oidcClientId
+      ? createIdTokenVerifier({
+          issuer: config.oidc.issuer,
+          clientId: config.console.oidcClientId,
+          allowLoopbackHttp: config.appEnv === 'dev' || config.appEnv === 'test',
+        })
+      : null);
   const deps: Deps = {
     config,
     pool,
@@ -142,6 +180,19 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     sessions,
     idTokens,
     backup: objects && kms ? { objects, kms } : null,
+    billing: {
+      stripe:
+        opts.stripe ??
+        (stripeCfg ? createStripe({ secretKey: stripeCfg.secretKey, apiBase: stripeCfg.apiBase }) : null),
+      prices: config.billing.prices,
+      returnUrl: config.billing.returnUrl,
+      automaticTax: config.billing.automaticTax,
+      retentionDays: config.billing.retentionDays,
+      webhookSecrets: stripeCfg?.webhookSecrets ?? [],
+      livemode: stripeCfg?.livemode ?? false,
+      priceCache: new Map(),
+    },
+    consoleIdTokens,
   };
 
   await app.register(swagger, {
@@ -198,6 +249,10 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
 
   app.addHook('onRequest', async (req) => {
     if (req.is404 || req.routeOptions.config.public) return;
+    if (req.routeOptions.config.staff) {
+      req.principal = await deps.auth.authenticateStaff(req.headers.authorization);
+      return;
+    }
     req.principal = await deps.auth.authenticate(req.headers.authorization);
     const token = req.principal.token;
     if (token) {
@@ -209,6 +264,10 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       }
       await hit(pool, LIMITS.apiPerToken, token.id);
       await hit(pool, LIMITS.apiPerOrg, token.orgId);
+      // Milestone 11 usage ledger: API-token requests per organization and day.
+      await withTx(pool, { orgId: token.orgId, userId: null }, (c) =>
+        c.query('select app.billing_count_api($1)', [token.orgId]),
+      ).catch(() => undefined);
     }
   });
 
@@ -245,7 +304,11 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       return send(err.code, err.message, err.safeDetails);
     }
 
-    const pgErr = err as { code?: string; message?: string };
+    const pgErr = err as { code?: string; message?: string; detail?: string };
+    if (pgErr.code === 'P0001' && pgErr.message === 'PLAN_LIMIT') {
+      const limit = planLimitError(pgErr.detail);
+      return send(limit.code, limit.message, limit.safeDetails);
+    }
     if (pgErr.code === 'P0001' && pgErr.message === 'LAST_OWNER') {
       return send('LAST_OWNER', 'An organization must keep at least one owner; transfer ownership first');
     }
@@ -312,6 +375,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);
       importRoutes(scoped, deps);
+      billingRoutes(scoped, deps);
+      supportRoutes(scoped, deps);
     },
     { prefix: API_PREFIX },
   );

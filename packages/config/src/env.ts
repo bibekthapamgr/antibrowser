@@ -74,6 +74,30 @@ export interface AppConfig {
    * every delivery).
    */
   webhooks: { allowPrivateDestinations: boolean };
+  /**
+   * Billing (milestone 11, ADR-0018). `stripe` is null when no key is configured: billing routes answer
+   * BILLING_UNAVAILABLE and nothing else is affected. Test keys only outside production, live keys only in production.
+   */
+  billing: {
+    stripe: {
+      secretKey: string;
+      /** Endpoint signing secrets (several during a rotation). */
+      webhookSecrets: string[];
+      /** https://api.stripe.com, or a local fake/mock in dev/test. */
+      apiBase: string;
+      livemode: boolean;
+    } | null;
+    /** `plan@version` -> provider price id. A plan without a price is not offered. */
+    prices: Record<string, string>;
+    /** Where checkout and the portal send the person back (an informational page; never proof of payment). */
+    returnUrl: string;
+    /** Ask the provider to calculate tax (needs the merchant's tax registrations in the provider). */
+    automaticTax: boolean;
+    /** The owner's data retention policy after cancellation, if decided (null: kept until an owner deletes it). */
+    retentionDays: number | null;
+  };
+  /** The internal support console (milestone 11): static files served at /console/ and its own OIDC client. */
+  console: { dir: string | null; oidcClientId: string | null };
 }
 
 export class ConfigError extends Error {
@@ -204,6 +228,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
     problems.push('WEBHOOK_ALLOW_PRIVATE_DESTINATIONS is only permitted when APP_ENV is dev or test');
   }
 
+  const billing = loadBilling(env, appEnv, local, problems);
+  const consoleDir = env.CONSOLE_DIR || null;
+  const consoleClient = env.OIDC_CONSOLE_CLIENT_ID || null;
+  if (consoleClient && !oidc) problems.push('OIDC_CONSOLE_CLIENT_ID needs OIDC_ISSUER');
+
   const kms = loadKms(env, local, problems);
   if (objectStore && !kms)
     problems.push('a key provider (KMS_LOCAL_KEY_FILE) is required with object storage');
@@ -224,6 +253,78 @@ export function loadConfig(env: Env = process.env): AppConfig {
     objectStore,
     kms,
     webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
+    billing,
+    console: { dir: consoleDir, oidcClientId: consoleClient },
+  };
+}
+
+const PLAN_KEY = /^[a-z][a-z0-9_]{1,31}@[1-9][0-9]{0,5}$/;
+const PRICE_ID = /^price_[A-Za-z0-9]{1,64}$/;
+
+/**
+ * STRIPE_SECRET_KEY (sk_/rk_ test keys outside prod, live keys only in prod), STRIPE_WEBHOOK_SECRETS (whsec_…,
+ * comma-separated), STRIPE_API_BASE (dev/test only), BILLING_STRIPE_PRICES (JSON {"team@1": "price_…"}),
+ * BILLING_RETURN_URL, BILLING_AUTOMATIC_TAX, BILLING_RETENTION_DAYS.
+ */
+function loadBilling(
+  env: Env,
+  appEnv: AppEnv | undefined,
+  local: boolean,
+  problems: string[],
+): AppConfig['billing'] {
+  const key = env.STRIPE_SECRET_KEY ?? '';
+  let stripe: AppConfig['billing']['stripe'] = null;
+  if (key) {
+    const live = /^(sk|rk)_live_[A-Za-z0-9]{8,}$/.test(key);
+    const test = /^(sk|rk)_test_[A-Za-z0-9]{8,}$/.test(key);
+    if (!live && !test) problems.push('STRIPE_SECRET_KEY is not a Stripe secret or restricted key');
+    if (live && appEnv !== 'prod') problems.push('a live Stripe key is only permitted when APP_ENV is prod');
+    if (test && appEnv === 'prod') problems.push('a Stripe test key is not permitted when APP_ENV is prod');
+    const webhookSecrets = (env.STRIPE_WEBHOOK_SECRETS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (webhookSecrets.length === 0)
+      problems.push('STRIPE_WEBHOOK_SECRETS is required with STRIPE_SECRET_KEY');
+    if (webhookSecrets.some((s) => !/^whsec_[A-Za-z0-9+/=_-]{16,}$/.test(s))) {
+      problems.push('STRIPE_WEBHOOK_SECRETS must be whsec_… values');
+    }
+    const apiBase = env.STRIPE_API_BASE || 'https://api.stripe.com';
+    if (apiBase !== 'https://api.stripe.com' && !local) {
+      problems.push('STRIPE_API_BASE can only be changed when APP_ENV is dev or test');
+    } else if (!secureOrLoopback(apiBase, local)) {
+      problems.push('STRIPE_API_BASE must use https');
+    }
+    stripe = { secretKey: key, webhookSecrets, apiBase: apiBase.replace(/\/+$/, ''), livemode: live };
+  }
+  const prices: Record<string, string> = {};
+  if (env.BILLING_STRIPE_PRICES) {
+    try {
+      const parsed = JSON.parse(env.BILLING_STRIPE_PRICES) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      for (const [plan, price] of Object.entries(parsed as Record<string, unknown>)) {
+        if (!PLAN_KEY.test(plan) || typeof price !== 'string' || !PRICE_ID.test(price)) {
+          problems.push('BILLING_STRIPE_PRICES maps "plan@version" to "price_…" ids');
+          break;
+        }
+        prices[plan] = price;
+      }
+    } catch {
+      problems.push('BILLING_STRIPE_PRICES must be a JSON object');
+    }
+  }
+  const returnUrl = env.BILLING_RETURN_URL || 'http://127.0.0.1:8080/v1/billing/return';
+  if (!secureOrLoopback(returnUrl, local)) problems.push('BILLING_RETURN_URL must use https');
+  const retention = env.BILLING_RETENTION_DAYS ? Number(env.BILLING_RETENTION_DAYS) : null;
+  if (retention !== null && (!Number.isInteger(retention) || retention < 30 || retention > 3650)) {
+    problems.push('BILLING_RETENTION_DAYS must be an integer between 30 and 3650');
+  }
+  return {
+    stripe,
+    prices,
+    returnUrl,
+    automaticTax: env.BILLING_AUTOMATIC_TAX === 'true',
+    retentionDays: retention,
   };
 }
 

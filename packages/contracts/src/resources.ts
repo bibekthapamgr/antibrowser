@@ -1,4 +1,5 @@
 import Type, { type Static } from 'typebox';
+import { BillingSummary } from './billing.ts';
 import { ID_PATTERN } from './ids.ts';
 
 const Id = (prefix: Parameters<typeof ID_PATTERN>[0]) => Type.String({ pattern: ID_PATTERN(prefix) });
@@ -253,6 +254,8 @@ export const Organization = Type.Object(
     role: Type.Enum(ROLES, { description: "The caller's role." }),
     version: Version,
     created_at: Timestamp,
+    /** Milestone 11: plan and subscription state (no amounts or provider references); GET of one organization. */
+    billing: Type.Optional(BillingSummary),
   },
   { additionalProperties: false },
 );
@@ -1031,7 +1034,10 @@ export const BackupPolicy = Type.Object(
     retention_days: Type.Integer({ minimum: 1, maximum: 90 }),
     /** Deleted profiles stay restorable this long, then their snapshots are erased. */
     trash_days: Type.Integer({ minimum: 1, maximum: 90 }),
-    /** Set by the service operator (cost limit); not editable by the organization. */
+    /**
+     * The smaller of the service operator's cost limit and the plan's backup storage (milestone 11); not editable by
+     * the organization.
+     */
     quota_bytes: Type.Integer({ minimum: 1 }),
     max_snapshot_bytes: Type.Integer({ minimum: 1 }),
     used_bytes: Type.Integer({ minimum: 0 }),

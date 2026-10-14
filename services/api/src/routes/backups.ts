@@ -22,12 +22,14 @@ import {
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
 import { rotateOrgKey } from '../backup/keys.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { requirePermission, requireRecentAuth, resolveTenant } from '../tenancy.ts';
 import { errors, OrgParams, PROFILE_COLUMNS, ProfileParams, pageOf, pageWindow } from './common.ts';
 
-const POLICY_COLUMNS = `backup_retention_days as retention_days, trash_days, backup_quota_bytes::float8 as quota_bytes,
+const POLICY_COLUMNS = `backup_retention_days as retention_days, trash_days,
+  app.org_backup_quota(organizations.id)::float8 as quota_bytes,
   max_snapshot_bytes::float8 as max_snapshot_bytes,
   coalesce((select sum(size_bytes) from snapshot_manifests s
              where s.org_id = organizations.id and s.status in ('committed', 'deleted')
@@ -148,6 +150,7 @@ export function backupRoutes(app: App, deps: Deps): void {
     },
     async (req) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'trash.restore');
       requirePermission(access, 'profile.delete');
       return withTx(deps.pool, access, async (c) => {
         const { rows } = await c.query<Profile>(

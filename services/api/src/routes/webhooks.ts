@@ -33,6 +33,7 @@ import type pg from 'pg';
 import Type, { type Static } from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows, requireFeature } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
@@ -151,12 +152,14 @@ export function webhookRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const a = await access(deps, req);
+      requireBillingAllows(a, 'webhook.create');
       const kms = keys(deps);
       checkDestination(deps, req.body.url);
       const id = newId('webhookEndpoint');
       const { secret, key } = newWebhookSecret();
       const wrapped = await kms.wrap(key, secretContext(a.orgId, id));
       const endpoint = await withTx(deps.pool, a, async (c) => {
+        await requireFeature(c, a.orgId, 'webhooks');
         const count = await c.query<{ n: number }>(
           'select count(*)::int as n from webhook_endpoints where org_id = $1',
           [a.orgId],

@@ -158,12 +158,25 @@ describe('roles', () => {
     expect(owned.rows).toEqual([]);
   });
 
-  it('every table has row-level security except the outbox tables the API cannot read', async () => {
+  it('every table has row-level security except the outbox tables the API cannot read and the platform tables', async () => {
     const { rows } = await h.owner.query(
       `select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'app' and c.relkind = 'r' and not c.relrowsecurity order by 1`,
     );
-    expect(rows.map((r) => r.relname)).toEqual(['outbox_events', 'processed_events']);
+    // Milestone 11: platform tables have no organization context (the plan catalog, provider events received
+    // before their organization is known, staff, staff sessions, support access requests, alerts and the platform
+    // audit). Only the webhook route, the worker and the staff-only support routes use them (ADR-0018).
+    expect(rows.map((r) => r.relname)).toEqual([
+      'billing_alerts',
+      'billing_webhook_events',
+      'outbox_events',
+      'plans',
+      'platform_audit',
+      'platform_staff',
+      'processed_events',
+      'staff_sessions',
+      'support_access_requests',
+    ]);
     for (const table of ['outbox_events', 'processed_events', 'rate_limit_counters', 'used_id_tokens']) {
       await expect(asApp({}, (c) => c.query(`select * from ${table}`))).rejects.toThrow(/permission denied/);
     }

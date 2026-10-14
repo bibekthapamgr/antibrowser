@@ -6,7 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import { type GrantCapability, newId, type Role } from '@pb/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Harness, harness, idemKey, type SignedIn } from './helpers.ts';
+import { type Harness, harness, idemKey, internalPlan, type SignedIn } from './helpers.ts';
 
 let h: Harness;
 let owner: SignedIn;
@@ -100,6 +100,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   org.id = res.json().id;
+  await internalPlan(h.owner, org.id);
   north = await newClient('Client North');
   south = await newClient('Client South');
   admin = await member('admin');

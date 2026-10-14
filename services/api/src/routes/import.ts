@@ -16,6 +16,7 @@ import type pg from 'pg';
 import type { Static } from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { nameKey } from '../names.ts';
@@ -41,6 +42,7 @@ export function importRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'import');
       requirePermission(access, 'profile.create');
       requirePermission(access, 'clients.manage');
       validateReferences(req.body);

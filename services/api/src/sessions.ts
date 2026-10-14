@@ -10,9 +10,10 @@
  *  - ended:     released, taken_over, revoked or superseded. Ending a lease other than by its own release allocates
  *               a new fencing token, so anything the old holder still sends is refused.
  */
-import { ApiError, type GrantCapability, type Role, roleAllows, SESSION_LEASE } from '@pb/contracts';
+import { type GrantCapability, type PlanFeature, type Role, roleAllows, SESSION_LEASE } from '@pb/contracts';
 import type pg from 'pg';
 import { audit } from './audit.ts';
+import { requireFeature } from './billing/state.ts';
 import { ts } from './db.ts';
 import { appendEvent } from './outbox.ts';
 import type { TenantAccess } from './tenancy.ts';
@@ -181,17 +182,9 @@ export async function endLease(
   };
 }
 
-/** Milestone 11 sets plans; until then a feature is available unless the organization's entitlement says otherwise. */
-export async function requireEntitlement(c: pg.PoolClient, orgId: string, key: string): Promise<void> {
-  const { rows } = await c.query<{ value: { enabled?: boolean } }>(
-    'select value from entitlements where org_id = $1 and key = $2',
-    [orgId, key],
-  );
-  if (rows[0]?.value?.enabled === false) {
-    throw new ApiError('ENTITLEMENT_REQUIRED', 'Your organization’s plan does not include shared profiles', {
-      entitlement: key,
-    });
-  }
+/** Milestone 11: the organization's plan (with overrides) must include the feature (ADR-0018). */
+export async function requireEntitlement(c: pg.PoolClient, orgId: string, key: PlanFeature): Promise<void> {
+  await requireFeature(c, orgId, key);
 }
 
 /** The major version of a browser version string (`155.0.8059.39` -> 155), or null. */

@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import { type GrantCapability, type Role, SESSION_LEASE } from '@pb/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Harness, harness, idemKey, type SignedIn } from './helpers.ts';
+import { type Harness, harness, idemKey, internalPlan, type SignedIn } from './helpers.ts';
 import {
   backup,
   commitSnapshot,
@@ -141,6 +141,7 @@ beforeAll(async () => {
   });
   expect(org.statusCode, org.body).toBe(201);
   acme.id = org.json().id;
+  await internalPlan(h.owner, acme.id);
   const client = await h.app.inject({
     method: 'POST',
     url: `/v1/orgs/${acme.id}/clients`,
@@ -222,15 +223,17 @@ describe('opening a shared profile', () => {
     });
     const old = await open(a, profile, { browser: '154.0.1.1' });
     expect(old.json()).toMatchObject({ code: 'RUNTIME_TOO_OLD', safe_details: { required_major: 155 } });
+    // Milestone 11: a plan feature, here switched off by an override (ADR-0018).
     await h.owner.query(
-      `insert into entitlements (org_id, key, value) values ($1, 'team_sessions', '{"enabled": false}')
-       on conflict (org_id, key) do update set value = excluded.value`,
-      [acme.id],
+      `insert into entitlement_overrides (id, org_id, scope, value, reason, created_by, expires_at)
+       values ('ovr_01J9ZSEEDTEAMSESS000000000', $1, 'feature.team_sessions', 'false',
+               'test: plan without shared profiles', $2, now() + interval '1 day')`,
+      [acme.id, owner.session.user.id],
     );
     try {
       expect((await open(a, profile)).json().code).toBe('ENTITLEMENT_REQUIRED');
     } finally {
-      await h.owner.query("delete from entitlements where org_id = $1 and key = 'team_sessions'", [acme.id]);
+      await h.owner.query("delete from entitlement_overrides where id = 'ovr_01J9ZSEEDTEAMSESS000000000'");
     }
     expect((await open(a, profile)).statusCode).toBe(201);
   });

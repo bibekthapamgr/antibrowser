@@ -35,6 +35,20 @@ export interface SessionKeys {
   sign(claims: AccessClaims, ttlSeconds: number): Promise<string>;
   /** Returns null when the token is not one of ours (wrong issuer); throws UNAUTHENTICATED when ours but invalid. */
   verify(token: string): Promise<AccessClaims | null>;
+  /**
+   * Milestone 11: staff console tokens. A different audience (`pb-support`) and type (`staff+jwt`), so a staff token
+   * never works on organization routes and an organization session never works on support routes.
+   */
+  signStaff(claims: StaffClaims, ttlSeconds: number): Promise<string>;
+  verifyStaff(token: string): Promise<StaffClaims>;
+}
+
+export const SUPPORT_AUDIENCE = 'pb-support';
+
+export interface StaffClaims {
+  userId: string;
+  staffSessionId: string;
+  authTime: Date;
 }
 
 interface KeyEntry {
@@ -112,6 +126,37 @@ export async function createSessionKeys(opts: {
         throw new ApiError('UNAUTHENTICATED', 'Invalid or expired credentials');
       }
       return { userId: sub, deviceId: did, sessionId: sid, authTime: new Date(auth_time * 1000) };
+    },
+    async signStaff(claims, ttlSeconds) {
+      return new SignJWT({ sid: claims.staffSessionId, auth_time: seconds(claims.authTime) })
+        .setProtectedHeader({ alg: 'ES256', kid: signing.kid, typ: 'staff+jwt' })
+        .setIssuer(opts.issuer)
+        .setAudience(SUPPORT_AUDIENCE)
+        .setSubject(claims.userId)
+        .setIssuedAt()
+        .setExpirationTime(`${ttlSeconds}s`)
+        .sign(signing.key);
+    },
+    async verifyStaff(token) {
+      const invalid = () => new ApiError('UNAUTHENTICATED', 'Sign in to the support console again');
+      const header = decodeSegment(token, 0);
+      const entry = header ? verifying.find((k) => k.kid === header.kid) : undefined;
+      if (!entry) throw invalid();
+      let verified: JWTPayload;
+      try {
+        ({ payload: verified } = await jwtVerify(token, entry.key, {
+          issuer: opts.issuer,
+          audience: SUPPORT_AUDIENCE,
+          algorithms: ['ES256'],
+          typ: 'staff+jwt',
+          requiredClaims: ['sub', 'exp', 'iat'],
+        }));
+      } catch {
+        throw invalid();
+      }
+      const { sub, sid, auth_time } = verified as JWTPayload & { sid?: unknown; auth_time?: unknown };
+      if (!isId('user', sub) || !isId('staffSession', sid) || typeof auth_time !== 'number') throw invalid();
+      return { userId: sub, staffSessionId: sid, authTime: new Date(auth_time * 1000) };
     },
   };
 }

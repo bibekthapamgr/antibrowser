@@ -273,7 +273,7 @@ export function snapshotRoutes(app: App, deps: Deps): void {
           `select coalesce((select sum(size_bytes) from snapshot_manifests
                              where org_id = $1 and status in ('committed', 'deleted', 'recovery')
                                and object_deleted_at is null), 0)::float8 as used,
-                  backup_quota_bytes::float8 as quota
+                  app.org_backup_quota($1)::float8 as quota
              from organizations where id = $1`,
           [access.orgId],
         );

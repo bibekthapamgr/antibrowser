@@ -1,6 +1,7 @@
 import { ApiError, LEASE_TTL, Lease, LeaseAcquire, LeaseRelease, LeaseRenew } from '@pb/contracts';
 import Type, { type Static } from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { appendEvent } from '../outbox.ts';
@@ -54,6 +55,7 @@ export function leaseRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'profile.open');
       const principal = principalOf(req);
       const key = requireIdempotencyKey(req.headers['idempotency-key']);
       const ttl = req.body.ttl_seconds ?? LEASE_TTL.default;

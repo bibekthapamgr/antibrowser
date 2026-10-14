@@ -11,6 +11,8 @@ export const TEST_CLIENT_ID = 'pb-desktop-test';
 
 export interface TestIdp {
   verifier: IdTokenVerifier;
+  /** A verifier for another client of the same provider (milestone 11: the support console). */
+  verifierFor(clientId: string): IdTokenVerifier;
   /** Signs an ID token; `overrides` replace standard claims (set a claim to undefined to omit it). */
   idToken(claims: { sub: string; nonce: string } & Partial<IdClaims>, opts?: SignOptions): Promise<string>;
 }
@@ -45,6 +47,14 @@ export async function testIdp(): Promise<TestIdp> {
   });
   return {
     verifier,
+    verifierFor(clientId) {
+      return createIdTokenVerifier({
+        issuer: TEST_ISSUER,
+        clientId,
+        allowLoopbackHttp: false,
+        keys: createLocalJWKSet({ keys: [publicJwk] }),
+      });
+    },
     async idToken(claims, opts = {}) {
       const now = Math.floor(Date.now() / 1000);
       const payload: JWTPayload = {

@@ -11,8 +11,17 @@ import {
 } from '@pb/api/backup/jobs';
 import { localKeyProvider } from '@pb/api/backup/keys';
 import { s3ObjectStore } from '@pb/api/backup/objects';
+import {
+  checkBacklog,
+  observeTransitions,
+  processBillingEvents,
+  type ReconcileDeps,
+  resyncSubscriptions,
+  sampleUsage,
+} from '@pb/api/billing/reconcile';
+import { createStripe } from '@pb/api/billing/stripe';
 import { loadConfig } from '@pb/config/env';
-import { AGENT_TIMING, WEBHOOK_LIMITS } from '@pb/contracts';
+import { AGENT_TIMING, BILLING_TIMING, WEBHOOK_LIMITS } from '@pb/contracts';
 import pg from 'pg';
 import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys, purgeRateLimits } from './outbox.ts';
 import { processWebhooks, sweepAutomation, type WebhookDeps, webhookFanoutConsumer } from './webhooks.ts';
@@ -47,6 +56,21 @@ const webhooks: WebhookDeps | null = config.kms
     }
   : null;
 
+// Billing reconciliation (milestone 11): provider events, resync, alerts. Time-based transitions and usage samples
+// run with or without a provider.
+const billing: ReconcileDeps | null = config.billing.stripe
+  ? {
+      pool,
+      stripe: createStripe({
+        secretKey: config.billing.stripe.secretKey,
+        apiBase: config.billing.stripe.apiBase,
+      }),
+      prices: config.billing.prices,
+      log,
+      graceDays: BILLING_TIMING.graceDays,
+    }
+  : null;
+
 let running = true;
 const stop = () => {
   running = false;
@@ -68,10 +92,13 @@ async function task(name: string, run: () => Promise<number | Record<string, num
 let lastPurge = 0;
 let lastSweep = 0;
 let lastAutomationSweep = 0;
+let lastBillingResync = 0;
+let lastUsageSample = 0;
 log('info', 'worker started', {
   env: config.appEnv,
   snapshots: jobs ? 'enabled' : 'not configured',
   webhooks: webhooks ? 'enabled' : 'not configured',
+  billing: billing ? 'enabled' : 'not configured',
 });
 while (running) {
   try {
@@ -90,6 +117,17 @@ while (running) {
       });
       lastAutomationSweep = Date.now();
     }
+    let billed = 0;
+    if (billing) {
+      const b = await processBillingEvents(billing, 20);
+      billed = b.processed + b.ignored + b.failed;
+      if (billed || b.retried) log('info', 'billing events', { ...b });
+      if (Date.now() - lastBillingResync > 300_000) {
+        await task('billing resync', () => resyncSubscriptions(billing, 50));
+        await task('billing backlog', () => checkBacklog(billing));
+        lastBillingResync = Date.now();
+      }
+    }
     let synced = 0;
     if (jobs) {
       const r = await processSyncWork(jobs, 5);
@@ -101,6 +139,11 @@ while (running) {
       if (purged) log('info', 'purged idempotency keys', { purged });
       const counters = await purgeRateLimits(pool);
       if (counters) log('info', 'purged rate-limit counters', { counters });
+      await task('billing transitions recorded', () => observeTransitions(pool));
+      if (Date.now() - lastUsageSample > 3_600_000) {
+        await task('usage samples', () => sampleUsage(pool));
+        lastUsageSample = Date.now();
+      }
       if (jobs) {
         await task('snapshot retention', () => applyRetention(jobs));
         await task('recovery copies expired', () => expireRecoveryCopies(jobs));
@@ -114,7 +157,8 @@ while (running) {
       await task('orphan objects swept', () => sweepOrphans(jobs));
       lastSweep = Date.now();
     }
-    if (processed === 0 && synced === 0 && sent === 0) await new Promise((r) => setTimeout(r, 500));
+    if (processed === 0 && synced === 0 && sent === 0 && billed === 0)
+      await new Promise((r) => setTimeout(r, 500));
   } catch (err) {
     log('error', 'worker loop error', errorInfo(err));
     await new Promise((r) => setTimeout(r, 2000));

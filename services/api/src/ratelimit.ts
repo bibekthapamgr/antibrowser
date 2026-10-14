@@ -30,6 +30,10 @@ export const LIMITS = {
   jobCreatePerOrg: { bucket: 'job.create.org', max: 1000, windowSeconds: 3600 },
   tokenCreatePerUser: { bucket: 'token.create.user', max: 30, windowSeconds: 3600 },
   webhookTestPerOrg: { bucket: 'webhook.test.org', max: 30, windowSeconds: 600 },
+  // Milestone 11: provider webhooks per source address; checkout/portal sessions per organization; staff sign-ins.
+  billingWebhookPerIp: { bucket: 'billing.webhook.ip', max: 1200, windowSeconds: 60 },
+  billingSessionPerOrg: { bucket: 'billing.session.org', max: 30, windowSeconds: 600 },
+  staffSignInPerIp: { bucket: 'staff.signin.ip', max: 20, windowSeconds: 600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

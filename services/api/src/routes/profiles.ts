@@ -22,6 +22,7 @@ import type pg from 'pg';
 import Type from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { withTx } from '../db.ts';
 import { likePattern } from '../names.ts';
 import { appendEvent } from '../outbox.ts';
@@ -128,6 +129,7 @@ export function profileRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'profile.create');
       requirePermission(access, 'profile.create');
       checkNotes(req.body.notes);
       const id = newId('profile');

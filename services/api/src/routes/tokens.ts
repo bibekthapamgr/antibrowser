@@ -29,6 +29,7 @@ import type pg from 'pg';
 import Type, { type Static } from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
 import { sha256Hex } from '../session.ts';
@@ -127,6 +128,7 @@ export function tokenRoutes(app: App, deps: Deps): void {
     async (req, reply) => {
       requireInteractive(req.principal);
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'token.create');
       requirePermission(access, 'tokens.create');
       await hit(deps.pool, LIMITS.tokenCreatePerUser, access.userId);
       const body = req.body;
@@ -141,7 +143,7 @@ export function tokenRoutes(app: App, deps: Deps): void {
       const id = newId('apiToken');
       const secret = newSecret();
       const created = await withTx(deps.pool, access, async (c) => {
-        await requireEntitlement(c, access.orgId, 'api_access');
+        await requireEntitlement(c, access.orgId, 'api_tokens');
         const active = await c.query<{ n: number }>(
           `select count(*)::int as n from api_tokens
             where org_id = $1 and user_id = $2 and revoked_at is null and expires_at > now()`,

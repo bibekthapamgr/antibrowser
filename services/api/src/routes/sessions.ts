@@ -36,6 +36,7 @@ import type pg from 'pg';
 import Type, { type Static } from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { appendEvent } from '../outbox.ts';
@@ -200,6 +201,7 @@ export function sessionRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'profile.open');
       const principal = principalOf(req);
       const key = requireIdempotencyKey(req.headers['idempotency-key']);
       const body = req.body;
@@ -593,6 +595,7 @@ export function sessionRoutes(app: App, deps: Deps): void {
     },
     async (req) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'profile.open');
       const reason = checkNote(req.body.reason, 'reason');
       if (!reason || reason.length < 3) throw new ApiError('VALIDATION_FAILED', 'A reason is required');
       return withTx(deps.pool, access, async (c) => {

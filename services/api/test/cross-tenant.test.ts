@@ -37,6 +37,7 @@ const MISSING = {
   webhook: fx('whk', 'ZZZZ'),
   delivery: fx('dlv', 'ZZZZ'),
   seq: '2',
+  invoice: 'in_MISSINGZZZZ',
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -59,6 +60,7 @@ const FOREIGN: Ids = {
   webhook: '',
   delivery: fx('dlv', 'B1D1'),
   seq: '2',
+  invoice: 'in_BETAFOREIGN1',
 };
 
 let h: Harness;
@@ -258,6 +260,12 @@ beforeAll(async () => {
   });
   expect(hook.statusCode, hook.body).toBe(201);
   FOREIGN.webhook = hook.json().endpoint.id;
+  // Milestone 11: an invoice of the other organization (mirrored provider data).
+  await h.owner.query(
+    `insert into billing_invoices (id, org_id, status, currency, amount_due, amount_paid, provider_created_at)
+     values ($1, $2, 'paid', 'usd', 1000, 1000, now()) on conflict do nothing`,
+    [FOREIGN.invoice, beta.id],
+  );
   await h.owner.query(
     `insert into webhook_deliveries (id, org_id, endpoint_id, event_id, event_type, event_created_at, payload, state,
                                      next_attempt_at)
@@ -599,6 +607,19 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
       url: `${base}/local-import`,
       payload: { dry_run: true, clients: [{ ref: 'a', name: 'A', map_to: ids.client }], profiles: [] },
     },
+    // Milestone 11: billing.
+    { name: 'subscription', method: 'GET', url: `${base}/billing/subscription` },
+    { name: 'plans', method: 'GET', url: `${base}/billing/plans` },
+    {
+      name: 'checkout',
+      method: 'POST',
+      url: `${base}/billing/checkout-session`,
+      payload: { plan_id: 'team' },
+    },
+    { name: 'billing portal', method: 'POST', url: `${base}/billing/portal-session` },
+    { name: 'usage', method: 'GET', url: `${base}/billing/usage` },
+    { name: 'invoices', method: 'GET', url: `${base}/billing/invoices` },
+    { name: 'invoice links', method: 'GET', url: `${base}/billing/invoices/${ids.invoice}/links` },
   ];
 }
 
@@ -636,6 +657,7 @@ describe('coverage', () => {
       webhook: '{endpointId}',
       delivery: '{deliveryId}',
       seq: '{seq}',
+      invoice: '{invoiceId}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),

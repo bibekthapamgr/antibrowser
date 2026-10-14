@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { PLAN_CATALOG } from '@pb/contracts';
 import pg from 'pg';
 
 const MIGRATIONS_DIR = join(import.meta.dirname, '../../../infra/db/migrations');
@@ -61,6 +62,7 @@ export async function migrate(connectionString: string, opts: MigrateOptions = {
         throw new Error(`Migration ${file} failed: ${(err as Error).message}`);
       }
     }
+    await syncCatalog(client, opts.log !== false);
   } finally {
     await client.end();
   }
@@ -71,4 +73,80 @@ if (import.meta.main) {
   if (!url) throw new Error('MIGRATION_DATABASE_URL is required');
   await migrate(url, { reset: process.argv.includes('--reset') });
   console.log('migrations up to date');
+}
+
+/** Key-order-independent JSON for comparing catalog rows. */
+function canonical(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`)
+    .join(',')}}`;
+}
+
+/**
+ * Milestone 11 (ADR-0018): the plan catalog in packages/contracts is the source of truth. Missing plan versions are
+ * added; a released version that differs from the file stops here (versions are immutable: add a new one). Then any
+ * organization without a subscription (created before billing existed) is put on the newest `beta` version, which
+ * does not end. Runs after the migrations, once the plans table exists.
+ */
+export async function syncCatalog(client: pg.Client, log = true): Promise<void> {
+  const exists = await client.query("select to_regclass('app.plans') is not null as ok");
+  if (!exists.rows[0]?.ok) return;
+  await client.query('begin');
+  try {
+    let added = 0;
+    for (const p of PLAN_CATALOG) {
+      const row = {
+        name: p.name,
+        description: p.description,
+        purchasable: p.purchasable,
+        trial_days: p.trialDays,
+        limits: p.limits,
+        features: p.features,
+      };
+      const { rows } = await client.query<typeof row>(
+        `select name, description, purchasable, trial_days, limits, features from app.plans
+          where id = $1 and version = $2`,
+        [p.id, p.version],
+      );
+      const current = rows[0];
+      if (!current) {
+        await client.query(
+          `insert into app.plans (id, version, name, description, purchasable, trial_days, limits, features)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [p.id, p.version, p.name, p.description, p.purchasable, p.trialDays, p.limits, p.features],
+        );
+        added++;
+      } else if (canonical(current) !== canonical(row)) {
+        throw new Error(
+          `Plan ${p.id}@${p.version} differs from the database; released plan versions are immutable — add a new version`,
+        );
+      }
+    }
+    const beta = PLAN_CATALOG.filter((p) => p.id === 'beta').sort((a, b) => b.version - a.version)[0];
+    let backfilled = 0;
+    if (beta) {
+      const r = await client.query(
+        `with missing as (
+           insert into app.subscriptions (org_id, plan_id, plan_version, state, reason, observed_state)
+           select o.id, $1, $2, 'active', 'complimentary', 'active' from app.organizations o
+            where not exists (select 1 from app.subscriptions s where s.org_id = o.id)
+           returning org_id)
+         insert into app.subscription_history (org_id, from_state, to_state, reason, plan_id, plan_version, cause)
+         select org_id, null, 'active', 'complimentary', $1, $2, 'migration' from missing`,
+        [beta.id, beta.version],
+      );
+      backfilled = r.rowCount ?? 0;
+    }
+    await client.query('commit');
+    if (log && (added || backfilled)) {
+      console.log(`plan catalog: ${added} plan version(s) added, ${backfilled} organization(s) put on beta`);
+    }
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  }
 }

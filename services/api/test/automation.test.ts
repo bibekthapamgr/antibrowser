@@ -6,9 +6,16 @@
  * Secrets in this file are generated at run time.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import type { ApiScope, ClaimedJob, GrantCapability, JobDetail, Role } from '@pb/contracts';
+import {
+  type ApiScope,
+  type ClaimedJob,
+  type GrantCapability,
+  type JobDetail,
+  newId,
+  type Role,
+} from '@pb/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Harness, harness, idemKey, type SignedIn } from './helpers.ts';
+import { type Harness, harness, idemKey, internalPlan, type SignedIn } from './helpers.ts';
 
 const BROWSER = '155.0.8059.39';
 const SITE = 'https://app.example.com';
@@ -201,6 +208,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   org.id = res.json().id;
+  await internalPlan(h.owner, org.id);
   for (const [name, set] of [
     ['Client North', (v: string) => (north = v)],
     ['Client South', (v: string) => (south = v)],
@@ -590,6 +598,48 @@ describe('jobs: requests', () => {
 });
 
 describe('jobs: running on enrolled computers', () => {
+  it('milestone 11: a restricted organization’s computers claim nothing; the plan caps concurrency; usage counted once', async () => {
+    await clearQueue();
+    const op = await member('operator', ['launch']);
+    const agent = await enroll(op);
+    const p = await profile();
+    const t = await token(op, ['automation:run']);
+    const created = await job(t.headers, { profile_id: p, steps: [{ action: 'open_url', url: `${SITE}/` }] });
+    await h.owner.query(
+      "update subscriptions set state = 'restricted', reason = 'grace_ended' where org_id = $1",
+      [org.id],
+    );
+    try {
+      expect((await poll(op, agent)).assigned).toHaveLength(0);
+      expect((await createJob(t.headers, { profile_id: p, steps: [] })).json().code).toBe(
+        'SUBSCRIPTION_RESTRICTED',
+      );
+    } finally {
+      await internalPlan(h.owner, org.id);
+    }
+    await h.owner.query(
+      `insert into entitlement_overrides (id, org_id, scope, value, reason, created_by, expires_at)
+       values ($1, $2, 'limit.automation_concurrency', '0', 'test: no automation capacity for now', $3, now() + interval '1 day')`,
+      [newId('override'), org.id, owner.user],
+    );
+    try {
+      expect((await poll(op, agent)).assigned).toHaveLength(0);
+    } finally {
+      await h.owner.query(
+        "update entitlement_overrides set revoked_at = now() where org_id = $1 and scope = 'limit.automation_concurrency'",
+        [org.id],
+      );
+    }
+    const { assigned } = await poll(op, agent);
+    expect(assigned.map((c) => c.job.id)).toEqual([created.job.id]);
+    await runToEnd(op, assigned[0] as ClaimedJob);
+    const usage = await h.owner.query(
+      'select quantity::int as q from usage_events where org_id = $1 and dedupe_key = $2',
+      [org.id, `job:${created.job.id}`],
+    );
+    expect(usage.rows).toEqual([{ q: 1 }]);
+  });
+
   it('runs end to end under a session lease and emits webhook events for each state', async () => {
     const op = await member('operator', ['launch']);
     const agent = await enroll(op);

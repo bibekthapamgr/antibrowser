@@ -21,6 +21,7 @@ import Type from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
 import { endMemberAutomation } from '../automation.ts';
+import { billingSummary } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
 import { appendEvent } from '../outbox.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
@@ -123,7 +124,11 @@ export function organizationRoutes(app: App, deps: Deps): void {
         return rows[0];
       });
       if (!org) throw new ApiError('NOT_FOUND', 'Organization not found');
-      return reply.header('etag', `"${org.version}"`).send({ ...org, role: access.role });
+      return reply.header('etag', `"${org.version}"`).send({
+        ...org,
+        role: access.role,
+        ...(access.billing ? { billing: billingSummary(access.billing) } : {}),
+      });
     },
   );
 

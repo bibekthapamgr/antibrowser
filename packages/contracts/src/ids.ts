@@ -45,6 +45,11 @@ export const ID_PREFIXES = {
   artifact: 'art',
   webhookEndpoint: 'whk',
   webhookDelivery: 'dlv',
+  // Milestone 11: billing and support.
+  override: 'ovr',
+  billingAlert: 'alr',
+  staffSession: 'stf',
+  accessRequest: 'sar',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

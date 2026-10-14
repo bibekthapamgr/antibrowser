@@ -433,6 +433,47 @@ const OPS: Op[] = [
       payload: { allowed_origins: ['https://matrix.example'], expected_version: 999 },
     }),
   },
+  // Milestone 11: billing (owners and the billing role read; owners manage). No payment provider is configured here, so
+  // an allowed checkout or portal request answers BILLING_UNAVAILABLE (503) after the permission check.
+  {
+    name: 'read the subscription',
+    permission: 'billing.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/billing/subscription` }),
+  },
+  {
+    name: 'list invoices',
+    permission: 'billing.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/billing/invoices` }),
+  },
+  {
+    name: 'read usage',
+    permission: 'billing.read',
+    scoped: false,
+    ok: 200,
+    request: () => ({ method: 'GET', url: `/v1/orgs/${acme.id}/billing/usage` }),
+  },
+  {
+    name: 'start checkout (provider not configured)',
+    permission: 'billing.manage',
+    scoped: false,
+    ok: 503,
+    request: () => ({
+      method: 'POST',
+      url: `/v1/orgs/${acme.id}/billing/checkout-session`,
+      payload: { plan_id: 'team' },
+    }),
+  },
+  {
+    name: 'open the billing portal (provider not configured)',
+    permission: 'billing.manage',
+    scoped: false,
+    ok: 503,
+    request: () => ({ method: 'POST', url: `/v1/orgs/${acme.id}/billing/portal-session` }),
+  },
   {
     name: 'list automation jobs',
     permission: 'automation.read',

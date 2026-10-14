@@ -4,7 +4,7 @@
  * it writes across tenants.
  */
 
-import { defaultCapabilities } from '@pb/contracts';
+import { defaultCapabilities, latestPlan } from '@pb/contracts';
 import pg from 'pg';
 import { DEV_ISSUER, FIXTURES } from '../src/fixtures.ts';
 import { nameKey } from '../src/names.ts';
@@ -34,6 +34,20 @@ export async function seedWith(client: pg.ClientBase): Promise<void> {
       org.id,
       org.name,
     ]);
+  }
+  // Milestone 11: fixture organizations are on the internal plan (no limits, no expiry), before members are added.
+  const internal = latestPlan('internal');
+  if (internal) {
+    await client.query(
+      `with moved as (
+         update subscriptions set plan_id = $2, plan_version = $3, state = 'active', reason = 'complimentary',
+                trial_ends_at = null, observed_state = 'active', updated_at = now(), version = version + 1
+          where org_id = any($1::text[]) and (plan_id <> $2 or plan_version <> $3 or state <> 'active')
+          returning org_id)
+       insert into subscription_history (org_id, from_state, to_state, reason, plan_id, plan_version, cause)
+       select org_id, null, 'active', 'complimentary', $2, $3, 'staff' from moved`,
+      [Object.values(FIXTURES.orgs).map((o) => o.id), internal.id, internal.version],
+    );
   }
   for (const user of Object.values(FIXTURES.users)) {
     await client.query(

@@ -6,6 +6,7 @@
 import { ApiError, Client, ClientCreate, ClientUpdate, newId, Page, PageQuery } from '@pb/contracts';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { requireBillingAllows } from '../billing/state.ts';
 import { withTx } from '../db.ts';
 import { nameKey } from '../names.ts';
 import { appendEvent } from '../outbox.ts';
@@ -67,6 +68,7 @@ export function clientRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'client.create');
       requirePermission(access, 'clients.manage');
       const name = req.body.name.trim();
       const id = newId('client');

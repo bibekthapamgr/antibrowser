@@ -59,6 +59,17 @@ export const ERROR_CODES = {
   AGENT_UNAVAILABLE: { status: 409, retryable: false },
   /** A webhook address that resolves to a private, local or reserved network, or is otherwise not allowed. */
   WEBHOOK_DESTINATION_BLOCKED: { status: 422, retryable: false },
+  // Milestone 11
+  /** A plan limit (profiles, seats, storage, automation) is reached; safe_details name it and what to do. */
+  PLAN_LIMIT_REACHED: { status: 409, retryable: false },
+  /** The organization's subscription is restricted or canceled: reading, closing, backing up and export still work. */
+  SUBSCRIPTION_RESTRICTED: { status: 403, retryable: false },
+  /** The payment provider is not configured on this server or could not be reached (nothing else is affected). */
+  BILLING_UNAVAILABLE: { status: 503, retryable: true },
+  /** A subscription is already live: change plans or payment methods in the billing portal. */
+  ALREADY_SUBSCRIBED: { status: 409, retryable: false },
+  /** The plan is not offered on this server (not purchasable, or no price configured). */
+  PLAN_NOT_AVAILABLE: { status: 422, retryable: false },
   INTERNAL: { status: 500, retryable: true },
   UNAVAILABLE: { status: 503, retryable: true },
 } as const;

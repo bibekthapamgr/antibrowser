@@ -129,3 +129,62 @@ describe('loadConfig', () => {
     ).toBe('http://127.0.0.1:8333');
   });
 });
+
+describe('billing configuration (milestone 11)', () => {
+  const testKey = `sk_${'test'}_${randomBytes(12).toString('hex')}`;
+  const liveKey = `sk_${'live'}_${randomBytes(12).toString('hex')}`;
+  const hook = `whsec_${randomBytes(16).toString('hex')}`;
+  const dev = { ...base, APP_ENV: 'dev' };
+
+  it('is off without a key; test keys outside prod, live keys only in prod', () => {
+    expect(loadConfig(dev).billing.stripe).toBeNull();
+    const cfg = loadConfig({
+      ...dev,
+      STRIPE_SECRET_KEY: testKey,
+      STRIPE_WEBHOOK_SECRETS: `${hook}, ${hook}2`,
+    });
+    expect(cfg.billing.stripe).toMatchObject({ livemode: false, apiBase: 'https://api.stripe.com' });
+    expect(cfg.billing.stripe?.webhookSecrets).toHaveLength(2);
+    expect(() => loadConfig({ ...dev, STRIPE_SECRET_KEY: liveKey, STRIPE_WEBHOOK_SECRETS: hook })).toThrow(
+      /live Stripe key/,
+    );
+    expect(() => loadConfig({ ...dev, STRIPE_SECRET_KEY: testKey })).toThrow(/STRIPE_WEBHOOK_SECRETS/);
+    expect(() =>
+      loadConfig({ ...dev, STRIPE_SECRET_KEY: 'pk_test_abcdefgh', STRIPE_WEBHOOK_SECRETS: hook }),
+    ).toThrow(/not a Stripe secret/);
+  });
+
+  it('allows a local provider address only in dev/test, and validates the price map', () => {
+    expect(
+      loadConfig({
+        ...dev,
+        STRIPE_SECRET_KEY: testKey,
+        STRIPE_WEBHOOK_SECRETS: hook,
+        STRIPE_API_BASE: 'http://127.0.0.1:12111/',
+      }).billing.stripe?.apiBase,
+    ).toBe('http://127.0.0.1:12111');
+    const staging = {
+      ...base,
+      APP_ENV: 'staging',
+      OIDC_ISSUER: 'https://id.example',
+      OIDC_CLIENT_ID: 'pb-desktop',
+      SESSION_SIGNING_KEY: '{"kty":"EC"}',
+      OBJECT_STORE_BUCKET: 'pb-snapshots-staging',
+      STRIPE_SECRET_KEY: testKey,
+      STRIPE_WEBHOOK_SECRETS: hook,
+    };
+    expect(() => loadConfig({ ...staging, STRIPE_API_BASE: 'http://127.0.0.1:12111' })).toThrow(
+      /STRIPE_API_BASE/,
+    );
+    expect(loadConfig({ ...dev, BILLING_STRIPE_PRICES: '{"team@1":"price_123abc"}' }).billing.prices).toEqual(
+      {
+        'team@1': 'price_123abc',
+      },
+    );
+    expect(() => loadConfig({ ...dev, BILLING_STRIPE_PRICES: '{"team":"price_123"}' })).toThrow(
+      /plan@version/,
+    );
+    expect(() => loadConfig({ ...dev, BILLING_STRIPE_PRICES: '[1]' })).toThrow(/JSON object/);
+    expect(() => loadConfig({ ...dev, BILLING_RETENTION_DAYS: '7' })).toThrow(/RETENTION/);
+  });
+});

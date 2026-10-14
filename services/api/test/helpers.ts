@@ -51,10 +51,20 @@ export interface HarnessOptions {
   logLines?: string[];
   /** 'memory' (default): an in-memory object store; 's3': the configured S3-compatible store. */
   storage?: 'memory' | 's3';
+  /** Milestone 11: extra environment for the configuration (billing provider, prices). */
+  env?: Record<string, string>;
+  /** Milestone 11: the support console's client id (its ID tokens are signed by the same test provider). */
+  consoleClientId?: string;
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
-  const config = loadConfig({ ...process.env, OIDC_ISSUER: TEST_ISSUER, OIDC_CLIENT_ID: TEST_CLIENT_ID });
+  const config = loadConfig({
+    ...process.env,
+    OIDC_ISSUER: TEST_ISSUER,
+    OIDC_CLIENT_ID: TEST_CLIENT_ID,
+    ...(opts.consoleClientId ? { OIDC_CONSOLE_CLIENT_ID: opts.consoleClientId } : {}),
+    ...(opts.env ?? {}),
+  });
   const pool = createPool(config.databaseUrl, opts.poolMax ?? 20);
   const owner = new pg.Pool({
     connectionString: process.env.MIGRATION_DATABASE_URL,
@@ -70,12 +80,21 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   if (memory) objects = memory;
   else if (config.objectStore) objects = s3ObjectStore(config.objectStore);
   else throw new Error('storage: s3 needs OBJECT_STORE_* in the test environment');
+  const consoleIdTokens = opts.consoleClientId
+    ? { consoleIdTokens: idp.verifierFor(opts.consoleClientId) }
+    : {};
   const app = await buildApp(
     lines ? { ...config, logLevel: 'info' } : config,
     pool,
     lines
-      ? { idTokens: idp.verifier, logStream: { write: (line) => void lines.push(line) }, objects, kms }
-      : { logger: false, idTokens: idp.verifier, objects, kms },
+      ? {
+          idTokens: idp.verifier,
+          logStream: { write: (line) => void lines.push(line) },
+          objects,
+          kms,
+          ...consoleIdTokens,
+        }
+      : { logger: false, idTokens: idp.verifier, objects, kms, ...consoleIdTokens },
   );
   await app.ready();
   const worker = new pg.Pool({
@@ -142,3 +161,15 @@ export const ERROR_KEYS = ['code', 'message', 'request_id', 'retryable', 'safe_d
 
 /** Unique idempotency key. */
 export const idemKey = (): string => `k-${randomBytes(8).toString('hex')}`;
+
+/**
+ * Milestone 11: new organizations start a trial with trial limits. Test organizations that need many members or
+ * profiles are moved to the internal plan (no limits), as the fixture organizations are.
+ */
+export async function internalPlan(owner: pg.Pool, orgId: string): Promise<void> {
+  await owner.query(
+    `update subscriptions set plan_id = 'internal', plan_version = 1, state = 'active', reason = 'complimentary',
+            trial_ends_at = null, observed_state = 'active' where org_id = $1`,
+    [orgId],
+  );
+}

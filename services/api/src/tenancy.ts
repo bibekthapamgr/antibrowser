@@ -23,6 +23,7 @@ import {
 import type pg from 'pg';
 import { auditAlone } from './audit.ts';
 import type { Principal, TokenGrant } from './auth.ts';
+import { BILLING_ACCESS_COLUMNS, type BillingAccess, billingAccessOf } from './billing/state.ts';
 import { withTx } from './db.ts';
 
 export interface TenantAccess {
@@ -34,6 +35,8 @@ export interface TenantAccess {
   requestId: string;
   /** Set when the caller is an API token (milestone 10): scopes and restrictions narrow the owner's own access. */
   token?: TokenGrant;
+  /** Milestone 11: the organization's effective billing state (it only ever narrows what the role allows). */
+  billing?: BillingAccess;
 }
 
 export interface RequestInfo {
@@ -50,10 +53,20 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
   // A token belongs to exactly one organization: any other answers like an organization that does not exist.
   if (principal.token && principal.token.orgId !== orgId) throw notFound;
   const { rows } = await withTx(pool, { orgId, userId: principal.userId }, (c) =>
-    c.query<{ role: Role }>('select role from memberships where org_id = $1 and user_id = $2', [
-      orgId,
-      principal.userId,
-    ]),
+    c.query<{
+      role: Role;
+      billing_state: string;
+      billing_reason: string;
+      billing_until: string | null;
+      billing_blocked: boolean;
+      billing_plan_id: string;
+      billing_plan_name: string;
+    }>(
+      `select m.role, ${BILLING_ACCESS_COLUMNS}
+         from memberships m cross join app.billing_effective($1) e
+        where m.org_id = $1 and m.user_id = $2`,
+      [orgId, principal.userId],
+    ),
   );
   const role = rows[0]?.role;
   if (!role) {
@@ -77,6 +90,7 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
     scope: ROLE_SCOPE[role],
     requestId: req.id,
     ...(principal.token ? { token: principal.token } : {}),
+    ...(rows[0] ? { billing: billingAccessOf(rows[0]) } : {}),
   };
   req.tenant = access;
   return access;

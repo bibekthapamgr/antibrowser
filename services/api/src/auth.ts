@@ -1,5 +1,5 @@
 import type { AppConfig } from '@pb/config/env';
-import { ApiError, type ApiScope, isId, parseApiToken } from '@pb/contracts';
+import { ApiError, type ApiScope, isId, parseApiToken, type StaffRole } from '@pb/contracts';
 import { jwtVerify } from 'jose';
 import type pg from 'pg';
 import { withTx } from './db.ts';
@@ -24,17 +24,21 @@ export interface TokenGrant {
  * tokens (milestone 10): they act as the token's owner, limited by the token's organization, scopes and restrictions.
  */
 export interface Principal {
-  kind: 'session' | 'dev' | 'token';
+  kind: 'session' | 'dev' | 'token' | 'staff';
   userId: string;
   deviceId: string | null;
   sessionId: string | null;
   /** Last real authentication at the identity provider (for operations that need a recent sign-in). */
   authTime: Date;
   token?: TokenGrant;
+  /** Milestone 11: support console staff (only on /v1/support routes). */
+  staff?: { roles: StaffRole[] };
 }
 
 export interface Authenticator {
   authenticate(authorization: string | undefined): Promise<Principal>;
+  /** Support routes only: a staff token whose session and staff membership are still active. */
+  authenticateStaff(authorization: string | undefined): Promise<Principal>;
 }
 
 const DEV_AUDIENCE = 'pb-api';
@@ -53,6 +57,28 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
       }
       if (devKey) return devPrincipal(pool, devKey, token);
       throw new ApiError('UNAUTHENTICATED', 'Invalid or expired credentials');
+    },
+    async authenticateStaff(authorization) {
+      const claims = await keys.verifyStaff(bearer(authorization));
+      const { rows } = await withTx(pool, { orgId: null, userId: claims.userId }, (c) =>
+        c.query<{ roles: StaffRole[] }>(
+          `select p.roles from staff_sessions s join platform_staff p on p.user_id = s.user_id
+             join users u on u.id = s.user_id
+            where s.id = $1 and s.user_id = $2 and s.revoked_at is null and s.expires_at > now()
+              and p.disabled_at is null and u.disabled_at is null`,
+          [claims.staffSessionId, claims.userId],
+        ),
+      );
+      const row = rows[0];
+      if (!row) throw new ApiError('UNAUTHENTICATED', 'Sign in to the support console again');
+      return {
+        kind: 'staff',
+        userId: claims.userId,
+        deviceId: null,
+        sessionId: claims.staffSessionId,
+        authTime: claims.authTime,
+        staff: { roles: row.roles },
+      };
     },
   };
 }

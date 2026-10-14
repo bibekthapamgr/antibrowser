@@ -68,6 +68,7 @@ import {
   settingsOf,
   stepsOf,
 } from '../automation.ts';
+import { effectiveOf, requireBillingAllows } from '../billing/state.ts';
 import { withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey, runIdempotent } from '../idempotency.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
@@ -302,6 +303,7 @@ export function automationRoutes(app: App, deps: Deps): void {
     },
     async (req, reply) => {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
+      requireBillingAllows(access, 'automation.create');
       requirePermission(access, 'automation.run');
       const body = req.body;
       if (body.debug) requirePermission(access, 'automation.debug');
@@ -841,14 +843,21 @@ export function automationRoutes(app: App, deps: Deps): void {
           if (j.cancel) cancel.push(j.id);
         }
         const slots = Math.min(body.capacity, agent.max_jobs - held.rows.length);
-        if (agent.enabled && slots > 0) {
+        // Milestone 11: no new claims while the organization is restricted or its plan has no automation; running
+        // jobs keep their capacity, new claims wait while the organization is over its plan's concurrency.
+        const plan = await effectiveOf(c, access.orgId);
+        const claimable = !access.billing?.blocked && plan.features.automation;
+        if (agent.enabled && slots > 0 && claimable) {
           const ids = await claimJobs(
             c,
             actorOf(access),
             agent,
             slots,
             settings.allowed_origins,
-            settings.max_running_jobs,
+            Math.min(
+              settings.max_running_jobs,
+              plan.limits.automation_concurrency ?? Number.POSITIVE_INFINITY,
+            ),
           );
           for (const id of ids) {
             const cj = await claimedJob(c, access.orgId, id, agent, settings.allowed_origins);

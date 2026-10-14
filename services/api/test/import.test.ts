@@ -1,7 +1,7 @@
 /** Milestone 06 step 8: moving a local workspace into an organization through an explicit preview and mapping. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fx } from '../src/fixtures.ts';
-import { type Harness, harness, idemKey, type SignedIn } from './helpers.ts';
+import { type Harness, harness, idemKey, internalPlan, type SignedIn } from './helpers.ts';
 
 let h: Harness;
 let alice: SignedIn;
@@ -18,6 +18,7 @@ beforeAll(async () => {
       payload: { name: 'Import' },
     })
   ).json().id;
+  await internalPlan(h.owner, orgId);
   existingClient = (
     await h.app.inject({
       method: 'POST',

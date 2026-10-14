@@ -115,3 +115,37 @@ async function discoverJwksUri(issuer: string, allowLoopbackHttp: boolean): Prom
     throw new ApiError('UNAVAILABLE', 'The identity provider is unavailable');
   }
 }
+
+export interface OidcEndpoints {
+  authorization_endpoint: string;
+  token_endpoint: string;
+}
+
+/** The provider's authorization and token endpoints (for the support console's own sign-in), same address rules. */
+export async function discoverEndpoints(issuer: string, allowLoopbackHttp: boolean): Promise<OidcEndpoints> {
+  const allowed = (url: URL) =>
+    url.protocol === 'https:' ||
+    (allowLoopbackHttp &&
+      url.protocol === 'http:' &&
+      ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname));
+  try {
+    const res = await fetch(`${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`, {
+      signal: AbortSignal.timeout(5000),
+      redirect: 'error',
+    });
+    const doc = (await res.json()) as {
+      issuer?: string;
+      authorization_endpoint?: string;
+      token_endpoint?: string;
+    };
+    if (!res.ok || doc.issuer !== issuer || !doc.authorization_endpoint || !doc.token_endpoint) {
+      throw new Error('bad discovery');
+    }
+    const auth = new URL(doc.authorization_endpoint);
+    const token = new URL(doc.token_endpoint);
+    if (!allowed(auth) || !allowed(token)) throw new Error('insecure endpoints');
+    return { authorization_endpoint: auth.toString(), token_endpoint: token.toString() };
+  } catch {
+    throw new ApiError('UNAVAILABLE', 'The identity provider is unavailable');
+  }
+}
