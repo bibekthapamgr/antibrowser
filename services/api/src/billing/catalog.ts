@@ -67,7 +67,7 @@ export async function sellablePrice(
 
 export function offeredPlans(): PlanDefinition[] {
   const ids = [...new Set(PLAN_CATALOG.filter((p) => p.purchasable).map((p) => p.id))];
-  return ids.map((id) => latestPlan(id)).filter((p): p is PlanDefinition => p?.purchasable);
+  return ids.map((id) => latestPlan(id)).filter((p): p is PlanDefinition => p?.purchasable === true);
 }
 
 const TRIAL_DAYS = PLAN_CATALOG.find((p) => p.id === 'trial')?.trialDays ?? 0;
