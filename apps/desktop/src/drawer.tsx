@@ -8,6 +8,7 @@ import type {
   Permission,
   ProfileStatus,
   ProfileView,
+  RecoverAction,
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { BackupSection } from './backups.tsx';
@@ -155,13 +156,14 @@ export function ProfileDrawer(props: {
     }
   };
 
-  const recover = async (action: 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now') => {
+  const recover = async (action: RecoverAction) => {
     try {
       await backend.profiles.recover(p.id, action);
       notify(
         {
           reopen: `Opening ${withClient(p)}…`,
           restore_backup: 'Restoring the last good copy…',
+          restore_before_upgrade: 'Restoring the copy from before the browser update…',
           start_fresh: 'Starting with empty browser data…',
           backup_now: 'Making a backup…',
         }[action],
@@ -320,6 +322,21 @@ export function ProfileDrawer(props: {
       {closed && !trashed && (
         <fieldset>
           <legend>Recover</legend>
+          {status?.newer_than_runtime && (
+            <div className="notice notice--error" role="alert">
+              <p className="small">
+                A newer browser version than the one installed last used this profile, so it cannot open here.
+                {status.upgrade_backup
+                  ? ` The copy made just before that browser update (${status.upgrade_backup.runtime_version ?? 'older browser'}, ${new Date(status.upgrade_backup.created_at_unix * 1000).toLocaleDateString()}) opens with the installed browser; changes made since then are kept aside, not deleted.`
+                  : ' There is no copy from before that update on this computer.'}
+              </p>
+              {status.upgrade_backup && (
+                <button type="button" className="pb-button" onClick={() => recover('restore_before_upgrade')}>
+                  Restore the copy from before the browser update
+                </button>
+              )}
+            </div>
+          )}
           {p.state === 'crashed' && (
             <p className="small">
               {status?.suggested_recovery === 'restore_backup'

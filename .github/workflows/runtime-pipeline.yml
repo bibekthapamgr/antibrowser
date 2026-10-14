@@ -113,6 +113,33 @@ jobs:
           cp "${{ steps.rt.outputs.artifact }}" out/
           echo "{\"platform\":\"${{ matrix.platform }}\",\"result\":\"pass\",\"tests\":${passed:-0},\"run_url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > "out/compat-${{ matrix.platform }}.json"
           echo "::notice title=compatibility ${{ matrix.platform }}::${passed:-0} real-browser tests passed with $PB_TEST_BROWSER_VERSION; artifact $(cat "${{ steps.rt.outputs.artifact }}")"
+      # Milestone 12: the upgrade is staged against a compatibility fixture. The runtime pinned today writes a profile,
+      # the candidate opens it (one-way migration, copy kept first), then the pinned one refuses the migrated data and
+      # opens the copy (what users get if the candidate is later withdrawn). Skipped when the major is unchanged.
+      - name: Upgrade from the pinned runtime (compatibility fixture)
+        shell: bash
+        env:
+          PB_TEST_BROWSER_REQUIRED: "1"
+          PB_TEST_SWITCHES: ${{ matrix.switches }}
+          CANDIDATE: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          pinned=$(jq -r '.runtime.version // empty' runtimes/manifest.json 2>/dev/null || true)
+          if [ -z "$pinned" ] || [ "${pinned%%.*}" -ge "${CANDIDATE%%.*}" ]; then
+            echo "::notice title=upgrade fixture ${{ matrix.platform }}::skipped: pinned ${pinned:-none} and candidate $CANDIDATE share a major version"
+            exit 0
+          fi
+          jq '.runtime.artifacts[] | select(.platform == "${{ matrix.platform }}")' runtimes/manifest.json > "$RUNNER_TEMP/old-artifact.json"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/old-runtime.zip" "$(jq -r .url "$RUNNER_TEMP/old-artifact.json")"
+          # The manager's installer checks the pinned digest and size before extracting.
+          old_exe=$(cargo run -q --locked -p pb-update --example install_runtime -- "$RUNNER_TEMP/old-artifact.json" "$RUNNER_TEMP/old-runtime.zip" "$pinned" "$RUNNER_TEMP/old-runtimes")
+          status=0
+          PB_TEST_OLD_BROWSER="$old_exe" PB_TEST_OLD_BROWSER_VERSION="$pinned" \
+            scripts/ci/with-timeout.sh 900 cargo test --locked -p pb-desktop --test browser runtime_upgrade -- --test-threads=1 --nocapture \
+            > "$RUNNER_TEMP/upgrade-fixture.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/upgrade-fixture.log"
+          [ "$status" -eq 0 ] || exit "$status"
+          grep -q "::notice title=upgrade fixture::" "$RUNNER_TEMP/upgrade-fixture.log" || { echo "::error::the upgrade fixture did not run"; exit 1; }
       - name: Portability spike, source side (sign in, close, copy; restore on this machine)
         shell: bash
         env:

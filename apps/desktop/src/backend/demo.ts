@@ -49,6 +49,7 @@ import type {
   IpcError,
   ProfileUpdate,
   ProfileView,
+  RecoverAction,
   RunState,
   RuntimeStatus,
   SettingValue,
@@ -413,6 +414,9 @@ export function demoBackend(mode = ''): Backend {
   const platform = demoPlatform(mode);
   const ops: Operation[] = [];
   let opSeq = 0;
+  /** Milestone 12 (demo mode `rollback`): profiles whose data a withdrawn newer browser migrated, and rolled back. */
+  const newerData = new Set<string>();
+  const rolledBack = new Set<string>();
   let crashed = mode === 'crash';
   let storeFailed = mode === 'migration';
   let runtimeInstalled = mode !== 'noruntime';
@@ -691,6 +695,8 @@ export function demoBackend(mode = ''): Backend {
       });
     }
     const first = recs[0];
+    // Milestone 12: a browser upgrade was withdrawn; this profile's data is newer than the installed browser.
+    if (first && mode === 'rollback') newerData.add(first.id);
     if (first && (mode === 'running' || mode === 'stuck')) {
       set(first.id, {
         state: 'running',
@@ -1664,6 +1670,11 @@ export function demoBackend(mode = ''): Backend {
       async launch(pid: string) {
         const p = find(pid);
         if (p.trashed_at) throw E.PROFILE_IN_TRASH;
+        if (newerData.has(pid))
+          throw err(
+            'PROFILE_NEWER_THAN_RUNTIME',
+            'This profile was last opened by a newer browser version. Install that version to open it, or use Recover to restore the copy made before that browser update.',
+          );
         if (syncHooks?.restoring(pid))
           throw err(
             'PROFILE_RESTORING',
@@ -1806,21 +1817,39 @@ export function demoBackend(mode = ''): Backend {
                 files: backup.files,
               }
             : null,
-          evidence_count: 0,
-          suggested_recovery:
-            p.state === 'crashed' ? (backup && p.crash_count >= 3 ? 'restore_backup' : 'reopen') : null,
+          upgrade_backup:
+            newerData.has(pid) || rolledBack.has(pid)
+              ? {
+                  created_at_unix: Math.floor(Date.now() / 1000) - 5 * 86_400,
+                  runtime_version: '154.0.7727.56',
+                  bytes: 46_000_000,
+                  files: 398,
+                }
+              : null,
+          newer_than_runtime: newerData.has(pid),
+          evidence_count: rolledBack.has(pid) ? 1 : 0,
+          suggested_recovery: newerData.has(pid)
+            ? 'restore_before_upgrade'
+            : p.state === 'crashed'
+              ? backup && p.crash_count >= 3
+                ? 'restore_backup'
+                : 'reopen'
+              : null,
         };
       },
-      async recover(
-        pid: string,
-        action: 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now',
-      ): Promise<{ operation_id: string }> {
+      async recover(pid: string, action: RecoverAction): Promise<{ operation_id: string }> {
         const p = find(pid);
         if (action === 'reopen') return backend.profiles.launch(pid);
         if (p.state !== 'stopped' && p.state !== 'crashed')
           throw err('NOT_RECOVERABLE', 'Close the profile before recovering it.');
         if (action === 'restore_backup' && !backups.has(pid))
           throw err('NO_BACKUP', 'There is no backup of this profile yet.');
+        if (action === 'restore_before_upgrade' && !newerData.has(pid) && !rolledBack.has(pid))
+          throw err('NO_BACKUP', 'There is no backup of this profile yet.');
+        if (action === 'restore_before_upgrade') {
+          newerData.delete(pid);
+          rolledBack.add(pid);
+        }
         const op = startOp(action === 'backup_now' ? 'backup_profile' : 'recover_profile', pid);
         if (action !== 'backup_now') set(pid, { state: 'recovering' });
         changed();

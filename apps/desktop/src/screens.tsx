@@ -546,6 +546,12 @@ function RuntimeSummary({
             ? 'The browser list failed its signature check, so nothing will be downloaded.'
             : 'This development build was made before a signed browser list existed.'}
         </p>
+      ) : b.error === 'RUNTIME_REVOKED' ? (
+        <p role="alert">
+          <span className="error">This browser version was withdrawn</span> because of a security problem, so
+          profiles do not open with it. Update Project Browser (App updates, below) to get a fixed browser.
+          Profiles and their data are not affected.
+        </p>
       ) : m && !m.platform_supported ? (
         <p>
           <span className="warn">Not available for this computer.</span> This build has no browser for this

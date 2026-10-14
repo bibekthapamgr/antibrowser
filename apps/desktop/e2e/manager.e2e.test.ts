@@ -792,6 +792,21 @@ describe('profile lifecycle (milestone 03)', () => {
     await page.close();
   });
 
+  it('milestone 12: a profile migrated by a withdrawn browser rolls back to the copy made before the update', async () => {
+    const page = await open('rollback');
+    await clickRow(page, 'Shop admin');
+    await page.waitForSelector('.drawer .notice[role=alert]');
+    expect(await text(page, '.drawer .notice[role=alert]')).toContain('newer browser version');
+    await clickButton(page, '.drawer', 'Restore the copy from before the browser update');
+    await toastContains(page, 'Restoring the copy from before the browser update');
+    await page.waitForFunction(() => !document.querySelector('.drawer .notice[role=alert]'), {
+      timeout: 10_000,
+    });
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+
   it('installs the approved browser with progress, then profiles can open', async () => {
     const page = await open('noruntime');
     await goTo(page, 'Downloads and updates');

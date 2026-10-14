@@ -386,13 +386,18 @@ fn paused_and_revoked_releases_are_withdrawn_and_vulnerable_versions_flagged() {
     assert_eq!(s["phase"], "up_to_date");
     assert_eq!(s["latest_version"], "1.1.0");
 
-    // This version revoked: flagged, the fix offered.
+    // This version revoked: flagged, the fix offered. A browser runtime archive revoked with it is remembered
+    // (tests/ipc.rs: it is then neither installed nor opened).
+    let bad_runtime = "ab".repeat(32);
+    assert!(!f.state.runtime_revoked(&bad_runtime));
     let mut m = rel.windows(13, "1.1.1");
     m["revoked_versions"] = json!(["1.0.0"]);
+    m["revoked_runtime_sha256"] = json!([bad_runtime]);
     rel.publish(&m);
     let s = check(&f);
     assert_eq!(s["blocked"], json!({ "reason": "revoked" }));
     assert_eq!(s["available"]["version"], "1.1.1");
+    assert!(f.state.runtime_revoked(&bad_runtime.to_uppercase()));
 
     // Below the channel's minimum safe version.
     let mut m = rel.windows(14, "1.1.1");

@@ -985,11 +985,92 @@ fn downgrades_are_refused_and_engine_upgrades_take_a_backup_first() {
     assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
     let s = status(&f, &known);
     assert_eq!(
-        s["backup"]["runtime_version"],
+        s["upgrade_backup"]["runtime_version"],
         json!("150.0.1.1"),
-        "copy made by the old version"
+        "copy made by the old version, in the before-upgrade slot"
     );
     assert_eq!(s["profile"]["runtime_version"], json!(TEST_BROWSER_VERSION));
+    assert_eq!(s["newer_than_runtime"], json!(false));
+}
+
+/// Milestone 12: the engine upgrade migrated the data, then that browser was withdrawn and the build went back to
+/// an older one. The newer data is never opened with the older browser; the copy made before the upgrade is.
+#[test]
+fn a_withdrawn_browser_upgrade_rolls_back_to_the_copy_made_before_it() {
+    let f = fixture();
+    let known = workspace_with_profile(&f);
+    let ud = user_data(&f, &known);
+    std::fs::create_dir_all(&ud).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::write(ud.join("Last Version"), "150.0.1.1").unwrap_or_else(|e| panic!("{e}"));
+    std::fs::write(ud.join("written-by-150"), "old data").unwrap_or_else(|e| panic!("{e}"));
+    let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let op =
+        invoke(&f, "stop_profile", json!({ "profileId": known })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    // Routine copies after the upgrade (made with the new browser) never replace the before-upgrade copy.
+    let op = invoke(
+        &f,
+        "recover_profile",
+        json!({ "profileId": known, "action": "backup_now" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+
+    // The data now carries a newer browser's mark than the installed one (156 > 155).
+    std::fs::write(ud.join("Last Version"), "156.0.1.1").unwrap_or_else(|e| panic!("{e}"));
+    std::fs::remove_file(ud.join("written-by-150")).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        code(&invoke(&f, "launch_profile", json!({ "profileId": known }))).as_deref(),
+        Some("PROFILE_NEWER_THAN_RUNTIME")
+    );
+    let s = status(&f, &known);
+    assert_eq!(s["newer_than_runtime"], json!(true));
+    assert_eq!(s["suggested_recovery"], json!("restore_before_upgrade"));
+    assert_eq!(s["upgrade_backup"]["runtime_version"], json!("150.0.1.1"));
+
+    // A copy made by a browser newer than the installed one is refused (it would be the same downgrade).
+    let backup_json = f
+        .data()
+        .join("backups")
+        .join(&known)
+        .join("last-good")
+        .join("backup.json");
+    let mut info: Value =
+        serde_json::from_slice(&std::fs::read(&backup_json).unwrap_or_else(|e| panic!("{e}")))
+            .unwrap_or_else(|e| panic!("{e}"));
+    info["runtime_version"] = json!("157.0.0.1");
+    std::fs::write(&backup_json, info.to_string()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "recover_profile",
+            json!({ "profileId": known, "action": "restore_backup" })
+        ))
+        .as_deref(),
+        Some("BACKUP_NEWER_THAN_RUNTIME")
+    );
+
+    // The before-upgrade copy is restored; the newer data is kept aside as evidence, never deleted.
+    let op = invoke(
+        &f,
+        "recover_profile",
+        json!({ "profileId": known, "action": "restore_before_upgrade" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    assert_eq!(
+        std::fs::read_to_string(ud.join("Last Version")).unwrap_or_default(),
+        "150.0.1.1"
+    );
+    assert!(ud.join("written-by-150").is_file());
+    let s = status(&f, &known);
+    assert_eq!(s["newer_than_runtime"], json!(false));
+    assert_eq!(s["evidence_count"], json!(1));
+    let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
 }
 
 #[test]
@@ -1126,6 +1207,67 @@ fn runtime_installs_only_from_the_signed_manifest() {
         exe.starts_with(f.data().join("runtimes").join("installed"))
             && exe.ends_with("chrome-test/chrome")
     );
+}
+
+/// Milestone 12: a runtime archive revoked by the signed update manifest is neither installed nor opened, and
+/// nothing about the profiles changes.
+#[test]
+fn a_revoked_runtime_is_neither_installed_nor_opened() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let (zip_path, sha, size) = runtime_zip(tmp.path());
+    let (manifest, keys) = signed_manifest(&sha, size);
+    let f = fixture_with(
+        tmp,
+        Arc::new(FakeProcesses::default()),
+        Options {
+            manifest,
+            trusted_keys: keys,
+            dev_browser: false,
+            archive: Some(zip_path),
+        },
+    );
+    let known = workspace_with_profile(&f);
+    let op = invoke(
+        &f,
+        "install_runtime",
+        json!({ "version": TEST_BROWSER_VERSION }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+
+    // What an accepted update manifest leaves on this computer (tests/updates.rs covers how it gets there).
+    let updates = f.data().join("updates");
+    std::fs::create_dir_all(&updates).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::write(
+        updates.join("state.json"),
+        json!({ "sequences": { "stable": 5 }, "revoked_runtime_sha256": [sha.to_uppercase()] })
+            .to_string(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        code(&invoke(&f, "launch_profile", json!({ "profileId": known }))).as_deref(),
+        Some("RUNTIME_REVOKED")
+    );
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "install_runtime",
+            json!({ "version": TEST_BROWSER_VERSION })
+        ))
+        .as_deref(),
+        Some("RUNTIME_REVOKED")
+    );
+    let rs = invoke(&f, "get_runtime_status", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rs["browser"]["configured"], json!(false));
+    assert_eq!(rs["browser"]["error"], json!("RUNTIME_REVOKED"));
+    assert_eq!(
+        f.launcher.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    // The profile itself is untouched.
+    let p = invoke(&f, "get_profile_status", json!({ "profileId": known }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(p["profile"]["name"], json!("Known"));
 }
 
 #[test]

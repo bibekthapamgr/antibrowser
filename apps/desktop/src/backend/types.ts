@@ -118,7 +118,12 @@ export type {
 } from '@pb/contracts/ipc';
 
 export type Permission = 'ask' | 'block' | 'allow';
-export type RecoverAction = 'reopen' | 'restore_backup' | 'start_fresh' | 'backup_now';
+export type RecoverAction =
+  | 'reopen'
+  | 'restore_backup'
+  | 'restore_before_upgrade'
+  | 'start_fresh'
+  | 'backup_now';
 
 export interface ProfileUpdate {
   expectedVersion: number;

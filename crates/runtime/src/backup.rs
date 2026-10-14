@@ -12,11 +12,16 @@
 //!  - Milestone 07: with a device key (kept in the OS keychain) the copy is a sealed archive (pb-seal: compressed,
 //!    AES-256-GCM, bound to this profile and backup id), opened only into a fresh directory and fully authenticated.
 //!    Without a usable keychain the copy stays a plain directory (as before) and says so (`sealed: false`).
+//!  - Milestone 12: the copy taken before a browser engine upgrade goes to its own slot (`before-upgrade`), which
+//!    routine copies never replace. A newer browser migrates profile data one way; if that browser has to be
+//!    withdrawn, this copy (made by the older browser) is what an older browser can open again. It is kept until the
+//!    next upgrade replaces it, or for [`BEFORE_UPGRADE_KEEP_SECS`].
 //!
 //! ```text
 //! <data>/backups/<profile id>/last-good/backup.json
 //!                                      /user-data.pbseal        (sealed, milestone 07)
 //!                                      /user-data/...            (plain: no keychain)
+//!                            /before-upgrade/...                 (same layout, milestone 12)
 //! <data>/evidence/<profile id>/<unix time>-<reason>/user-data/...   (kept: newest 3)
 //! ```
 
@@ -33,6 +38,21 @@ use pb_seal::{Binding, Kind, Limits, SealError, SealKey};
 
 const KEEP_EVIDENCE: usize = 3;
 pub const BACKUP_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
+/// The routine copy, replaced by each new backup.
+pub const LAST_GOOD: &str = "last-good";
+/// The copy made by the older browser just before an engine upgrade (milestone 12).
+pub const BEFORE_UPGRADE: &str = "before-upgrade";
+/// How long a before-upgrade copy is kept when no newer upgrade replaces it (90 days).
+pub const BEFORE_UPGRADE_KEEP_SECS: u64 = 90 * 86_400;
+
+/// Prefix of a slot's previous copy while a new one replaces it (`old-<t>` for the routine slot, as before).
+fn old_prefix(slot: &str) -> &'static str {
+    if slot == BEFORE_UPGRADE {
+        "old-upgrade-"
+    } else {
+        "old-"
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
@@ -226,7 +246,16 @@ impl Backups {
     }
 
     pub fn last_good(&self, profile: &str) -> Option<BackupInfo> {
-        let dir = self.profile_dir(profile).join("last-good");
+        self.slot(profile, LAST_GOOD)
+    }
+
+    /// The copy made before the last browser engine upgrade, if it is still kept.
+    pub fn before_upgrade(&self, profile: &str) -> Option<BackupInfo> {
+        self.slot(profile, BEFORE_UPGRADE)
+    }
+
+    fn slot(&self, profile: &str, slot: &str) -> Option<BackupInfo> {
+        let dir = self.profile_dir(profile).join(slot);
         let info: BackupInfo =
             serde_json::from_slice(&fs::read(dir.join("backup.json")).ok()?).ok()?;
         let present = if info.sealed {
@@ -243,25 +272,35 @@ impl Backups {
         if !dir.is_dir() {
             return Ok(());
         }
-        let mut olds = vec![];
+        let (mut olds, mut old_upgrades) = (vec![], vec![]);
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with("tmp-") {
                 fs::remove_dir_all(entry.path())?;
-            } else if name.starts_with("old-") {
+            } else if name.starts_with(old_prefix(BEFORE_UPGRADE)) {
+                old_upgrades.push(entry.path());
+            } else if name.starts_with(old_prefix(LAST_GOOD)) {
                 olds.push(entry.path());
             }
         }
-        olds.sort();
-        let last_good = dir.join("last-good");
-        if !last_good.exists()
-            && let Some(newest) = olds.pop()
-        {
-            fs::rename(newest, &last_good)?;
+        for (slot, mut olds) in [(LAST_GOOD, olds), (BEFORE_UPGRADE, old_upgrades)] {
+            olds.sort();
+            let current = dir.join(slot);
+            if !current.exists()
+                && let Some(newest) = olds.pop()
+            {
+                fs::rename(newest, &current)?;
+            }
+            for old in olds {
+                fs::remove_dir_all(old)?;
+            }
         }
-        for old in olds {
-            fs::remove_dir_all(old)?;
+        // A before-upgrade copy is not kept forever.
+        if let Some(info) = self.before_upgrade(profile)
+            && now_unix().saturating_sub(info.created_at_unix) > BEFORE_UPGRADE_KEEP_SECS
+        {
+            fs::remove_dir_all(dir.join(BEFORE_UPGRADE))?;
         }
         Ok(())
     }
@@ -270,6 +309,43 @@ impl Backups {
     /// last-good copy stays in place) so that, for example, a launch request never waits for a routine backup.
     pub fn create(
         &self,
+        profile: &str,
+        user_data: &Path,
+        runtime_version: Option<&str>,
+        free_space: &dyn Fn(&Path) -> io::Result<u64>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<BackupInfo, BackupError> {
+        self.create_in(
+            LAST_GOOD,
+            profile,
+            user_data,
+            runtime_version,
+            free_space,
+            cancel,
+        )
+    }
+
+    /// Takes the copy kept from before a browser engine upgrade (made by the older browser, `runtime_version`).
+    pub fn create_before_upgrade(
+        &self,
+        profile: &str,
+        user_data: &Path,
+        runtime_version: Option<&str>,
+        free_space: &dyn Fn(&Path) -> io::Result<u64>,
+    ) -> Result<BackupInfo, BackupError> {
+        self.create_in(
+            BEFORE_UPGRADE,
+            profile,
+            user_data,
+            runtime_version,
+            free_space,
+            None,
+        )
+    }
+
+    fn create_in(
+        &self,
+        slot: &str,
         profile: &str,
         user_data: &Path,
         runtime_version: Option<&str>,
@@ -343,12 +419,12 @@ impl Backups {
             tmp.join("backup.json"),
             serde_json::to_vec_pretty(&info).map_err(io::Error::other)?,
         )?;
-        let last_good = dir.join("last-good");
-        let old = dir.join(format!("old-{}", now_unix()));
-        if last_good.exists() {
-            fs::rename(&last_good, &old)?;
+        let current = dir.join(slot);
+        let old = dir.join(format!("{}{}", old_prefix(slot), now_unix()));
+        if current.exists() {
+            fs::rename(&current, &old)?;
         }
-        fs::rename(&tmp, &last_good)?;
+        fs::rename(&tmp, &current)?;
         if old.exists() {
             fs::remove_dir_all(old)?;
         }
@@ -418,8 +494,28 @@ impl Backups {
         user_data: &Path,
         free_space: &dyn Fn(&Path) -> io::Result<u64>,
     ) -> Result<PathBuf, BackupError> {
-        let source = self.profile_dir(profile).join("last-good");
-        let info = self.last_good(profile).ok_or(BackupError::NoBackup)?;
+        self.restore_from(LAST_GOOD, profile, user_data, free_space)
+    }
+
+    /// Restores the copy made before the last engine upgrade (the current data becomes evidence; the copy stays).
+    pub fn restore_before_upgrade(
+        &self,
+        profile: &str,
+        user_data: &Path,
+        free_space: &dyn Fn(&Path) -> io::Result<u64>,
+    ) -> Result<PathBuf, BackupError> {
+        self.restore_from(BEFORE_UPGRADE, profile, user_data, free_space)
+    }
+
+    fn restore_from(
+        &self,
+        slot: &str,
+        profile: &str,
+        user_data: &Path,
+        free_space: &dyn Fn(&Path) -> io::Result<u64>,
+    ) -> Result<PathBuf, BackupError> {
+        let source = self.profile_dir(profile).join(slot);
+        let info = self.slot(profile, slot).ok_or(BackupError::NoBackup)?;
         let needed = if info.sealed {
             info.bytes
         } else {
@@ -473,7 +569,12 @@ impl Backups {
         } else {
             copy_tree(&source.join("user-data"), &staging)?;
         }
-        let evidence = self.preserve_evidence(profile, user_data, "restore")?;
+        let reason = if slot == BEFORE_UPGRADE {
+            "restore-before-upgrade"
+        } else {
+            "restore"
+        };
+        let evidence = self.preserve_evidence(profile, user_data, reason)?;
         fs::rename(&staging, user_data)?;
         Ok(evidence)
     }
@@ -596,6 +697,50 @@ mod tests {
             !ud.parent()
                 .is_some_and(|p| p.join("user-data.opening").exists())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_copy_from_before_an_engine_upgrade_survives_routine_backups() -> Result<(), BackupError>
+    {
+        let (_t, b, ud) = sealed()?;
+        // Made by the old browser just before the upgrade.
+        let before = b.create_before_upgrade("prf_X", &ud, Some("150.0.1.1"), PLENTY)?;
+        // The new browser migrates the data; routine copies follow and never replace the before-upgrade one.
+        fs::write(ud.join("Last Version"), b"156.0.1.1")?;
+        fs::write(ud.join("Default/Cookies"), b"migrated")?;
+        b.create("prf_X", &ud, Some("156.0.1.1"), PLENTY, None)?;
+        b.create("prf_X", &ud, Some("156.0.1.1"), PLENTY, None)?;
+        assert_eq!(b.before_upgrade("prf_X"), Some(before.clone()));
+        assert_eq!(
+            b.last_good("prf_X").and_then(|i| i.runtime_version),
+            Some("156.0.1.1".into())
+        );
+        // Restoring it brings back what the old browser wrote; the migrated data is kept as evidence.
+        b.restore_before_upgrade("prf_X", &ud, PLENTY)?;
+        assert_eq!(fs::read(ud.join("Default/Cookies"))?, b"cookie-db");
+        assert!(!ud.join("Last Version").exists());
+        assert_eq!(b.evidence_count("prf_X"), 1);
+        assert_eq!(b.before_upgrade("prf_X"), Some(before));
+
+        // A copy interrupted while being replaced is put back; an expired one is removed.
+        let dir = b.root.join("prf_X");
+        fs::rename(dir.join(BEFORE_UPGRADE), dir.join("old-upgrade-1"))?;
+        b.tidy("prf_X")?;
+        assert!(b.before_upgrade("prf_X").is_some());
+        assert!(b.last_good("prf_X").is_some());
+        let json = dir.join(BEFORE_UPGRADE).join("backup.json");
+        let mut info: BackupInfo =
+            serde_json::from_slice(&fs::read(&json)?).map_err(io::Error::other)?;
+        info.created_at_unix = now_unix() - BEFORE_UPGRADE_KEEP_SECS - 10;
+        fs::write(&json, serde_json::to_vec(&info).map_err(io::Error::other)?)?;
+        b.tidy("prf_X")?;
+        assert!(b.before_upgrade("prf_X").is_none());
+        assert!(b.last_good("prf_X").is_some());
+        assert!(matches!(
+            b.restore_before_upgrade("prf_X", &ud, PLENTY),
+            Err(BackupError::NoBackup)
+        ));
         Ok(())
     }
 

@@ -116,7 +116,17 @@ pub const PROFILE_DATA_UNREADABLE: IpcError = IpcError::new(
 );
 pub const PROFILE_NEWER_THAN_RUNTIME: IpcError = IpcError::new(
     "PROFILE_NEWER_THAN_RUNTIME",
-    "This profile was last opened by a newer browser version. Install that version to open it.",
+    "This profile was last opened by a newer browser version. Install that version to open it, or use Recover to restore the copy made before that browser update.",
+);
+/// Milestone 12: a browser runtime archive revoked by a signed update manifest is neither installed nor opened.
+pub const RUNTIME_REVOKED: IpcError = IpcError::new(
+    "RUNTIME_REVOKED",
+    "This browser version was withdrawn because of a security problem. Update Project Browser to get a fixed version; profiles are not affected.",
+);
+/// Milestone 12: a copy made by a newer browser than the installed one is never opened with the older browser.
+pub const BACKUP_NEWER_THAN_RUNTIME: IpcError = IpcError::new(
+    "BACKUP_NEWER_THAN_RUNTIME",
+    "That copy was made by a newer browser version than the one installed, so it cannot be opened here.",
 );
 pub const NOT_RECOVERABLE: IpcError =
     IpcError::new("NOT_RECOVERABLE", "Close the profile before recovering it.");

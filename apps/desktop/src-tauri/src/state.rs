@@ -654,6 +654,10 @@ impl AppState {
             .into_iter()
             .find(|r| &r.version == version && r.platform == platform() && r.status == "verified")
             .ok_or(ipc::RUNTIME_NOT_INSTALLED)?;
+        // Milestone 12: a runtime archive named in the signed update manifest's revocation list is not opened.
+        if self.runtime_revoked(&artifact.sha256) || self.runtime_revoked(&installed.digest) {
+            return Err(ipc::RUNTIME_REVOKED);
+        }
         let expected_dir = Installer {
             root: self.paths.runtimes.clone(),
             space: &FsSpace,

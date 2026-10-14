@@ -185,7 +185,7 @@ fn handle(stream: TcpStream, reports: &Mutex<HashMap<String, Value>>, log: &Mute
 }
 
 struct Env {
-    _tmp: tempfile::TempDir,
+    _tmp: Option<tempfile::TempDir>,
     state: Arc<AppState>,
     server: Server,
 }
@@ -234,10 +234,48 @@ fn env() -> Option<Env> {
         .create_workspace("Isolation tests")
         .unwrap_or_else(|e| panic!("{e:?}"));
     Some(Env {
-        _tmp: tmp,
+        _tmp: Some(tmp),
         state,
         server: Server::start(),
     })
+}
+
+/// An app on an existing data folder with a given browser (the upgrade fixture runs two browser versions on the
+/// same profiles, one after the other).
+fn env_at(exe: PathBuf, version: &str, data: &std::path::Path, first: bool) -> Env {
+    let switches: Vec<String> = std::env::var("PB_TEST_SWITCHES")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let state = AppState::build(
+        data,
+        RuntimeConfig {
+            manifest: (vec![], vec![]),
+            trusted_keys: pb_desktop_lib::runtime::TRUSTED_KEYS.to_owned(),
+            dev_override: Some(BrowserInstall {
+                executable: exe,
+                revision: version.to_owned(),
+            }),
+            fetcher: Arc::new(HttpsFetcher),
+            switches,
+        },
+        Arc::new(SystemLauncher),
+        Arc::new(SystemInspector::default()),
+        Arc::new(RecordingSink::default()),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    if first {
+        state
+            .create_workspace("Upgrade fixture")
+            .unwrap_or_else(|e| panic!("{e:?}"));
+    }
+    Env {
+        _tmp: None,
+        state,
+        server: Server::start(),
+    }
 }
 
 /// Never leave a browser running after a test, even a failed one (a leftover browser would keep CI log pipes open
@@ -791,6 +829,80 @@ fn an_automation_job_drives_the_real_browser_over_its_pipe() {
 }
 
 // ---------------------------------------------------------------------------------------------- portability spike
+
+/// Milestone 12: a runtime upgrade staged against a compatibility fixture (run by the runtime pipeline with the
+/// pinned runtime as `PB_TEST_OLD_BROWSER` and the candidate as `PB_TEST_BROWSER`, when their major versions
+/// differ). Data the old browser wrote opens with the new one (one-way migration), a copy made by the old browser is
+/// kept first, and when the new browser is withdrawn the old one refuses the migrated data and opens that copy.
+#[test]
+fn runtime_upgrade_keeps_a_copy_the_old_browser_opens() {
+    let (Ok(old), Ok(old_version)) = (
+        std::env::var("PB_TEST_OLD_BROWSER"),
+        std::env::var("PB_TEST_OLD_BROWSER_VERSION"),
+    ) else {
+        eprintln!(
+            "skipped: set PB_TEST_OLD_BROWSER and PB_TEST_OLD_BROWSER_VERSION to run the upgrade fixture"
+        );
+        return;
+    };
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(new) = browser() else { return };
+    let new_version = std::env::var("PB_TEST_BROWSER_VERSION").unwrap_or_else(|_| "dev".into());
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let data = tmp.path().join("data");
+
+    // 1. The old browser writes the profile.
+    let id = {
+        let env = env_at(PathBuf::from(&old), &old_version, &data, true);
+        let id = env.profile("Upgrade fixture");
+        let r = env.visit(&id, "write", "old-write", "written-by-old");
+        assert_eq!(r["local"], json!("written-by-old"), "{r}");
+        env.close(&id);
+        id
+    };
+    // 2. The new browser opens it (the data is migrated one way), after a copy made by the old one.
+    {
+        let env = env_at(new.clone(), &new_version, &data, false);
+        let r = env.visit(&id, "read", "new-read", "-");
+        assert_eq!(r["local"], json!("written-by-old"), "{r}");
+        env.close(&id);
+        let st = env
+            .state
+            .profile_status(&id)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(
+            st.upgrade_backup.and_then(|b| b.runtime_version),
+            Some(old_version.clone()),
+            "the before-upgrade copy was made by the old browser"
+        );
+    }
+    // 3. The new browser is withdrawn: the old one never opens the migrated data, only the copy.
+    {
+        let env = env_at(PathBuf::from(&old), &old_version, &data, false);
+        let refused = env.state.launch_profile(&id, None).err().map(|e| e.code);
+        assert_eq!(refused, Some("PROFILE_NEWER_THAN_RUNTIME"));
+        let st = env
+            .state
+            .profile_status(&id)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(st.newer_than_runtime);
+        assert_eq!(st.suggested_recovery, Some("restore_before_upgrade"));
+        let op = env
+            .state
+            .recover_profile(&id, "restore_before_upgrade")
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(
+            env.wait(&op.operation_id, Duration::from_secs(120)),
+            OpStatus::Succeeded
+        );
+        let r = env.visit(&id, "read", "old-again", "-");
+        assert_eq!(r["local"], json!("written-by-old"), "{r}");
+        env.close(&id);
+    }
+    println!(
+        "::notice title=upgrade fixture::{old_version} wrote, {new_version} opened (copy kept), {old_version} restored the copy and opened it"
+    );
+}
 
 fn platform_name() -> &'static str {
     pb_desktop_lib::state::platform()

@@ -359,19 +359,24 @@ export const ProcessRun = Type.Object({
   ended_at: Nullable(Type.String()),
 });
 
+const LocalBackupInfo = Type.Object({
+  created_at_unix: Type.Integer(),
+  runtime_version: Nullable(Type.String()),
+  bytes: Type.Integer(),
+  files: Type.Integer(),
+});
 export const ProfileStatus = Type.Object({
   profile: ProfileView,
   runs: Type.Array(ProcessRun, { maxItems: 5 }),
-  backup: Nullable(
-    Type.Object({
-      created_at_unix: Type.Integer(),
-      runtime_version: Nullable(Type.String()),
-      bytes: Type.Integer(),
-      files: Type.Integer(),
-    }),
-  ),
+  backup: Nullable(LocalBackupInfo),
+  /** Milestone 12: the copy made by the older browser before the last engine upgrade (kept up to 90 days). */
+  upgrade_backup: Nullable(LocalBackupInfo),
+  /** The data was last written by a newer browser than the installed one, so it cannot open here. */
+  newer_than_runtime: Type.Boolean(),
   evidence_count: Type.Integer(),
-  suggested_recovery: Nullable(Type.Enum(['reopen', 'restore_backup', 'start_fresh'])),
+  suggested_recovery: Nullable(
+    Type.Enum(['reopen', 'restore_backup', 'restore_before_upgrade', 'start_fresh']),
+  ),
 });
 export type ProfileStatus = Static<typeof ProfileStatus>;
 
@@ -1237,7 +1242,7 @@ export const COMMANDS = {
   recover_profile: {
     args: Type.Object({
       profileId: Type.String({ pattern: ProfileIdPattern }),
-      action: Type.Enum(['reopen', 'restore_backup', 'start_fresh', 'backup_now']),
+      action: Type.Enum(['reopen', 'restore_backup', 'restore_before_upgrade', 'start_fresh', 'backup_now']),
     }),
     result: Started,
   },

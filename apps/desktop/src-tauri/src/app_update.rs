@@ -380,6 +380,15 @@ impl AppState {
         UpdateState::load(&self.update_state_path()).revoked_runtime_sha256
     }
 
+    /// Whether a browser runtime archive was revoked (never installed, never opened).
+    pub fn runtime_revoked(&self, sha256: &str) -> bool {
+        !sha256.is_empty()
+            && self
+                .revoked_runtime_sha256()
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(sha256))
+    }
+
     pub fn update_status(&self) -> UpdateStatus {
         let u = &self.updates;
         let channel = self.update_channel();

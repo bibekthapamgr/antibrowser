@@ -2150,6 +2150,8 @@
           "profile",
           "runs",
           "backup",
+          "upgrade_backup",
+          "newer_than_runtime",
           "evidence_count",
           "suggested_recovery"
         ],
@@ -2809,6 +2811,46 @@
               }
             ]
           },
+          "upgrade_backup": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "created_at_unix",
+                  "runtime_version",
+                  "bytes",
+                  "files"
+                ],
+                "properties": {
+                  "created_at_unix": {
+                    "type": "integer"
+                  },
+                  "runtime_version": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "bytes": {
+                    "type": "integer"
+                  },
+                  "files": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "newer_than_runtime": {
+            "type": "boolean"
+          },
           "evidence_count": {
             "type": "integer"
           },
@@ -2818,6 +2860,7 @@
                 "enum": [
                   "reopen",
                   "restore_backup",
+                  "restore_before_upgrade",
                   "start_fresh"
                 ]
               },
@@ -2845,6 +2888,7 @@
             "enum": [
               "reopen",
               "restore_backup",
+              "restore_before_upgrade",
               "start_fresh",
               "backup_now"
             ]

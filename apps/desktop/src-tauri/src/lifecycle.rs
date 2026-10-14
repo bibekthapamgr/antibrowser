@@ -59,9 +59,26 @@ pub struct ProfileStatus {
     pub profile: ProfileView,
     pub runs: Vec<ProcessRun>,
     pub backup: Option<pb_runtime::backup::BackupInfo>,
+    /// The copy made by the older browser before the last engine upgrade (milestone 12), if still kept.
+    pub upgrade_backup: Option<pb_runtime::backup::BackupInfo>,
+    /// The profile's data was last written by a newer browser than the installed one (it cannot open here).
+    pub newer_than_runtime: bool,
     pub evidence_count: usize,
-    /// Suggested next step for a crashed/damaged profile: reopen | restore_backup | start_fresh.
+    /// Suggested next step for a crashed/damaged profile: reopen | restore_backup | start_fresh, or
+    /// restore_before_upgrade when newer data cannot open with the installed browser.
     pub suggested_recovery: Option<&'static str>,
+}
+
+/// Whether data written by `data_version` may be opened by the browser `runtime_version` (same or newer major).
+/// Unknown versions are not refused here (the launch check reads Chromium's own record).
+pub fn opens_with(data_version: Option<&str>, runtime_version: Option<&str>) -> bool {
+    match (
+        data_version.and_then(pb_update::major),
+        runtime_version.and_then(pb_update::major),
+    ) {
+        (Some(d), Some(r)) => d <= r,
+        _ => true,
+    }
 }
 
 fn free_space(path: &Path) -> std::io::Result<u64> {
@@ -304,17 +321,16 @@ impl AppState {
             self.ops.fail(op, code, message);
             self.notify_running_changed();
         };
-        // The engine upgrade is one-way: keep a copy made by the old version first.
+        // The engine upgrade is one-way: keep a copy made by the old version first, in its own slot that routine
+        // backups never replace (milestone 12), so a withdrawn browser can be rolled back to the old data.
         if upgrade_backup {
-            match self.backups.create(
+            match self.backups.create_before_upgrade(
                 id.as_str(),
                 &spec.dirs.user_data,
                 previous_version.as_deref(),
                 &free_space,
-                None,
             ) {
                 Ok(_) => {
-                    let _ = store.record_backup(id, previous_version.as_deref());
                     let _ = store.audit(Some(id), "backup", "before_upgrade", None, None);
                 }
                 Err(BackupError::LowDisk { .. }) => {
@@ -594,8 +610,18 @@ impl AppState {
         let profile = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
         let runs = store.runs_for(profile_id, 5)?;
         let backup = self.backups.last_good(profile_id.as_str());
+        let upgrade_backup = self.backups.before_upgrade(profile_id.as_str());
+        let installed = self.resolve_runtime(&store).ok().and_then(|r| r.version);
+        let data_version = prefs::last_version(&self.root.dirs(profile_id).user_data);
+        let newer_than_runtime = installed.is_some()
+            && data_version.is_some()
+            && !opens_with(data_version.as_deref(), installed.as_deref());
         let view = self.view(profile);
+        let can_roll_back = upgrade_backup
+            .as_ref()
+            .is_some_and(|b| opens_with(b.runtime_version.as_deref(), installed.as_deref()));
         let suggested_recovery = match (view.state, view.last_error.as_deref(), &backup) {
+            _ if newer_than_runtime && can_roll_back => Some("restore_before_upgrade"),
             (RunState::Crashed, Some("PROFILE_DATA_UNREADABLE"), Some(_)) => Some("restore_backup"),
             (RunState::Crashed, Some("PROFILE_DATA_UNREADABLE"), None) => Some("start_fresh"),
             (RunState::Crashed, _, Some(_)) if view.crash_count >= 3 => Some("restore_backup"),
@@ -607,12 +633,16 @@ impl AppState {
             profile: view,
             runs,
             backup,
+            upgrade_backup,
+            newer_than_runtime,
             suggested_recovery,
         })
     }
 
     /// `reopen` | `restore_backup` (last good copy into a fresh directory; damaged data kept as evidence) |
-    /// `start_fresh` (empty browser data; old data kept as evidence) | `backup_now`.
+    /// `restore_before_upgrade` (the copy made by the older browser before the last engine upgrade; milestone 12) |
+    /// `start_fresh` (empty browser data; old data kept as evidence) | `backup_now`. A copy is restored only if the
+    /// installed browser can open it: data migrated by a newer browser is never opened with an older one.
     pub fn recover_profile(
         self: &Arc<Self>,
         profile_id: &ProfileId,
@@ -623,7 +653,10 @@ impl AppState {
         if action == "reopen" {
             return self.launch_profile(profile_id, None);
         }
-        if !matches!(action, "restore_backup" | "start_fresh" | "backup_now") {
+        if !matches!(
+            action,
+            "restore_backup" | "restore_before_upgrade" | "start_fresh" | "backup_now"
+        ) {
             return Err(ipc::INVALID_ARGUMENT);
         }
         if profile.trashed_at.is_some() {
@@ -632,8 +665,17 @@ impl AppState {
         if self.supervisor.is_tracked(profile_id) || profile.state == RunState::Recovering {
             return Err(ipc::NOT_RECOVERABLE);
         }
-        if action == "restore_backup" && self.backups.last_good(profile_id.as_str()).is_none() {
-            return Err(ipc::NO_BACKUP);
+        let copy = match action {
+            "restore_backup" => Some(self.backups.last_good(profile_id.as_str())),
+            "restore_before_upgrade" => Some(self.backups.before_upgrade(profile_id.as_str())),
+            _ => None,
+        };
+        if let Some(copy) = copy {
+            let copy = copy.ok_or(ipc::NO_BACKUP)?;
+            let installed = self.resolve_runtime(&store).ok().and_then(|r| r.version);
+            if !opens_with(copy.runtime_version.as_deref(), installed.as_deref()) {
+                return Err(ipc::BACKUP_NEWER_THAN_RUNTIME);
+            }
         }
         if action == "backup_now" {
             let op = self
@@ -666,6 +708,10 @@ impl AppState {
                 "restore_backup" => this
                     .backups
                     .restore(id.as_str(), &dirs.user_data, &free_space)
+                    .map(|_| ()),
+                "restore_before_upgrade" => this
+                    .backups
+                    .restore_before_upgrade(id.as_str(), &dirs.user_data, &free_space)
                     .map(|_| ()),
                 _ => this
                     .backups
@@ -841,6 +887,9 @@ impl AppState {
             .artifact_for(platform())
             .cloned()
             .ok_or(ipc::RUNTIME_UNAVAILABLE)?;
+        if self.runtime_revoked(&artifact.sha256) {
+            return Err(ipc::RUNTIME_REVOKED);
+        }
         let store = self.store()?;
         if self.installing.swap(true, Ordering::SeqCst) {
             return Err(ipc::INSTALL_IN_PROGRESS);
