@@ -588,6 +588,13 @@ describe('jobs: requests', () => {
     const r6 = await createJob(t.headers, { profile_id: p, steps: workflow() });
     expect(r6.statusCode, r6.body).toBe(201);
     expect(r6.json().job).toMatchObject({ state: 'QUEUED', token_id: t.id, requested_by: op.user });
+    // Steps, outputs and screenshots need the launch capability too (milestone 12 review): seeing the profile
+    // through a grant without it is not enough.
+    const jobUrl = `/v1/orgs/${org.id}/automation/jobs/${r6.json().job.id}`;
+    expect((await h.app.inject({ method: 'GET', url: jobUrl, headers: op.headers })).statusCode).toBe(200);
+    const hidden = await h.app.inject({ method: 'GET', url: jobUrl, headers: noLaunch.headers });
+    expect(hidden.statusCode).toBe(403);
+    expect(hidden.json().safe_details).toMatchObject({ capability: 'launch' });
     // Steps: open the profile, the requested step, close.
     expect(r6.json().steps.map((s: { action: string }) => s.action)).toEqual([
       'open_profile',

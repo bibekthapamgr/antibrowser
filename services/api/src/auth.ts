@@ -32,7 +32,11 @@ export interface Principal {
   authTime: Date;
   token?: TokenGrant;
   /** Milestone 11: support console staff (only on /v1/support routes). Milestone 12: an active break-glass grant. */
-  staff?: { roles: StaffRole[]; breakGlass: { id: string; expiresAt: string } | null };
+  staff?: {
+    roles: StaffRole[];
+    /** Milestone 12: an active break-glass grant, for the organizations it names only. */
+    breakGlass: { id: string; expiresAt: string; orgIds: string[] } | null;
+  };
 }
 
 export interface Authenticator {
@@ -61,12 +65,19 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
     async authenticateStaff(authorization) {
       const claims = await keys.verifyStaff(bearer(authorization));
       const { rows } = await withTx(pool, { orgId: null, userId: claims.userId }, (c) =>
-        c.query<{ roles: StaffRole[]; bg_id: string | null; bg_until: string | null }>(
-          `select p.roles, g.id as bg_id, to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as bg_until
+        c.query<{
+          roles: StaffRole[];
+          bg_id: string | null;
+          bg_until: string | null;
+          bg_orgs: string[] | null;
+        }>(
+          `select p.roles, g.id as bg_id, to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as bg_until,
+                  g.org_ids as bg_orgs
              from staff_sessions s join platform_staff p on p.user_id = s.user_id
              join users u on u.id = s.user_id
-             left join lateral (select id, expires_at from break_glass_grants
+             left join lateral (select id, expires_at, org_ids from break_glass_grants
                                  where user_id = p.user_id and revoked_at is null and expires_at > now()
+                                   and org_ids is not null
                                  order by expires_at desc limit 1) g on true
             where s.id = $1 and s.user_id = $2 and s.revoked_at is null and s.expires_at > now()
               and p.disabled_at is null and u.disabled_at is null`,
@@ -83,7 +94,10 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
         authTime: claims.authTime,
         staff: {
           roles: row.roles,
-          breakGlass: row.bg_id && row.bg_until ? { id: row.bg_id, expiresAt: row.bg_until } : null,
+          breakGlass:
+            row.bg_id && row.bg_until && row.bg_orgs
+              ? { id: row.bg_id, expiresAt: row.bg_until, orgIds: row.bg_orgs }
+              : null,
         },
       };
     },

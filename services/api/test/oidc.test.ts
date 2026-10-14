@@ -98,6 +98,15 @@ describe('OIDC discovery and verification', () => {
     expect(malformed).toMatchObject({ email: null, emailVerified: false });
   });
 
+  it('a token without auth_time never counts as a recent sign-in (milestone 12 review)', async () => {
+    const verifier = createIdTokenVerifier({ issuer, clientId: 'desktop', allowLoopbackHttp: true });
+    const now = Math.floor(Date.now() / 1000);
+    const without = await verifier.verify(await sign({}), 'n'.repeat(20));
+    expect(without.authTime.getTime()).toBe(0);
+    const fresh = await verifier.verify(await sign({ auth_time: now }), 'n'.repeat(20));
+    expect(fresh.authTime.getTime()).toBe(now * 1000);
+  });
+
   it('requires the nonce claim', async () => {
     const verifier = createIdTokenVerifier({ issuer, clientId: 'desktop', allowLoopbackHttp: true });
     await expect(verifier.verify(await sign({ nonce: undefined }), 'n'.repeat(20))).rejects.toMatchObject({

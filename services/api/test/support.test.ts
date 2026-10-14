@@ -394,30 +394,51 @@ describe('break-glass access and the audit export (milestone 12)', () => {
     });
 
     // The grant needs a real reason, a short duration, and an active staff member.
-    await expect(grantBreakGlass(db, s.person.person.email, 'too short', 10, 'server:test')).rejects.toThrow(
-      /reason/,
+    const reason = 'Customer reports a leaked API token';
+    await expect(
+      grantBreakGlass(db, s.person.person.email, [org.id], 'too short', 10, 'server:test'),
+    ).rejects.toThrow(/reason/);
+    await expect(
+      grantBreakGlass(db, s.person.person.email, [org.id], reason, 61, 'server:test'),
+    ).rejects.toThrow(/5-60/);
+    await expect(grantBreakGlass(db, s.person.person.email, [], reason, 10, 'server:test')).rejects.toThrow(
+      /1-10 organizations/,
     );
     await expect(
-      grantBreakGlass(db, s.person.person.email, 'Customer reports a leaked API token', 61, 'server:test'),
-    ).rejects.toThrow(/5-60/);
+      grantBreakGlass(db, s.person.person.email, [newId('organization')], reason, 10, 'server:test'),
+    ).rejects.toThrow(/no such organization/);
     const outsider = await h.signIn();
     await expect(
-      grantBreakGlass(db, outsider.person.email, 'Customer reports a leaked API token', 10, 'server:test'),
+      grantBreakGlass(db, outsider.person.email, [org.id], reason, 10, 'server:test'),
     ).rejects.toThrow(/only for active staff/);
     await expect(
       db.query(
-        `insert into break_glass_grants (id, user_id, reason, granted_by, expires_at)
-         values ($1, $2, 'A long enough emergency reason here', 'x', now() + interval '2 hours')`,
+        `insert into break_glass_grants (id, user_id, org_ids, reason, granted_by, expires_at)
+         values ($1, $2, $3, 'A long enough emergency reason here', 'x', now() + interval '2 hours')`,
+        [newId('audit').replace('aud_', 'bgg_'), s.person.session.user.id, [org.id]],
+      ),
+    ).rejects.toThrow(/check constraint/);
+    await expect(
+      db.query(
+        `insert into break_glass_grants (id, user_id, org_ids, reason, granted_by, expires_at)
+         values ($1, $2, null, 'A long enough emergency reason here', 'x', now() + interval '20 minutes')`,
         [newId('audit').replace('aud_', 'bgg_'), s.person.session.user.id],
       ),
     ).rejects.toThrow(/check constraint/);
-    const grant = await grantBreakGlass(
-      db,
-      s.person.person.email,
-      'Customer reports a leaked API token',
-      10,
-      'server:test',
-    );
+    const other = await customerOrg();
+    const grant = await grantBreakGlass(db, s.person.person.email, [org.id], reason, 10, 'server:test');
+
+    // The grant names its organizations: another one still needs the usual approval and refuses emergencies.
+    const elsewhere = (await get(`/v1/support/orgs/${other.id}`, s.headers)).json();
+    expect(elsewhere.break_glass_until).toBeNull();
+    expect((await get(`/v1/support/orgs/${other.id}/members`, s.headers)).statusCode).toBe(403);
+    expect(
+      (
+        await post(`/v1/support/orgs/${other.id}/emergency/revoke-api-tokens`, s.headers, {
+          reason: 'A token was posted in a public issue tracker',
+        })
+      ).json().safe_details,
+    ).toMatchObject({ reason: 'break_glass_required' });
 
     const overview = (await get(`/v1/support/orgs/${org.id}`, s.headers)).json();
     expect(overview.active_access.sort()).toEqual(['activity', 'members']);
@@ -460,6 +481,21 @@ describe('break-glass access and the audit export (milestone 12)', () => {
       [grant.id, org.id],
     );
     expect(alerts.rowCount).toBeGreaterThanOrEqual(2);
+
+    // The holder cannot clear their own break-glass alerts; another billing admin reviews them.
+    await db.query('update platform_staff set roles = $2 where user_id = $1', [
+      s.person.session.user.id,
+      ['support', 'billing_admin'],
+    ]);
+    const open = await db.query<{ id: string }>(
+      "select id from billing_alerts where kind = 'break_glass_used' and ref = $1 and resolved_at is null",
+      [grant.id],
+    );
+    const alertId = open.rows[0]?.id as string;
+    const own = await post(`/v1/support/alerts/${alertId}/resolve`, s.headers, {});
+    expect(own.json()).toMatchObject({ code: 'FORBIDDEN', safe_details: { reason: 'own_break_glass' } });
+    const reviewer = await staff(['billing_admin']);
+    expect((await post(`/v1/support/alerts/${alertId}/resolve`, reviewer.headers, {})).statusCode).toBe(200);
 
     // Ended on the server: back to the usual approval.
     expect(await endBreakGlass(db, s.person.person.email, 'server:test')).toBe(1);

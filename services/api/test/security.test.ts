@@ -150,6 +150,14 @@ describe('platform audit (append-only, hash-chained)', () => {
     );
     const last = (await exportAudit(h.owner, BigInt(after.seq)))[0];
     expect(last?.at.startsWith('2001')).toBe(false);
+    // The field separator (U+001F) is refused in every text field, so the hashed text has one reading
+    // (milestone 12 review C-L3); control characters inside details are escaped by jsonb.
+    await expect(
+      h.pool.query(
+        `insert into platform_audit (id, action, org_id, target, details) values ($1, $2, $3, $4, '{}')`,
+        [newId('audit'), 'security.test_separator', 'org_A', `org_B${String.fromCharCode(31)}x`],
+      ),
+    ).rejects.toThrow(/platform_audit_no_separator/);
 
     // Tampering (here by someone who switched the protection off) is detected by the chain and by an earlier export.
     const target = rows[1];

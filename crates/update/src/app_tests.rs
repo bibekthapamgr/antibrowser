@@ -362,6 +362,37 @@ fn state_keeps_the_highest_sequence() {
     assert_eq!(UpdateState::load(&path), UpdateState::default());
 }
 
+#[test]
+fn revoked_runtimes_survive_channel_switches_and_older_manifests() {
+    let k = key();
+    let bad = "ab".repeat(32);
+    let revoking = |seq: u64, list: Vec<String>| {
+        assess(
+            &parsed(&k, seq, "0.12.1", |m| {
+                m["revoked_runtime_sha256"] = serde_json::json!(list);
+            }),
+            "0.12.0",
+            None,
+            NOW,
+        )
+        .expect("ok")
+    };
+    let mut st = UpdateState::default();
+    st.accept(&revoking(20, vec![bad.clone()]));
+    assert_eq!(st.revoked_runtime_sha256, vec![bad.clone()]);
+    // An older stable manifest (no revocations) changes nothing.
+    st.accept(&revoking(19, vec![]));
+    assert_eq!(st.revoked_runtime_sha256, vec![bad.clone()]);
+    // Following another channel keeps stable's revocations.
+    let mut dev = revoking(5, vec![]);
+    dev.channel = "dev".into();
+    st.accept(&dev);
+    assert_eq!(st.revoked_runtime_sha256, vec![bad.clone()]);
+    // Only a newer stable manifest withdraws its own revocation.
+    st.accept(&revoking(21, vec![]));
+    assert!(st.revoked_runtime_sha256.is_empty());
+}
+
 // ------------------------------------------------------------------------------------------------ download
 #[derive(Default)]
 struct MemTransport {
@@ -724,6 +755,47 @@ fn macos_bundle_is_replaced_only_by_the_signed_version() {
     assert!(!names.iter().any(|n| n.contains("update-")), "{names:?}");
 }
 
+#[cfg(unix)]
+#[test]
+fn extracted_modes_never_carry_setuid_or_group_write() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("dir");
+    let archive = dir.path().join("modes.tar.gz");
+    let f = std::fs::File::create(&archive).expect("create");
+    let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
+        f,
+        flate2::Compression::fast(),
+    ));
+    for (p, c, mode) in [
+        (
+            "Project Browser.app/Contents/Info.plist",
+            plist("0.12.1"),
+            0o644,
+        ),
+        (
+            "Project Browser.app/Contents/MacOS/pb-desktop",
+            "#!binary".to_owned(),
+            0o6777,
+        ),
+    ] {
+        let mut h = tar::Header::new_gnu();
+        h.set_entry_type(tar::EntryType::Regular);
+        h.set_size(c.len() as u64);
+        h.set_mode(mode);
+        h.set_cksum();
+        b.append_data(&mut h, p, c.as_bytes()).expect("file");
+    }
+    b.into_inner().expect("tar").finish().expect("gz");
+    let staging = dir.path().join("staging");
+    extract_app_archive(&archive, &staging).expect("extracted");
+    let mode = std::fs::metadata(staging.join("Contents/MacOS/pb-desktop"))
+        .expect("meta")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o755);
+}
+
 #[test]
 fn hostile_archives_are_refused() {
     let dir = tempfile::tempdir().expect("dir");
@@ -745,6 +817,41 @@ fn hostile_archives_are_refused() {
                 "Project Browser.app/Contents/abs".into(),
                 None,
                 Some("/etc/passwd".into()),
+            ));
+            e
+        },
+        // A symlink that climbs, even when it stays inside lexically (a chain could take it further).
+        {
+            let mut e = good_entries("0.12.1");
+            e.push((
+                "Project Browser.app/Contents/up".into(),
+                None,
+                Some("../Contents".into()),
+            ));
+            e
+        },
+        // A chain: a link to its own directory, then an entry written through it.
+        {
+            let mut e = good_entries("0.12.1");
+            e.push((
+                "Project Browser.app/Contents/here".into(),
+                None,
+                Some(".".into()),
+            ));
+            e.push((
+                "Project Browser.app/Contents/here/MacOS/evil".into(),
+                Some("x".into()),
+                None,
+            ));
+            e
+        },
+        // A file written through an earlier link.
+        {
+            let mut e = good_entries("0.12.1");
+            e.push((
+                "Project Browser.app/Contents/Frameworks/X.framework/Versions/Current/Y".into(),
+                Some("x".into()),
+                None,
             ));
             e
         },
@@ -797,7 +904,7 @@ fn a_release_made_by_the_release_tooling_verifies_and_installs() {
     let read = |n: &str| std::fs::read(dir.join(n)).expect(n);
     let text = |n: &str| String::from_utf8(read(n)).expect(n).trim().to_owned();
     let keys = ReleaseKeys::parse(
-        &serde_json::json!({ "keys": [{ "key_id": "177C013A0535F941",
+        &serde_json::json!({ "keys": [{ "key_id": "4814555635DFEA4F",
             "public_key": text("throwaway.key.pub"),
             "not_before": "2026-10-01", "not_after": "2027-12-31" }] })
         .to_string(),

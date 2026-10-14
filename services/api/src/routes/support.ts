@@ -142,6 +142,12 @@ async function activeAccess(c: pg.PoolClient, orgId: string, userId: string): Pr
   return rows.map((r) => r.scope);
 }
 
+/** Milestone 12 review (T1): a break-glass grant counts only for the organizations it names. */
+function breakGlassFor(p: StaffPrincipal, orgId: string): { id: string; expiresAt: string } | null {
+  const g = p.staff.breakGlass;
+  return g?.orgIds.includes(orgId) ? g : null;
+}
+
 /** Every use of break-glass access: platform audit, the organization's own activity log, and a console alert. */
 async function breakGlassUsed(
   c: pg.PoolClient,
@@ -151,7 +157,7 @@ async function breakGlassUsed(
   requestId: string,
   details: object = {},
 ): Promise<void> {
-  const grant = p.staff.breakGlass?.id ?? null;
+  const grant = breakGlassFor(p, orgId)?.id ?? null;
   await platformAudit(c, { actor: p.userId, action, orgId, target: grant, details, requestId });
   await orgAudit(c, orgId, p.userId, action, requestId, { break_glass: true });
   await c.query(
@@ -453,10 +459,10 @@ export function supportRoutes(app: App, deps: Deps): void {
           invoices: invoices.rows,
           events: events.rows,
           alerts: alerts.rows,
-          active_access: p.staff.breakGlass
+          active_access: breakGlassFor(p, orgId)
             ? (['members', 'activity'] as SupportAccessScope[])
             : await activeAccess(c, orgId, p.userId),
-          break_glass_until: p.staff.breakGlass?.expiresAt ?? null,
+          break_glass_until: breakGlassFor(p, orgId)?.expiresAt ?? null,
         } as never;
       });
     },
@@ -666,7 +672,7 @@ export function supportRoutes(app: App, deps: Deps): void {
     requestId: string,
   ) => {
     const active = await activeAccess(c, orgId, p.userId);
-    if (!active.includes(scope) && p.staff.breakGlass) {
+    if (!active.includes(scope) && breakGlassFor(p, orgId)) {
       await breakGlassUsed(c, p, orgId, `support.break_glass_${scope}`, requestId);
       return;
     }
@@ -967,6 +973,17 @@ export function supportRoutes(app: App, deps: Deps): void {
     async (req) => {
       const p = staffOf(req, 'billing_admin');
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
+        // Milestone 12 review (T1): someone other than the holder reviews a break-glass alert.
+        const own = await c.query(
+          `select 1 from billing_alerts a join break_glass_grants g on g.id = a.ref
+            where a.id = $1 and a.kind = 'break_glass_used' and g.user_id = $2`,
+          [req.params.id, p.userId],
+        );
+        if (own.rowCount) {
+          throw new ApiError('FORBIDDEN', 'Another staff member must review your own break-glass alert', {
+            reason: 'own_break_glass',
+          });
+        }
         const { rows } = await c.query(
           `update billing_alerts set resolved_at = now(), resolved_by = $2 where id = $1 and resolved_at is null
            returning id, kind, org_id, ref, detail, ${ts('first_seen_at')} as first_seen_at,
@@ -1064,12 +1081,14 @@ export function supportRoutes(app: App, deps: Deps): void {
     },
     async (req) => {
       const p = staffOf(req);
-      if (!p.staff.breakGlass) {
-        throw new ApiError('FORBIDDEN', 'Emergency actions need break-glass access (granted on the server)', {
-          reason: 'break_glass_required',
-        });
-      }
       const orgId = req.params.orgId;
+      if (!breakGlassFor(p, orgId)) {
+        throw new ApiError(
+          'FORBIDDEN',
+          'Emergency actions need break-glass access for this organization (granted on the server)',
+          { reason: 'break_glass_required' },
+        );
+      }
       return withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         await orgExists(c, orgId);
         const r = await c.query(

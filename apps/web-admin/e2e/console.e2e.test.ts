@@ -324,6 +324,12 @@ describe('break-glass and the verifiable audit export (milestone 12)', () => {
     await click(page, 'Revoke all API tokens');
     await waitText(page, '3 API tokens revoked');
     await noAxe(page, 'break-glass');
+    // The grant names its organizations: another one still needs the usual approval.
+    await page.evaluate(() => {
+      window.location.hash = '#/search';
+    });
+    await openOrg(page, 'ops@harbor.example', 'Harbor Studio');
+    expect(await page.$('.break-glass')).toBeNull();
     // Ended on the server: the banner is gone and approval is needed again.
     await demo(page).breakGlass(0);
     await page.evaluate(() => {

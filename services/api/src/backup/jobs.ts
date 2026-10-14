@@ -404,6 +404,18 @@ export async function purgeTrash(d: JobDeps, limit = 20): Promise<number> {
   let purged = 0;
   for (const r of rows) {
     const objects = await inOrg(d.pool, r.org_id, async (c) => {
+      // Milestone 12 review (T5): an undelete racing this purge wins. With the profile row locked, it must still be
+      // in the trash past its period (an undelete clears the deletion; deleting again starts a new period);
+      // otherwise nothing is marked or erased. The undelete, in turn, refuses a profile already past its period.
+      const locked = await c.query('select 1 from profiles where org_id = $1 and id = $2 for update', [
+        r.org_id,
+        r.profile_id,
+      ]);
+      const due = await c.query<{ due: boolean }>('select app.profile_purge_due($1, $2) as due', [
+        r.org_id,
+        r.profile_id,
+      ]);
+      if (!locked.rowCount || !due.rows[0]?.due) return null;
       await c.query(
         `update sync_operations set state = 'canceled', error_code = 'PROFILE_PURGED', updated_at = now()
           where org_id = $1 and profile_id = $2 and state in ('uploading', 'verifying')`,
@@ -424,6 +436,7 @@ export async function purgeTrash(d: JobDeps, limit = 20): Promise<number> {
       );
       return res.rows;
     });
+    if (objects === null) continue;
     for (const o of objects) {
       if (o.upload_id) await d.objects.abortUpload(o.object_key, o.upload_id);
       await d.objects.remove(o.object_key);

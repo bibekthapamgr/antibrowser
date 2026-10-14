@@ -69,15 +69,23 @@ export interface DemoControls {
   switchTo(persona: keyof typeof PERSONAS): void;
   /** Ends every approved access window now (tests of expiry). */
   expireAccess(): void;
-  /** Milestone 12: what `staff.ts break-glass` does on the server, for the signed-in staff member (minutes; 0 ends it). */
-  breakGlass(minutes: number): void;
+  /**
+   * Milestone 12: what `staff.ts break-glass` does on the server, for the signed-in staff member (minutes; 0 ends it)
+   * and the organizations it names (default: Northwind Agency).
+   */
+  breakGlass(minutes: number, orgIds?: string[]): void;
 }
 
 export function demoApi(persona: string): ConsoleApi & { controls: DemoControls } {
   const now = Date.now();
   let me: Staff | null = null;
   let breakGlassUntil: number | null = null;
-  const breakGlass = () => (breakGlassUntil && breakGlassUntil > Date.now() ? breakGlassUntil : null);
+  let breakGlassOrgs: string[] = [];
+  /** A grant counts only for the organizations it names. */
+  const breakGlass = (orgId: string) =>
+    breakGlassUntil && breakGlassUntil > Date.now() && breakGlassOrgs.includes(orgId)
+      ? breakGlassUntil
+      : null;
   /** API tokens per organization (counts only). */
   const apiTokens = new Map<string, number>();
   let current: Staff = PERSONAS[persona] ?? (PERSONAS.all as Staff);
@@ -484,8 +492,8 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
         invoices: o.invoices,
         events: o.events,
         alerts: alerts.filter((a) => a.org_id === o.id),
-        active_access: breakGlass() ? ['members', 'activity'] : active(o.id, s.user_id),
-        break_glass_until: breakGlass() ? iso(breakGlass() as number) : null,
+        active_access: breakGlass(o.id) ? ['members', 'activity'] : active(o.id, s.user_id),
+        break_glass_until: breakGlass(o.id) ? iso(breakGlass(o.id) as number) : null,
       });
     },
     async overrides(orgId) {
@@ -615,7 +623,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     async members(orgId) {
       const s = who();
       const o = orgOf(orgId);
-      if (breakGlass()) record('support.break_glass_members', o.id);
+      if (breakGlass(o.id)) record('support.break_glass_members', o.id);
       else if (!active(orgId, s.user_id).includes('members')) {
         throw new ConsoleError(
           'FORBIDDEN',
@@ -633,7 +641,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     async activity(orgId) {
       const s = who();
       const o = orgOf(orgId);
-      if (breakGlass()) record('support.break_glass_activity', o.id);
+      if (breakGlass(o.id)) record('support.break_glass_activity', o.id);
       else if (!active(orgId, s.user_id).includes('activity')) {
         throw new ConsoleError(
           'FORBIDDEN',
@@ -716,10 +724,10 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     async revokeApiTokens(orgId, reason) {
       const s = who();
       const o = orgOf(orgId);
-      if (!breakGlass()) {
+      if (!breakGlass(o.id)) {
         throw new ConsoleError(
           'FORBIDDEN',
-          'Emergency actions need break-glass access (granted on the server)',
+          'Emergency actions need break-glass access for this organization (granted on the server)',
           403,
           {
             reason: 'break_glass_required',
@@ -745,8 +753,9 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
           if (r.state === 'approved') r.expires_at = iso(Date.now() - 1000);
         }
       },
-      breakGlass(minutes) {
+      breakGlass(minutes, orgIds) {
         breakGlassUntil = minutes > 0 ? Date.now() + minutes * MIN : null;
+        breakGlassOrgs = minutes > 0 ? (orgIds ?? [orgs[0]?.id as string]) : [];
         record(minutes > 0 ? 'staff.break_glass_granted' : 'staff.break_glass_ended', null, current.user_id);
       },
     },

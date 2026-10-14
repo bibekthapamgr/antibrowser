@@ -76,6 +76,7 @@ import { requireEntitlement, userMayLaunch } from '../sessions.ts';
 import {
   profileFor,
   profileVisible,
+  requireCapability,
   requireInteractive,
   requirePermission,
   resolveTenant,
@@ -154,8 +155,9 @@ async function visibleJob(c: pg.PoolClient, access: TenantAccess, jobId: string,
     state: JobState;
     requested_by: string;
     token_id: string | null;
+    profile_id: string;
   }>(
-    `select j.id, j.state, j.requested_by, j.token_id
+    `select j.id, j.state, j.requested_by, j.token_id, j.profile_id
        from automation_jobs j join profiles p on p.org_id = j.org_id and p.id = j.profile_id
       where j.org_id = $1 and j.id = $2 and ${profileVisible(access, 'p', '$3')}
       ${lock ? 'for update of j' : ''}`,
@@ -478,7 +480,9 @@ export function automationRoutes(app: App, deps: Deps): void {
       config: { tokens: true },
       schema: {
         tags: ['automation'],
-        description: 'Scope: automation:read. The job, its steps (with typed outputs) and its screenshots.',
+        description:
+          'Scope: automation:read. The job, its steps (with typed outputs) and its screenshots. Access through a grant ' +
+          'needs its launch capability on the profile.',
         params: JobParams,
         response: { 200: JobDetail, ...errors },
       },
@@ -487,7 +491,10 @@ export function automationRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'automation.read');
       const detail = await withTx(deps.pool, access, async (c) => {
-        await visibleJob(c, access, req.params.jobId);
+        const job = await visibleJob(c, access, req.params.jobId);
+        // Milestone 12 review (T2): steps, outputs and screenshots show what the session showed, so a grant needs
+        // the launch capability on that profile (seeing the profile is not enough).
+        await requireCapability(c, access, job.profile_id, 'profile.launch');
         return jobDetail(c, access, req.params.jobId);
       });
       return reply.header('etag', `"${detail.job.version}"`).send(detail);
@@ -562,7 +569,8 @@ export function automationRoutes(app: App, deps: Deps): void {
         tags: ['automation'],
         description:
           'Scope: automation:read. A diagnostic screenshot (image/jpeg or image/png). Kept 7 days. ' +
-          'Screenshots can show whatever the page showed: treat them as confidential.',
+          'Screenshots can show whatever the page showed: treat them as confidential. Access through a grant needs ' +
+          'its launch capability on the profile.',
         params: ArtifactParams,
       },
     },
@@ -570,7 +578,8 @@ export function automationRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'automation.read');
       const art = await withTx(deps.pool, access, async (c) => {
-        await visibleJob(c, access, req.params.jobId);
+        const job = await visibleJob(c, access, req.params.jobId);
+        await requireCapability(c, access, job.profile_id, 'profile.launch');
         const { rows } = await c.query<{ content_type: string; bytes: Buffer; sha256: string }>(
           `select content_type, bytes, sha256 from job_artifacts
             where org_id = $1 and job_id = $2 and id = $3 and expires_at > now()`,

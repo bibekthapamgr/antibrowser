@@ -156,14 +156,20 @@ export function backupRoutes(app: App, deps: Deps): void {
       // Milestone 12: restoring from the trash needs a recent sign-in.
       requireRecentAuth(principalOf(req), deps.config.session.recentAuthSeconds);
       return withTx(deps.pool, access, async (c) => {
+        // Milestone 12 review (T5): only while the trash period lasts. Past it the purge may already be erasing the
+        // snapshots; the clock is read when the row is (re)checked, so an undelete waiting on the purge's lock is
+        // refused rather than bringing back a profile without its snapshots.
         const { rows } = await c.query<Profile>(
-          `update profiles p set deleted_at = null, version = version + 1, updated_at = now()
-            where p.org_id = $1 and p.id = $2 and p.deleted_at is not null
+          `update profiles p set deleted_at = null, version = p.version + 1, updated_at = now()
+             from organizations o
+            where o.id = p.org_id and p.org_id = $1 and p.id = $2 and p.deleted_at is not null
+              and p.deleted_at >= clock_timestamp() - make_interval(days => o.trash_days)
           returning ${PROFILE_COLUMNS}`,
           [access.orgId, req.params.profileId],
         );
         const profile = rows[0];
-        if (!profile) throw new ApiError('NOT_FOUND', 'Profile not found in the trash');
+        if (!profile)
+          throw new ApiError('NOT_FOUND', 'Profile not found in the trash (or its trash period has ended)');
         await audit(c, changeEntry(access, 'profile.restored', 'profile', profile.id));
         await appendEvent(c, {
           orgId: access.orgId,

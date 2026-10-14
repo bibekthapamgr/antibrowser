@@ -6,7 +6,8 @@
  *
  * Formats (https://jedisct1.github.io/minisign/):
  *   public key: base64("Ed" | key id (8, little-endian) | Ed25519 public key (32))
- *   signature:  base64("ED" | key id | Ed25519 signature over BLAKE2b-512(data)) — "Ed" signs the data itself
+ *   signature:  base64("ED" | key id | Ed25519 signature over BLAKE2b-512(data)); legacy "Ed" (the data itself) is
+ *               refused, as in the app
  *   global:     Ed25519 signature over (signature (64) | trusted comment)
  * A Tauri signature file is base64 of the whole minisign signature text.
  */
@@ -99,8 +100,10 @@ export function verifySignature(data, sigB64, keys, now) {
   if (!k) throw new SignatureError('signed by a key this app does not trust');
   if (now > k.notAfter) throw new SignatureError(`the release key expired on ${k.notAfterText}`);
   if (now < k.notBefore) throw new SignatureError('the release key is not valid yet');
-  const message = alg === 'ED' ? createHash('blake2b512').update(data).digest() : alg === 'Ed' ? data : null;
-  if (!message) throw new SignatureError('unknown signature algorithm');
+  // Prehashed ("ED") signatures only, like the app (minisign-verify with allow_legacy = false): legacy "Ed"
+  // signatures over the raw data are refused (milestone 12 review C-L1).
+  if (alg !== 'ED') throw new SignatureError('unknown or legacy signature algorithm');
+  const message = createHash('blake2b512').update(data).digest();
   const ed = sig.subarray(10);
   if (!verify(null, message, k.key, ed)) throw new SignatureError('signature does not match');
   const comment = trusted.slice('trusted comment: '.length);

@@ -7,7 +7,8 @@
  *   - a channel's release never goes back to an older version, and never to a revoked or below-minimum one;
  *   - stable takes only plain versions (no -beta / -dev suffix); promotion copies the exact signed files;
  *   - the minimum version only rises, and never above the channel's release (nobody could satisfy it);
- *   - validity is at most 120 days (the app refuses longer); the workflow re-signs monthly.
+ *   - validity is at most 45 days (the app refuses longer), 30 by default; the workflow re-signs weekly, so a
+ *     withheld (frozen) manifest stops being accepted within weeks (milestone 12 review C-L2).
  *
  * Usage (prints the new manifest to --out):
  *   channel-manifest.mjs <action> --channel <dev|canary|stable> --sequence <n> --out <file>
@@ -29,7 +30,7 @@ export const PRODUCT = 'project-browser-manager';
 export const CHANNELS = ['dev', 'canary', 'stable'];
 export const REPO = 'bibekthapamgr/antibrowser';
 export const RELEASE_PREFIX = `https://github.com/${REPO}/releases/download/`;
-export const MAX_VALIDITY_DAYS = 120;
+export const MAX_VALIDITY_DAYS = 45;
 export const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 
 /** The files the release job signs and publishes, by platform. */
@@ -216,7 +217,7 @@ function checkReleaseAllowed(next, release) {
  * The next manifest. `current` is the verified current manifest of `channel` (or null), `sequence` the new
  * sequence (from the workflow run), `now` unix seconds.
  */
-export function nextManifest({ action, channel, current, sequence, now, validDays = 90, ...o }) {
+export function nextManifest({ action, channel, current, sequence, now, validDays = 30, ...o }) {
   if (!CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
   if (current) {
     validate(current);
@@ -319,7 +320,7 @@ function main() {
     current,
     sequence: Number(a.sequence),
     now,
-    validDays: a['valid-days'] ? Number(a['valid-days']) : 90,
+    validDays: a['valid-days'] ? Number(a['valid-days']) : 30,
     release:
       action === 'release'
         ? releaseFromFiles(a.version, a.artifacts, a['published-at'] ? a['published-at'] : iso(now))

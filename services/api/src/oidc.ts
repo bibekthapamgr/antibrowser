@@ -71,7 +71,9 @@ export function createIdTokenVerifier(opts: OidcOptions): IdTokenVerifier {
       const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : null;
       const validEmail =
         email !== null && email.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
-      const authTimeSeconds = typeof payload.auth_time === 'number' ? payload.auth_time : (payload.iat ?? 0);
+      // Milestone 12 review: without the provider's own auth_time the sign-in never counts as recent (a silent
+      // single-sign-on token must not satisfy step-up checks or staff sign-in).
+      const authTimeSeconds = typeof payload.auth_time === 'number' ? payload.auth_time : 0;
       return {
         issuer: opts.issuer,
         subject: sub,

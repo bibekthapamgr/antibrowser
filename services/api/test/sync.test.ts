@@ -767,6 +767,9 @@ describe('retention, quota and trash', () => {
     await h.owner.query("update profiles set deleted_at = now() - interval '31 days' where id = $1", [
       profile,
     ]);
+    // Past the trash period the purge may already be erasing it: an undelete is refused (milestone 12 review).
+    const late = await asRecentOwner((headers) => h.app.inject({ method: 'POST', url: undoUrl, headers }));
+    expect(late.statusCode).toBe(404);
     expect(await purgeTrash(h.jobs)).toBeGreaterThanOrEqual(1);
     expect((await h.owner.query('select 1 from profiles where id = $1', [profile])).rowCount).toBe(0);
     expect(mem.objects.has(objectKey(profile, done.init.key.snapshot_id))).toBe(false);

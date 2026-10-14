@@ -326,8 +326,8 @@ function Limits({ org }: { org: SupportOrgOverview }) {
 
 // ---------------------------------------------------------------- sensitive information
 /**
- * Milestone 12: emergency access granted on the server (staff.ts break-glass), shown on every organization while it
- * lasts. Its one emergency action revokes the organization's API tokens; customer data is never touched.
+ * Milestone 12: emergency access granted on the server (staff.ts break-glass), shown on the organizations it names
+ * while it lasts. Its one emergency action revokes the organization's API tokens; customer data is never touched.
  */
 function BreakGlass({ org }: { org: SupportOrgOverview }) {
   const { api, explain } = useConsole();

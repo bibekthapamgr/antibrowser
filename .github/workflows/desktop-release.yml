@@ -48,8 +48,9 @@ on:
         description: "pause, revoke, minimum: why (kept in the release notes and the run summary)"
         required: false
   schedule:
-    # Monthly re-signing of every channel (waits for the release approval; that approval is also the reminder).
-    - cron: "23 7 1 * *"
+    # Weekly re-signing of every channel: manifests are valid 30 days (the app accepts at most 45), so a few missed
+    # approvals are tolerated. Each run waits for the release approval; that approval is also the reminder.
+    - cron: "23 7 * * 1"
 
 permissions:
   contents: read

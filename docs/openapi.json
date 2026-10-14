@@ -24531,7 +24531,7 @@
         "tags": [
           "automation"
         ],
-        "description": "API tokens: yes (scopes apply). Scope: automation:read. The job, its steps (with typed outputs) and its screenshots.",
+        "description": "API tokens: yes (scopes apply). Scope: automation:read. The job, its steps (with typed outputs) and its screenshots. Access through a grant needs its launch capability on the profile.",
         "parameters": [
           {
             "schema": {
@@ -25821,7 +25821,7 @@
         "tags": [
           "automation"
         ],
-        "description": "API tokens: yes (scopes apply). Scope: automation:read. A diagnostic screenshot (image/jpeg or image/png). Kept 7 days. Screenshots can show whatever the page showed: treat them as confidential.",
+        "description": "API tokens: yes (scopes apply). Scope: automation:read. A diagnostic screenshot (image/jpeg or image/png). Kept 7 days. Screenshots can show whatever the page showed: treat them as confidential. Access through a grant needs its launch capability on the profile.",
         "parameters": [
           {
             "schema": {

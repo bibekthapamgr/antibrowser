@@ -33,8 +33,10 @@ pub const RELEASE_URL_PREFIX: &str =
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 pub const MAX_SIGNATURE_BYTES: u64 = 4 * 1024;
 pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
-/// A manifest may not claim to stay valid longer than this after it was issued.
-pub const MAX_VALIDITY_SECONDS: i64 = 120 * 86_400;
+/// A manifest may not claim to stay valid longer than this after it was issued: someone who can withhold newer
+/// manifests (a compromised mirror or network) can freeze an app on an old one for at most this long. The release
+/// workflow signs 30-day manifests and re-signs weekly (milestone 12 review C-L2).
+pub const MAX_VALIDITY_SECONDS: i64 = 45 * 86_400;
 /// Tolerated difference between the publisher's clock and this computer's.
 pub const CLOCK_SKEW_SECONDS: i64 = 10 * 60;
 
@@ -657,13 +659,19 @@ pub fn evaluate(
 }
 
 // ================================================================================================ local state
-/// What this computer remembers between checks: the highest sequence accepted per channel (replay protection).
+/// What this computer remembers between checks: the highest sequence accepted per channel (replay protection) and
+/// the browser runtimes the publisher revoked.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateState {
     #[serde(default)]
     pub sequences: BTreeMap<String, u64>,
+    /// Every runtime revoked on any channel this computer has followed (the union of `revoked_runtime_by_channel`).
     #[serde(default)]
     pub revoked_runtime_sha256: Vec<String>,
+    /// Each channel's newest list. Only a newer manifest of the same channel replaces it, so switching channels
+    /// never forgets another channel's revocations (milestone 12 review C-L2).
+    #[serde(default)]
+    pub revoked_runtime_by_channel: BTreeMap<String, Vec<String>>,
 }
 
 impl UpdateState {
@@ -688,11 +696,24 @@ impl UpdateState {
         std::fs::rename(tmp, path)
     }
 
-    /// Records an accepted manifest (never lowers a channel's sequence).
+    /// Records an accepted manifest. Never lowers a channel's sequence; an older manifest changes nothing.
     pub fn accept(&mut self, a: &Assessment) {
         let e = self.sequences.entry(a.channel.clone()).or_insert(0);
-        *e = (*e).max(a.sequence);
-        self.revoked_runtime_sha256 = a.revoked_runtime_sha256.clone();
+        if a.sequence < *e {
+            return;
+        }
+        *e = a.sequence;
+        self.revoked_runtime_by_channel
+            .insert(a.channel.clone(), a.revoked_runtime_sha256.clone());
+        let mut all: Vec<String> = self
+            .revoked_runtime_by_channel
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        all.sort();
+        all.dedup();
+        self.revoked_runtime_sha256 = all;
     }
 }
 
@@ -1049,6 +1070,8 @@ pub fn extract_app_archive(archive: &Path, staging: &Path) -> Result<(), AppUpda
     let gz = flate2::read::GzDecoder::new(std::fs::File::open(archive)?);
     let mut tar = tar::Archive::new(gz);
     tar.set_preserve_permissions(true);
+    // No setuid, setgid or sticky bits and nothing writable by others: modes end up at most 0o755.
+    tar.set_mask(0o7022);
     tar.set_overwrite(false);
     let mut top: Option<std::ffi::OsString> = None;
     for entry in tar.entries()? {
@@ -1085,11 +1108,26 @@ pub fn extract_app_archive(archive: &Path, staging: &Path) -> Result<(), AppUpda
             if target.is_absolute() {
                 return Err(bad("absolute symlink"));
             }
-            let resolved = rel.parent().unwrap_or(Path::new("")).join(&target);
-            inside(&resolved).ok_or_else(|| bad("symlink escapes the bundle"))?;
+            // Only downward links (Versions/Current -> A): no `..` at all, so no chain of links can climb out of
+            // the bundle (milestone 12 review C-L5).
+            if target
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+            {
+                return Err(bad("symlink escapes its directory"));
+            }
         }
         if rel.as_os_str().is_empty() {
             continue; // the bundle directory itself
+        }
+        // An earlier entry's link must not redirect this one: nothing on the way, nor the entry itself, may already
+        // be a symlink.
+        let mut on_the_way = staging.to_path_buf();
+        for c in rel.components() {
+            on_the_way.push(c);
+            if std::fs::symlink_metadata(&on_the_way).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(bad("entry through a symlink"));
+            }
         }
         let dest = staging.join(&rel);
         if let Some(parent) = dest.parent() {

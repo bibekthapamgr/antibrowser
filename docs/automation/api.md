@@ -91,7 +91,8 @@ QUEUED ──claim──► CLAIMED ──started (session lease)──► RUNNI
    └─ cancel, queue timeout ─► CANCELED / FAILED (QUEUE_EXPIRED)
 ```
 `GET …/jobs?state=QUEUED|CLAIMED|RUNNING|SUCCEEDED|FAILED|CANCELED|active|finished&profile_id=&agent_id=&mine=true`
-lists jobs on profiles you can see; `GET …/jobs/{job}` adds steps and screenshots. Steps carry `state`
+lists jobs on profiles you can see; `GET …/jobs/{job}` adds steps and screenshots (through a grant, these need the
+grant's `launch` capability on that profile, as starting the job did). Steps carry `state`
 (`pending`, `running`, `succeeded`, `failed`, `skipped`, `canceled`, `outcome_unknown`), `attempt` (how many times it
 started; more than 1 only for steps that are safe to repeat), `error_code` and a typed `output` (`final_origin`,
 `http_status`, `elapsed_ms`, `artifact_id`, `width`, `height`, `backup`, `endpoint`, `restored`, `browser_version`) —

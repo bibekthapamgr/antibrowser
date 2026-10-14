@@ -29,10 +29,12 @@ function testKey() {
   const pubText = `untrusted comment: minisign public key: ${keyIdHex(id)}\n${Buffer.concat([Buffer.from('Ed'), id, raw]).toString('base64')}\n`;
   return {
     pub: Buffer.from(pubText).toString('base64'),
-    sign(data, comment) {
-      const sig = sign(null, createHash('blake2b512').update(data).digest(), privateKey);
+    sign(data, comment, legacy = false) {
+      const message = legacy ? data : createHash('blake2b512').update(data).digest();
+      const sig = sign(null, message, privateKey);
       const global = sign(null, Buffer.concat([sig, Buffer.from(comment)]), privateKey);
-      const text = `untrusted comment: signature from tauri secret key\n${Buffer.concat([Buffer.from('ED'), id, sig]).toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`;
+      const alg = legacy ? 'Ed' : 'ED';
+      const text = `untrusted comment: signature from tauri secret key\n${Buffer.concat([Buffer.from(alg), id, sig]).toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`;
       return Buffer.from(text).toString('base64');
     },
   };
@@ -41,7 +43,7 @@ function testKey() {
 describe('signatures', () => {
   it('verifies what the Tauri CLI signed, with the trusted comment fields', () => {
     const keys = cliKeys();
-    assert.equal(keys[0].keyId, '177C013A0535F941');
+    assert.equal(keys[0].keyId, '4814555635DFEA4F');
     const exe = verifySignature(
       fixture('Project.Browser_0.12.1_x64-setup.exe'),
       fixture('Project.Browser_0.12.1_x64-setup.exe.sig').toString(),
@@ -63,6 +65,11 @@ describe('signatures', () => {
       keys: [publicKeyEntry(Buffer.from(other.pub, 'base64').toString('base64'), '2026-01-01', '2030-01-01')],
     });
     assert.throws(() => verifySignature(fixture('stable.json'), sig, otherKeys, NOW), /does not trust/);
+    // Legacy (not prehashed) signatures are refused, as in the app, even from a trusted key.
+    const data = Buffer.from('{"channel":"stable"}');
+    const comment = 'timestamp:1\tfile:stable.json';
+    assert.equal(verifySignature(data, other.sign(data, comment), otherKeys, NOW).file, 'stable.json');
+    assert.throws(() => verifySignature(data, other.sign(data, comment, true), otherKeys, NOW), /legacy/);
     const expired = parseReleaseKeys({
       keys: [publicKeyEntry(fixture('throwaway.key.pub').toString(), '2026-01-01', '2026-10-02')],
     });
@@ -126,11 +133,11 @@ describe('channel manifests', () => {
       m.release.artifacts[0].url,
       /\/releases\/download\/desktop-v0\.12\.1-beta\.1\/Project\.Browser_/,
     );
-    assert.equal(m.expires_at, '2027-01-13T08:00:00Z');
+    assert.equal(m.expires_at, '2026-11-14T08:00:00Z');
     validate(m);
   });
 
-  it('publishing rules: growing sequence, no going back, stable takes plain versions, validity ≤ 120 days', () => {
+  it('publishing rules: growing sequence, no going back, stable takes plain versions, validity ≤ 45 days', () => {
     const m = release('canary', null, 100, '0.12.1-beta.1');
     assert.throws(() => release('canary', m, 100, '0.12.1-beta.2'), /sequence must grow/);
     assert.throws(() => release('canary', m, 101, '0.12.0'), /never goes back/);
@@ -143,7 +150,7 @@ describe('channel manifests', () => {
           current: m,
           sequence: 102,
           now: NOW,
-          validDays: 121,
+          validDays: 46,
         }),
       /validity/,
     );
