@@ -65,6 +65,20 @@ Owner decisions (14 October 2026):
   - deleted-object retention;
   - a whole-server restore in 80 s, then the remaining server checks against the restored server.
 - CI per commit includes a CycloneDX SBOM: 614 Rust crates and 255 npm packages.
+- Full CI on Windows x64, macOS arm64 and Linux green at `d7a2187`
+  ([ci 38544680575](https://github.com/bibekthapamgr/antibrowser/actions/runs/38544680575)).
+- Installers for 0.12.0 at `ad2f007`
+  ([desktop internal build 38541968148](https://github.com/bibekthapamgr/antibrowser/actions/runs/38541968148)).
+
+Found and fixed during verification:
+- The restore drill's small cluster could not recover with fewer connections than the live server; it now recovers
+  without a standby phase.
+- The restored objects were unreadable to the checks (folder group). The checker lacked the app schema path.
+- SeaweedFS 4.48 opens Iceberg (8181) and Lance (9101) servers by default; both are now off.
+- The R2 stand-in's gRPC ports fell in the ephemeral range.
+- pgBackRest's system identifier was rounded by JavaScript, so setup after a restore saw another database.
+- The signed fixtures changed line endings on Windows.
+- The e2e test now expects re-authentication for older versions, a milestone 12 control.
 
 ## Owner steps (in this order)
 1. **Update the server:** run `\cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh`
