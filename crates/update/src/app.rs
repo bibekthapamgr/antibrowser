@@ -536,9 +536,9 @@ pub fn verify_channel_manifest(
 ) -> Result<ChannelManifest, AppUpdateError> {
     let fields = keys.verify(bytes, sig_b64, now)?;
     let m = ChannelManifest::parse(bytes)?;
-    if let Some(file) = fields.get("file")
-        && file != &format!("{}.json", m.channel)
-    {
+    // The release job signs `<channel>.json`; a signature made for another file (another channel's manifest, or
+    // any other signed file) is refused.
+    if fields.get("file") != Some(&format!("{}.json", m.channel)) {
         return Err(AppUpdateError::Invalid(
             "signed for another channel file".into(),
         ));
@@ -863,9 +863,7 @@ pub fn verify_artifact_file(
         Some(v) if Some(&v) == parse_version(&offer.version).as_ref() => {}
         _ => return Err(AppUpdateError::BadSignature),
     }
-    if let Some(file) = fields.get("file")
-        && file != a.file_name()
-    {
+    if fields.get("file").map(String::as_str) != Some(a.file_name()) {
         return Err(AppUpdateError::BadSignature);
     }
     Ok(digest)

@@ -130,6 +130,16 @@ jobs:
         run: |
           pnpm run docs:ipc
           git diff --exit-code docs/ipc-schema.json
+      # Milestone 12: the release tooling (manifest rules, signature checks against files made by the Tauri CLI).
+      - name: Release tooling tests
+        run: node --test scripts/release/*.test.mjs
+      - name: Workflow lint (actionlint, pinned)
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o al.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  al.tgz" | sha256sum -c --quiet -
+          tar -xzf al.tgz actionlint
+          cd "$GITHUB_WORKSPACE" && "$RUNNER_TEMP/actionlint" -shellcheck= .github/workflows/*.yml
 
   sync-e2e:
     name: sync end to end (desktop engine + API + PostgreSQL + S3, shared sessions)

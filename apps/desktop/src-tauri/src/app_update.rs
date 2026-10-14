@@ -229,6 +229,9 @@ pub struct UpdateRuntime {
     version: RwLock<Option<String>>,
     clock: RwLock<Option<i64>>,
     bundle: RwLock<Option<PathBuf>>,
+    /// A signature failure is checked once more after this pause: publishing replaces the manifest and its
+    /// signature one after the other, so a check in between sees a mismatch (and never accepts it).
+    retry_delay: RwLock<Duration>,
     inner: Mutex<Inner>,
     cancel: AtomicBool,
     worker: AtomicBool,
@@ -251,6 +254,7 @@ impl UpdateRuntime {
             version: RwLock::new(None),
             clock: RwLock::new(None),
             bundle: RwLock::new(None),
+            retry_delay: RwLock::new(Duration::from_secs(5)),
             inner: Mutex::new(Inner::default()),
             cancel: AtomicBool::new(false),
             worker: AtomicBool::new(false),
@@ -461,15 +465,22 @@ impl AppState {
             }
         });
         let now = u.now();
-        let result = up::check_channel(
-            u.transport().as_ref(),
-            &keys,
-            &channel,
-            &u.version(),
-            &u.platform(),
-            &st,
-            now,
-        );
+        let check = || {
+            up::check_channel(
+                u.transport().as_ref(),
+                &keys,
+                &channel,
+                &u.version(),
+                &u.platform(),
+                &st,
+                now,
+            )
+        };
+        let mut result = check();
+        if matches!(result, Err(AppUpdateError::BadSignature)) {
+            std::thread::sleep(u.retry_delay.read().map(|d| *d).unwrap_or_default());
+            result = check();
+        }
         match result {
             Ok(a) => {
                 st.accept(&a);
@@ -753,6 +764,9 @@ impl AppState {
         }
         if let Ok(mut b) = u.bundle.write() {
             *b = bundle;
+        }
+        if let Ok(mut d) = u.retry_delay.write() {
+            *d = Duration::ZERO;
         }
     }
 }

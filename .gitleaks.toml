@@ -37,6 +37,12 @@ paths = [
   '''docs/openapi\.json''',
   '''pnpm-lock\.yaml''',
   '''Cargo\.lock''',
+  # Milestone 12: release PUBLIC keys the app trusts for updates (public by design; private keys never enter git).
+  '''apps/desktop/src-tauri/release-keys\.json''',
+  # A throwaway key's public half and signatures made with it (the private half was deleted after use).
+  '''crates/update/tests/fixtures/tauri-cli/.*''',
+  # This file: the rules below name the private-key headers they look for.
+  '''\.gitleaks\.toml''',
 ]
 
 # Milestone 10: this project's own secret formats, so a leaked one is found even where the generic rules are quiet.
@@ -58,3 +64,11 @@ id = "standard-webhooks-secret"
 description = "Webhook signing secret (Standard Webhooks whsec_)"
 regex = '''whsec_[A-Za-z0-9+/]{43}='''
 keywords = ["whsec_"]
+
+# Milestone 12: a Tauri / minisign release signing key (the private half), as text or as the base64 file
+# `tauri signer generate` writes. It belongs only in the owner's offline copy and the `release` environment.
+[[rules]]
+id = "tauri-release-signing-key"
+description = "Tauri (minisign) private signing key"
+regex = '''(?:(?:rsign|minisign) encrypted secret key|dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5|dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5)'''
+keywords = ["encrypted secret key", "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu", "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWdu"]

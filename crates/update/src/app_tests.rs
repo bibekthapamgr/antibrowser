@@ -786,3 +786,61 @@ fn downloads_folder_is_cleaned_except_the_kept_file() {
     left.sort();
     assert_eq!(left, vec!["keep.exe", "state.json"]);
 }
+
+// ------------------------------------------------------------------------------------------------ real Tauri CLI
+/// The release tooling end to end with a throwaway key: the manifest built by scripts/release/channel-manifest.mjs
+/// and signed by `tauri signer sign` (tauri-cli 2.12.2), and an installer signed with `--app-version 0.12.1`. Guards
+/// the formats the release job produces (scripts/release/release.test.mjs checks the same files from Node).
+#[test]
+fn a_release_made_by_the_release_tooling_verifies_and_installs() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tauri-cli");
+    let read = |n: &str| std::fs::read(dir.join(n)).expect(n);
+    let text = |n: &str| String::from_utf8(read(n)).expect(n).trim().to_owned();
+    let keys = ReleaseKeys::parse(
+        &serde_json::json!({ "keys": [{ "key_id": "177C013A0535F941",
+            "public_key": text("throwaway.key.pub"),
+            "not_before": "2026-10-01", "not_after": "2027-12-31" }] })
+        .to_string(),
+    )
+    .expect("keys");
+    let now = parse_utc("2026-10-15T08:00:00Z").expect("now");
+    let m = verify_channel_manifest(&read("stable.json"), &text("stable.json.sig"), &keys, now)
+        .expect("manifest");
+    assert_eq!(m.sequence, 38_600_000_001);
+    let a = evaluate(&m, "stable", "0.12.0", "windows-x64", None, now).expect("evaluate");
+    let offer = a.offer.expect("offer");
+    assert_eq!(offer.version, "0.12.1");
+
+    // The installer the manifest names, served by a host: downloaded and verified (size, SHA-256, signature bound
+    // to 0.12.1 and the file name).
+    let exe = read("Project.Browser_0.12.1_x64-setup.exe");
+    let host = MemTransport {
+        files: HashMap::from([(offer.artifact.url.clone(), exe)]),
+        fail_after: Mutex::new(None),
+        ignore_range: false,
+        opens: Mutex::new(vec![]),
+    };
+    let tmp = tempfile::tempdir().expect("tmp");
+    let d = download_verified(
+        &host,
+        &keys,
+        &offer,
+        tmp.path(),
+        now,
+        &AtomicBool::new(false),
+        &mut |_, _| {},
+    )
+    .expect("download");
+    assert_eq!(d.version, "0.12.1");
+
+    // The manifest's signature does not cover other bytes, and a key past its validity is refused.
+    let mut changed = read("stable.json");
+    let last = changed.len() - 3;
+    changed[last] ^= 1;
+    assert!(verify_channel_manifest(&changed, &text("stable.json.sig"), &keys, now).is_err());
+    let later = parse_utc("2028-01-02").expect("later");
+    assert!(matches!(
+        verify_channel_manifest(&read("stable.json"), &text("stable.json.sig"), &keys, later),
+        Err(AppUpdateError::KeyExpired(_))
+    ));
+}

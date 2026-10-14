@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "product": "project-browser-manager",
+  "channel": "stable",
+  "sequence": 38600000001,
+  "issued_at": "2026-10-14T00:00:00Z",
+  "expires_at": "2027-01-12T00:00:00Z",
+  "paused": false,
+  "minimum_version": null,
+  "revoked_versions": [],
+  "revoked_runtime_sha256": [],
+  "release": {
+    "version": "0.12.1",
+    "published_at": "2026-10-14T00:00:00Z",
+    "notes_url": "https://github.com/bibekthapamgr/antibrowser/releases/tag/desktop-v0.12.1",
+    "artifacts": [
+      {
+        "platform": "windows-x64",
+        "kind": "nsis",
+        "url": "https://github.com/bibekthapamgr/antibrowser/releases/download/desktop-v0.12.1/Project.Browser_0.12.1_x64-setup.exe",
+        "sha256": "09ecb6ebc8bcefc733f6f2ec44f791abeed6a99edf0cc31519637898aebd52d8",
+        "size_bytes": 100,
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQitUVUZPZ0Y4Rnh3SzBCSUx5bHJIOENxMmIyN0NQYmZQZXMzb2xGRU1UUXlPZVQ2bHVkU0xSMkpUZ2dZUUVYYUZhdEkyaTRFTE1tZlV3QW9IZFQyZFdyWG15VFVXNEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTYwNTQ2CWZpbGU6UHJvamVjdC5Ccm93c2VyXzAuMTIuMV94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4xMi4xCmRDaGwvQkZtRkprVk1PaHUzV3Z4bFNrK01YS1NDQXNsN0QxeGdDdzRxS0U5RTU1VEhJUTllb2NIeFU0aVdCVDZsck9ibFJHZFhaS2xpNkpsQTdUM0NBPT0K"
+      }
+    ]
+  }
+}

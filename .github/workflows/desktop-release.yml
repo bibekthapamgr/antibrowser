@@ -1,0 +1,355 @@
+name: desktop release
+
+# Signed manager updates (milestone 12, ADR-0019). Step-by-step use, recovery and the emergency actions are in
+# docs/security/update-runbook.md.
+#
+#  release  build this commit's version (the version in tauri.conf.json), sign it and offer it on a channel
+#  promote  offer another channel's release, unchanged (the same signed files), e.g. canary → stable
+#  pause    stop offering updates on a channel (a release under investigation); resume undoes it
+#  revoke   mark app versions and browser runtime archives as known-bad: never offered or installed, a manager
+#           running one says it must be updated, a revoked runtime is not opened; never touches customer data
+#  minimum  every manager below this version says it must be updated
+#  refresh  re-sign the channel manifests (they expire after 90 days so a frozen copy cannot be replayed forever)
+#
+# Keys: the build jobs have no secrets. Only the `publish` job runs in the protected `release` environment (required
+# reviewer, main branch only), which holds TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD. It
+# checks every signature it made against apps/desktop/src-tauri/release-keys.json (what the shipped app trusts)
+# before anything is published. OS code signing: Windows installers are unsigned until a certificate is bought
+# (planned: a cloud signing service called from this job); macOS bundles are signed ad hoc (no Apple Developer
+# account), so they are not notarized.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do (see the top of desktop-release.yml)"
+        type: choice
+        options: [release, promote, pause, resume, revoke, minimum, refresh]
+        default: release
+      channel:
+        description: "Channel"
+        type: choice
+        options: [canary, stable, dev]
+        default: canary
+      version:
+        description: "release: this commit's app version · minimum: the lowest version still allowed"
+        required: false
+      from:
+        description: "promote: the channel whose release is copied"
+        type: choice
+        options: [canary, dev, stable]
+        default: canary
+      versions:
+        description: "revoke: app versions, comma-separated (e.g. 0.12.1,0.12.2)"
+        required: false
+      runtime_sha256:
+        description: "revoke: browser runtime archive SHA-256 values, comma-separated"
+        required: false
+      reason:
+        description: "pause, revoke, minimum: why (kept in the release notes and the run summary)"
+        required: false
+  schedule:
+    # Monthly re-signing of every channel (waits for the release approval; that approval is also the reminder).
+    - cron: "23 7 1 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: check the request
+    runs-on: ubuntu-24.04
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      channels: ${{ steps.plan.outputs.channels }}
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+      - id: plan
+        env:
+          ACTION: ${{ github.event_name == 'schedule' && 'refresh' || inputs.action }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          FROM: ${{ inputs.from }}
+          VERSIONS: ${{ inputs.versions }}
+          RUNTIME_SHA256: ${{ inputs.runtime_sha256 }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=desktop release::$1"; exit 1; }
+          node -e '
+            const k = require("./apps/desktop/src-tauri/release-keys.json");
+            if (!k.keys.length) { console.log("::error title=No release key::apps/desktop/src-tauri/release-keys.json is empty, so the app would trust no release. Add the release public key first (docs/security/update-runbook.md, first-time setup)."); process.exit(1); }'
+          [ "$GITHUB_REF" = "refs/heads/main" ] || fail "run this from main"
+          build=false
+          channels="$CHANNEL"
+          case "$ACTION" in
+            release)
+              [ -n "$VERSION" ] || fail "release: give the version"
+              node scripts/release/set-version.mjs --check "$VERSION" || fail "set the version with scripts/release/set-version.mjs and push first"
+              if [ "$CHANNEL" = stable ] && [[ "$VERSION" == *-* ]]; then fail "stable takes only plain versions (promote a tested canary release instead)"; fi
+              build=true ;;
+            promote)
+              [ "$FROM" != "$CHANNEL" ] || fail "promote from another channel" ;;
+            pause|resume) ;;
+            revoke)
+              [ -n "$VERSIONS$RUNTIME_SHA256" ] || fail "revoke: give versions and/or runtime SHA-256 values" ;;
+            minimum)
+              [ -n "$VERSION" ] || fail "minimum: give the version" ;;
+            refresh)
+              [ "${{ github.event_name }}" = schedule ] && channels="dev canary stable" ;;
+            *) fail "unknown action $ACTION" ;;
+          esac
+          case "$ACTION" in pause|revoke|minimum) [ -n "$REASON" ] || fail "$ACTION: say why (reason)";; esac
+          {
+            echo "action=$ACTION"
+            echo "channels=$channels"
+            echo "version=$VERSION"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+          echo "### $ACTION · $channels ${VERSION:+· $VERSION}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build (${{ matrix.target }}, no secrets)
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: windows-latest, target: windows-x64, bundles: "nsis" }
+          - { os: macos-14, target: macos-arm64, bundles: "app,dmg" }
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - uses: Swatinem/rust-cache@v2
+        with: { key: release }
+      - name: Build
+        shell: bash
+        working-directory: apps/desktop
+        env:
+          CI: "true"
+        run: |
+          # macOS: one consistent ad-hoc signature over the bundle (no Apple Developer account; see the runbook).
+          [ "${{ matrix.target }}" = macos-arm64 ] && export APPLE_SIGNING_IDENTITY="-"
+          ../../scripts/ci/annotate.sh "tauri build ${{ matrix.target }}" pnpm tauri build --ci --bundles ${{ matrix.bundles }}
+      - name: Name the release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          if [ "${{ matrix.target }}" = windows-x64 ]; then
+            src=$(ls target/release/bundle/nsis/*-setup.exe | head -1)
+            cp "$src" "out/Project.Browser_${VERSION}_x64-setup.exe"
+          else
+            cd target/release/bundle/macos
+            app=$(ls -d *.app | head -1)
+            codesign --verify --deep --strict "$app"
+            /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Contents/Info.plist" | grep -qx "$VERSION"
+            # The updater archive: exactly one .app at the top, no AppleDouble files.
+            COPYFILE_DISABLE=1 tar -czf "$GITHUB_WORKSPACE/out/Project.Browser_${VERSION}_aarch64.app.tar.gz" "$app"
+            cd "$GITHUB_WORKSPACE"
+            cp "$(ls target/release/bundle/dmg/*.dmg | head -1)" "out/Project.Browser_${VERSION}_aarch64.dmg"
+          fi
+          cd out && (sha256sum * 2>/dev/null || shasum -a 256 *) | tee "../SHA256SUMS.${{ matrix.target }}"
+          mv "../SHA256SUMS.${{ matrix.target }}" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: sign and publish (release environment)
+    needs: [plan, build]
+    if: ${{ always() && needs.plan.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write      # GitHub Releases
+      id-token: write      # provenance and SBOM attestations
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACTION: ${{ needs.plan.outputs.action }}
+      CHANNELS: ${{ needs.plan.outputs.channels }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      FROM: ${{ inputs.from }}
+      VERSIONS: ${{ inputs.versions }}
+      RUNTIME_SHA256: ${{ inputs.runtime_sha256 }}
+      REASON: ${{ inputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - name: Install the Tauri CLI only (locked versions, no install scripts in the job that holds the key)
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @pb/desktop
+
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.build == 'true'
+        with: { pattern: release-*, path: dist, merge-multiple: true }
+
+      - name: Check the built files against the build jobs' checksums
+        if: needs.plan.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          cd dist
+          cat SHA256SUMS.* | sha256sum -c -
+          rm SHA256SUMS.*
+          ls -l
+
+      - name: Fetch and verify the current channel manifests
+        run: |
+          set -euo pipefail
+          mkdir -p current
+          extra=""
+          [ "$ACTION" = promote ] && extra="$FROM"
+          for ch in $CHANNELS $extra; do
+            if gh release download "channel-$ch" -p "$ch.json" -p "$ch.json.sig" -D current --clobber 2>/dev/null; then
+              node scripts/release/verify.mjs manifest "current/$ch.json" --channel "$ch"
+            else
+              echo "$ch: no manifest yet"
+            fi
+          done
+
+      - name: Sign the release files
+        if: needs.plan.outputs.build == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error title=No signing key::The release environment has no TAURI_SIGNING_PRIVATE_KEY secret."; exit 1; }
+          if gh release view "desktop-v$VERSION" >/dev/null 2>&1; then
+            echo "::error title=Version already released::desktop-v$VERSION exists. Published files never change: set a new version."
+            exit 1
+          fi
+          for f in dist/*_x64-setup.exe dist/*.app.tar.gz; do
+            pnpm --filter @pb/desktop exec tauri signer sign --app-version "$VERSION" "$GITHUB_WORKSPACE/$f" >/dev/null
+            node scripts/release/verify.mjs file "$f" --version "$VERSION"
+          done
+
+      - name: Build and sign the channel manifests
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p manifests
+          # Strictly increasing across runs and attempts (run ids only grow).
+          seq=$(( GITHUB_RUN_ID * 10 + GITHUB_RUN_ATTEMPT ))
+          for ch in $CHANNELS; do
+            cur=(--none)
+            [ -f "current/$ch.json" ] && cur=(--current "current/$ch.json")
+            case "$ACTION" in
+              release) extra=(--version "$VERSION" --artifacts dist) ;;
+              promote) [ -f "current/$FROM.json" ] || { echo "::error::$FROM has no manifest"; exit 1; }; extra=(--from "current/$FROM.json") ;;
+              revoke)  extra=(--versions "$VERSIONS" --runtime-sha256 "$RUNTIME_SHA256") ;;
+              minimum) extra=(--version "$VERSION") ;;
+              refresh) [ -f "current/$ch.json" ] || { echo "$ch: nothing to refresh"; continue; }; extra=() ;;
+              *) extra=() ;;
+            esac
+            node scripts/release/channel-manifest.mjs "$ACTION" --channel "$ch" --sequence "$seq" "${cur[@]}" "${extra[@]}" --out "manifests/$ch.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            pnpm --filter @pb/desktop exec tauri signer sign "$GITHUB_WORKSPACE/manifests/$ch.json" >/dev/null
+            files=()
+            [ "$ACTION" = release ] && files=(--files dist)
+            node scripts/release/verify.mjs manifest "manifests/$ch.json" --channel "$ch" --min-sequence "$seq" "${files[@]}"
+          done
+
+      - name: Software bill of materials (CycloneDX)
+        if: needs.plan.outputs.build == 'true'
+        uses: anchore/sbom-action@0b82b0b1a22399a1c542d4d656f70cd903571b5c # v0.21.1
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: dist/project-browser-${{ needs.plan.outputs.version }}.sbom.cdx.json
+          upload-artifact: false
+
+      - name: Checksums and provenance record
+        if: needs.plan.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/release/release-record.mjs dist "$VERSION" "$CHANNELS"
+          cat dist/SHA256SUMS
+
+      - name: Build provenance attestation
+        if: needs.plan.outputs.build == 'true'
+        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
+        with:
+          subject-path: |
+            dist/*.exe
+            dist/*.app.tar.gz
+            dist/*.dmg
+
+      - name: SBOM attestation
+        if: needs.plan.outputs.build == 'true'
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-path: |
+            dist/*.exe
+            dist/*.app.tar.gz
+          sbom-path: dist/project-browser-${{ needs.plan.outputs.version }}.sbom.cdx.json
+
+      - name: Publish the release
+        if: needs.plan.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          pre=(--prerelease)
+          [ "$CHANNELS" = stable ] && pre=()
+          gh release create "desktop-v$VERSION" "${pre[@]}" --target "$GITHUB_SHA" \
+            --title "Project Browser $VERSION" --notes-file dist/RELEASE_NOTES.md \
+            dist/*.exe dist/*.exe.sig dist/*.app.tar.gz dist/*.app.tar.gz.sig dist/*.dmg \
+            dist/SHA256SUMS dist/provenance.json dist/*.sbom.cdx.json
+
+      - name: Publish the channel manifests
+        run: |
+          set -euo pipefail
+          for ch in $CHANNELS; do
+            [ -f "manifests/$ch.json" ] || continue
+            if ! gh release view "channel-$ch" >/dev/null 2>&1; then
+              gh release create "channel-$ch" --prerelease --target "$GITHUB_SHA" --title "Update channel: $ch" \
+                --notes "Signed update manifest of the $ch channel, read by Project Browser to find updates. Not an installer: download releases named desktop-v…"
+            fi
+            # The signature first: an app that reads in between sees the old manifest with the new signature and
+            # simply fails that one check (it never accepts a mismatch).
+            gh release upload "channel-$ch" "manifests/$ch.json.sig" "manifests/$ch.json" --clobber
+            echo "published channel-$ch/$ch.json" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Mark revoked releases
+        if: needs.plan.outputs.action == 'revoke' && inputs.versions != ''
+        run: |
+          set -euo pipefail
+          for v in ${VERSIONS//,/ }; do
+            if gh release view "desktop-v$v" >/dev/null 2>&1; then
+              notes=$(gh release view "desktop-v$v" --json body -q .body)
+              printf '**REVOKED** on %s: %s\n\nDo not install this version. Its files are kept for investigation.\n\n%s\n' \
+                "$(date -u +%Y-%m-%d)" "$REASON" "$notes" > revoked-notes.md
+              gh release edit "desktop-v$v" --prerelease --title "REVOKED: Project Browser $v" --notes-file revoked-notes.md
+            fi
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "Requested by @${{ github.actor }}; reason: ${REASON:-—}"
+            echo "Runbook: docs/security/update-runbook.md"
+          } >> "$GITHUB_STEP_SUMMARY"
