@@ -85,6 +85,14 @@ export function tauriBackend(): Backend {
       restore: (profileId, snapshotId, asCopy) =>
         call('sync_restore', snapshotId ? { profileId, snapshotId, asCopy } : { profileId, asCopy }),
       restoreHere: (orgId, orgProfileId, name) => call('sync_restore_here', { orgId, orgProfileId, name }),
+      copies: (orgId) => call('workspace_copies', { orgId }),
+      prepare: (orgId, orgProfileId, name, proxyId) =>
+        call(
+          'workspace_profile_prepare',
+          proxyId ? { orgId, orgProfileId, name, proxyId } : { orgId, orgProfileId, name },
+        ),
+      openWorkspaceProfile: (orgId, orgProfileId, name) =>
+        call('workspace_profile_open', { orgId, orgProfileId, name }),
     },
     team: {
       status: (profileId) => call('get_team_status', { profileId }),

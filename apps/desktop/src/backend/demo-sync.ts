@@ -8,9 +8,16 @@
  * organization profile, which has a backup made on another computer), `conflict` (with `linked`: this computer's copy
  * is based on no version, so its first backup conflicts), `syncoffline` (uploads wait for the connection).
  */
-import type { EventPayload } from '@pb/contracts/ipc';
+import type { EventPayload, Started } from '@pb/contracts/ipc';
 import type { DemoCloudSync } from './demo-cloud.ts';
-import type { ConflictChoice, OrgLink, ProfileView, SyncRepository, SyncStatus } from './types.ts';
+import type {
+  ConflictChoice,
+  OrgLink,
+  ProfileView,
+  SyncRepository,
+  SyncStatus,
+  WorkspaceCopy,
+} from './types.ts';
 
 interface LocalState {
   synced_version: number;
@@ -40,6 +47,10 @@ export function demoSync(deps: {
   changed: () => void;
   /** The phase of this computer's shared session of a profile (milestone 08), if any. */
   teamPhase?: (id: string) => string | null;
+  /** R3: the current view of a local profile; opening it (lease first); its proxy on this computer. */
+  view?: (id: string) => ProfileView;
+  launch?: (id: string) => Promise<Started>;
+  assignProxy?: (id: string, proxyId: string) => Promise<ProfileView>;
 }): SyncRepository & {
   afterCleanClose(id: string): void;
   /** A shared session's closing backup (milestone 08): how it ended, or `waiting` for the connection. */
@@ -48,6 +59,8 @@ export function demoSync(deps: {
   seed(id: string, syncedVersion: number): void;
 } {
   const local = new Map<string, LocalState>();
+  /** First downloads ("restore here"): org profile → the local copy being restored (linked when done). */
+  const here = new Map<string, string>();
   const stateOf = (id: string): LocalState => {
     let s = local.get(id);
     if (!s) {
@@ -244,6 +257,26 @@ export function demoSync(deps: {
     if (running(s)) throw err('SYNC_BUSY', 'A backup or restore of this profile is still in progress.');
   };
 
+  const viewOf = (id: string): ProfileView => {
+    if (!deps.view) throw err('INTERNAL', 'Not available in this preview.');
+    return deps.view(id);
+  };
+  const launch = (id: string): Promise<Started> => {
+    if (!deps.launch) throw err('INTERNAL', 'Not available in this preview.');
+    return deps.launch(id);
+  };
+  const localCopy = async (orgId: string, orgProfileId: string): Promise<string | null> => {
+    const l = (await deps.links(orgId)).find((x) => x.org_profile_id === orgProfileId);
+    if (l) {
+      try {
+        if (!viewOf(l.local_profile_id).trashed_at) return l.local_profile_id;
+      } catch {
+        /* removed */
+      }
+    }
+    return here.get(`${orgId}/${orgProfileId}`) ?? null;
+  };
+
   return {
     status,
     async backupNow(id) {
@@ -326,8 +359,65 @@ export function demoSync(deps: {
           'This organization profile has no backup yet. Back it up from the computer that has it first.',
         );
       const p = deps.create(name, null);
-      void restore(p.id, orgId, orgProfileId, null, true, false);
+      here.set(`${orgId}/${orgProfileId}`, p.id);
+      void restore(p.id, orgId, orgProfileId, null, true, false).finally(() =>
+        here.delete(`${orgId}/${orgProfileId}`),
+      );
       return p;
+    },
+    async copies(orgId) {
+      const out: WorkspaceCopy[] = [];
+      const seen = new Set<string>();
+      const add = async (orgProfileId: string, localId: string) => {
+        if (seen.has(orgProfileId)) return;
+        let profile: ProfileView;
+        try {
+          profile = viewOf(localId);
+        } catch {
+          return; // removed meanwhile
+        }
+        if (profile.trashed_at) return;
+        seen.add(orgProfileId);
+        out.push({ org_profile_id: orgProfileId, profile, sync: await status(localId) });
+      };
+      for (const l of await deps.links(orgId)) await add(l.org_profile_id, l.local_profile_id);
+      for (const [k, localId] of here) {
+        const [o, prf] = k.split('/');
+        if (o === orgId && prf) await add(prf, localId);
+      }
+      return out;
+    },
+    async prepare(orgId, orgProfileId, name, proxyId) {
+      const existing = await localCopy(orgId, orgProfileId);
+      if (existing) return viewOf(existing);
+      let made: ProfileView;
+      if (deps.cloud.head(orgId, orgProfileId).snapshot) {
+        made = await this.restoreHere(orgId, orgProfileId, name);
+      } else {
+        if (deps.cloud.profileName(orgId, orgProfileId) === null)
+          throw err('SYNC_FORBIDDEN', 'This profile is not shared with you, or it was removed.');
+        made = deps.create(name, null);
+        deps.cloud.link(made.id, orgId, orgProfileId);
+        deps.changed();
+      }
+      if (proxyId && deps.assignProxy) return deps.assignProxy(made.id, proxyId);
+      return viewOf(made.id);
+    },
+    async openWorkspaceProfile(orgId, orgProfileId, name) {
+      const view = await this.prepare(orgId, orgProfileId, name);
+      const isRestoring = () => {
+        const s = local.get(view.id);
+        return !!s && s.job?.kind === 'restore' && running(s);
+      };
+      if (!isRestoring()) {
+        const started = await launch(view.id);
+        return { local_profile_id: view.id, operation_id: started.operation_id, restoring: false };
+      }
+      void (async () => {
+        while (isRestoring()) await new Promise((r) => setTimeout(r, 100));
+        if (await linkOf(view.id)) await launch(view.id).catch(() => undefined);
+      })();
+      return { local_profile_id: view.id, operation_id: null, restoring: true };
     },
     async closingBackup(id) {
       const link = await requireLink(id);

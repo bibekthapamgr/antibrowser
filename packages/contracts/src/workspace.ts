@@ -83,13 +83,13 @@ export const ProfileFolder = Type.Object(
 // ---------------------------------------------------------------- feature settings
 /**
  * Known per-workspace settings with their defaults. Unknown keys are refused; a value must match its schema.
- *   ui.unified_profiles  the R3 single Profiles view (off until R3 ships; the rollback switch of the R1 migration)
+ *   ui.unified_profiles  the R3 single Profiles view (on since R3, ADR-0022; off is the rollback switch of R1/R3)
  *   modules.agency       client dashboards, tasks and bookmarks (hidden by default for new workspaces; on where
  *                        data exists, see ADR-0020)
  *   modules.automation   developer tools (API tokens, jobs, webhooks) shown in the UI
  */
 export const FEATURE_SETTINGS = {
-  'ui.unified_profiles': { schema: Type.Boolean(), default: false },
+  'ui.unified_profiles': { schema: Type.Boolean(), default: true },
   'modules.agency': { schema: Type.Boolean(), default: false },
   'modules.automation': { schema: Type.Boolean(), default: false },
 } as const;

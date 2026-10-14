@@ -41,6 +41,7 @@ import {
   expectedVersion,
   OrgParams,
   PROFILE_COLUMNS,
+  PROFILE_FOLDER,
   ProfileParams,
   type ProfileRow,
   pageOf,
@@ -55,6 +56,12 @@ const ProfileQuery = Type.Object(
       Type.String({ minLength: 1, maxLength: 120, description: 'Name contains (case-insensitive).' }),
     ),
     client_id: Type.Optional(Type.String({ pattern: ID_PATTERN('cli') })),
+    folder_id: Type.Optional(
+      Type.String({
+        pattern: `^(none|${ID_PATTERN('fld').slice(1, -1)})$`,
+        description: 'R3: profiles in this folder, or `none` for profiles in no folder.',
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -79,7 +86,8 @@ export function profileRoutes(app: App, deps: Deps): void {
       config: { tokens: true },
       schema: {
         tags: ['profiles'],
-        description: 'Profiles the caller can see, oldest first; optional name search and client filter.',
+        description:
+          'Profiles the caller can see, oldest first; optional name search, client and (R3) folder filter.',
         params: OrgParams,
         querystring: ProfileQuery,
         response: { 200: Page(Profile), ...errors },
@@ -91,12 +99,17 @@ export function profileRoutes(app: App, deps: Deps): void {
       const window = pageWindow(req.query);
       const rows = await withTx(deps.pool, access, async (c) => {
         const result = await c.query<ProfileRow>(
-          `select ${PROFILE_COLUMNS}, ${inUseJson('p', '$5')} as in_use,
+          `select ${PROFILE_COLUMNS}, ${PROFILE_FOLDER}, ${inUseJson('p', '$5')} as in_use,
                   ${capabilitiesSql(access, 'p', '$5')} as capabilities
              from profiles p
             where p.org_id = $1 and p.deleted_at is null and ${profileVisible(access, 'p', '$5')}
               and ($6::text is null or p.name ilike $6)
               and ($7::text is null or p.client_id = $7)
+              and ($8::text is null
+                   or ($8 = 'none' and not exists (select 1 from profile_folders pf
+                                                     where pf.org_id = p.org_id and pf.profile_id = p.id))
+                   or exists (select 1 from profile_folders pf
+                               where pf.org_id = p.org_id and pf.profile_id = p.id and pf.folder_id = $8))
               and ($2::timestamptz is null or (p.created_at, p.id) > ($2::timestamptz, $3::text))
             order by p.created_at, p.id
             limit $4`,
@@ -108,6 +121,7 @@ export function profileRoutes(app: App, deps: Deps): void {
             access.userId,
             req.query.q ? likePattern(req.query.q) : null,
             req.query.client_id ?? null,
+            req.query.folder_id ?? null,
           ],
         );
         return result.rows;
@@ -154,6 +168,21 @@ export function profileRoutes(app: App, deps: Deps): void {
         );
         const row = rows[0];
         if (!row) throw new ApiError('INTERNAL', 'Profile was not created');
+        // R3: created straight into a folder (its explicit folder grants reach it, as previewed when granted).
+        row.folder_id = null;
+        if (req.body.folder_id) {
+          const f = await c.query(
+            'select 1 from folders where id = $1 and org_id = $2 and archived_at is null',
+            [req.body.folder_id, access.orgId],
+          );
+          if (!f.rowCount) throw new ApiError('NOT_FOUND', 'Folder not found');
+          await c.query('insert into profile_folders (org_id, profile_id, folder_id) values ($1, $2, $3)', [
+            access.orgId,
+            id,
+            req.body.folder_id,
+          ]);
+          row.folder_id = req.body.folder_id;
+        }
         await audit(c, changeEntry(access, 'profile.created', 'profile', id));
         await appendEvent(c, {
           orgId: access.orgId,
@@ -315,7 +344,7 @@ export function profileRoutes(app: App, deps: Deps): void {
           access,
           req.params.profileId,
           'profile.read',
-          `${PROFILE_COLUMNS}, ${inUseJson('p', '$3')} as in_use, ${capabilitiesSql(access, 'p', '$3')} as capabilities`,
+          `${PROFILE_COLUMNS}, ${PROFILE_FOLDER}, ${inUseJson('p', '$3')} as in_use, ${capabilitiesSql(access, 'p', '$3')} as capabilities`,
         ),
       );
       return reply.header('etag', `"${profile.version}"`).send(profile);
@@ -366,7 +395,7 @@ export function profileRoutes(app: App, deps: Deps): void {
               version = p.version + 1,
               updated_at = now()
             where p.id = $1 and p.org_id = $2
-            returning ${PROFILE_COLUMNS}`,
+            returning ${PROFILE_COLUMNS}, ${PROFILE_FOLDER}`,
           [
             req.params.profileId,
             access.orgId,

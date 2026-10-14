@@ -1234,6 +1234,22 @@ export const MigrationReport = Type.Object({
 });
 export type MigrationReport = Static<typeof MigrationReport>;
 
+// ---------------------------------------------------------------- R3: unified profiles (ADR-0022)
+/** This computer's copy of an account workspace profile (by the R1 identity mapping). */
+export const WorkspaceCopy = Type.Object({
+  org_profile_id: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+  profile: ProfileView,
+  sync: SyncStatus,
+});
+export type WorkspaceCopy = Static<typeof WorkspaceCopy>;
+export const WorkspaceOpen = Type.Object({
+  local_profile_id: Type.String({ pattern: ProfileIdPattern }),
+  /** The launch; null while the newest backup downloads first (the launch follows by itself). */
+  operation_id: Nullable(Type.String()),
+  restoring: Type.Boolean(),
+});
+export type WorkspaceOpen = Static<typeof WorkspaceOpen>;
+
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
   create_workspace: {
@@ -1729,6 +1745,31 @@ export const COMMANDS = {
   migration_report: {
     args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
     result: MigrationReport,
+  },
+  // R3: unified profiles of an account workspace (ADR-0022). Errors: CLOUD_*, SYNC_FORBIDDEN, SYNC_ALREADY_HERE,
+  // PROFILE_RESTORING, PROFILE_RUNNING, SESSION_* and the usual launch errors.
+  workspace_copies: {
+    args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
+    result: Type.Array(WorkspaceCopy, { maxItems: 10000 }),
+  },
+  /** A copy on this computer: restored from the newest backup, or empty when there is none; optional local proxy. */
+  workspace_profile_prepare: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      orgProfileId: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+      name: Type.String({ minLength: 1, maxLength: 120 }),
+      proxyId: Type.Optional(Type.String({ pattern: ProxyIdPattern })),
+    }),
+    result: ProfileView,
+  },
+  /** Opens it through the session lease (downloading it first if needed). */
+  workspace_profile_open: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      orgProfileId: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
+      name: Type.String({ minLength: 1, maxLength: 120 }),
+    }),
+    result: WorkspaceOpen,
   },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 

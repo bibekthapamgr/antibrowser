@@ -19016,6 +19016,1406 @@
           }
         }
       }
+    },
+    "workspace_copies": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "org_profile_id",
+            "profile",
+            "sync"
+          ],
+          "properties": {
+            "org_profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "profile": {
+              "type": "object",
+              "required": [
+                "id",
+                "workspace_id",
+                "name",
+                "client_id",
+                "client_name",
+                "client_colour",
+                "tags",
+                "notes",
+                "favourite",
+                "archived_at",
+                "trashed_at",
+                "purge_after",
+                "template_id",
+                "proxy_id",
+                "proxy_label",
+                "fail_closed",
+                "network",
+                "privacy",
+                "sync_status",
+                "team_phase",
+                "version",
+                "created_at",
+                "updated_at",
+                "status",
+                "state",
+                "pid",
+                "adopted",
+                "ready",
+                "window_open",
+                "force_available",
+                "start_urls",
+                "download_dir",
+                "permissions",
+                "runtime_version",
+                "last_error",
+                "crash_count",
+                "last_started_at",
+                "last_clean_shutdown_at",
+                "last_backup_at"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "workspace_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "client_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "client_name": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "client_colour": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-f]{6}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^tag_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 40
+                      }
+                    }
+                  },
+                  "maxItems": 20
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "favourite": {
+                  "type": "boolean"
+                },
+                "archived_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "trashed_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Set while the profile is in the trash."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "purge_after": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "When a trashed profile is deleted permanently."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "template_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "proxy_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "proxy_label": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Name of the assigned proxy."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "fail_closed": {
+                  "type": "boolean",
+                  "description": "With a proxy: block traffic that cannot go through it."
+                },
+                "network": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "last_error",
+                    "direct_connections",
+                    "restart_required"
+                  ],
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "off",
+                        "ready",
+                        "active",
+                        "failing",
+                        "bypassing",
+                        "lost"
+                      ],
+                      "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+                    },
+                    "last_error": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "direct_connections": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "restart_required": {
+                      "type": "boolean",
+                      "description": "Settings changed while the profile was open."
+                    }
+                  }
+                },
+                "privacy": {
+                  "type": "object",
+                  "properties": {
+                    "webrtc": {
+                      "enum": [
+                        "default",
+                        "public_interface_only",
+                        "disable_non_proxied_udp"
+                      ]
+                    },
+                    "block_third_party_cookies": {
+                      "type": "boolean"
+                    },
+                    "do_not_track": {
+                      "type": "boolean"
+                    },
+                    "language": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 16
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "window": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "width",
+                            "height"
+                          ],
+                          "properties": {
+                            "width": {
+                              "type": "integer",
+                              "minimum": 800,
+                              "maximum": 3840
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 600,
+                              "maximum": 2160
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "text_size": {
+                      "enum": [
+                        "default",
+                        "large",
+                        "larger"
+                      ]
+                    },
+                    "reduced_motion": {
+                      "type": "boolean"
+                    },
+                    "preset": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "sync_status": {
+                  "enum": [
+                    "local_only",
+                    "shared"
+                  ],
+                  "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+                },
+                "team_phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "opening",
+                        "running",
+                        "closing",
+                        "handing_off",
+                        "pending",
+                        "lost",
+                        "taken_over",
+                        "revoked"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "closed",
+                    "starting",
+                    "running",
+                    "stopping",
+                    "crashed",
+                    "recovering"
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "stopped",
+                    "starting",
+                    "running",
+                    "stopping",
+                    "crashed",
+                    "recovering"
+                  ]
+                },
+                "pid": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "adopted": {
+                  "type": "boolean",
+                  "description": "Running since before this manager instance started."
+                },
+                "ready": {
+                  "type": "boolean",
+                  "description": "The browser has started its helper processes."
+                },
+                "window_open": {
+                  "type": "boolean",
+                  "description": "At least one page (renderer) is open."
+                },
+                "force_available": {
+                  "type": "boolean",
+                  "description": "Graceful close timed out; an explicit force close is offered."
+                },
+                "start_urls": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "pattern": "^https?://"
+                  },
+                  "maxItems": 10
+                },
+                "download_dir": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "permissions": {
+                  "type": "object",
+                  "required": [
+                    "camera",
+                    "microphone",
+                    "location"
+                  ],
+                  "properties": {
+                    "camera": {
+                      "enum": [
+                        "ask",
+                        "block",
+                        "allow"
+                      ]
+                    },
+                    "microphone": {
+                      "enum": [
+                        "ask",
+                        "block",
+                        "allow"
+                      ]
+                    },
+                    "location": {
+                      "enum": [
+                        "ask",
+                        "block",
+                        "allow"
+                      ]
+                    }
+                  }
+                },
+                "runtime_version": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_error": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "crash_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "last_started_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_clean_shutdown_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_backup_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "sync": {
+              "type": "object",
+              "required": [
+                "profile_id",
+                "linked",
+                "org_id",
+                "org_profile_id",
+                "synced_version",
+                "synced_at",
+                "dirty",
+                "auto_backup",
+                "conflict_head",
+                "job",
+                "progress",
+                "restoring",
+                "local_backup",
+                "local_backups_sealed"
+              ],
+              "properties": {
+                "profile_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "linked": {
+                  "type": "boolean"
+                },
+                "org_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "org_profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "synced_version": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "synced_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "dirty": {
+                  "type": "boolean"
+                },
+                "auto_backup": {
+                  "type": "boolean"
+                },
+                "conflict_head": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "job": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "kind",
+                        "state",
+                        "error_code",
+                        "updated_at",
+                        "version",
+                        "head_version",
+                        "portability"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "upload",
+                            "restore"
+                          ]
+                        },
+                        "state": {
+                          "enum": [
+                            "local_dirty",
+                            "preparing",
+                            "uploading",
+                            "verifying",
+                            "committed",
+                            "conflict",
+                            "failed",
+                            "canceled",
+                            "planning",
+                            "downloading",
+                            "opening",
+                            "ready",
+                            "done",
+                            "failed",
+                            "canceled"
+                          ]
+                        },
+                        "error_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "head_version": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "portability": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "supported",
+                                "sign_in_required",
+                                "unsupported"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "progress": {
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "done",
+                    "total",
+                    "waiting_for"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "sealing",
+                            "uploading",
+                            "downloading",
+                            "opening"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "done": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "waiting_for": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "restoring": {
+                  "type": "boolean"
+                },
+                "local_backup": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "created_at_unix",
+                        "sealed",
+                        "openable",
+                        "bytes",
+                        "files"
+                      ],
+                      "properties": {
+                        "created_at_unix": {
+                          "type": "integer"
+                        },
+                        "sealed": {
+                          "type": "boolean"
+                        },
+                        "openable": {
+                          "type": "boolean"
+                        },
+                        "bytes": {
+                          "type": "integer"
+                        },
+                        "files": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "local_backups_sealed": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "maxItems": 10000
+      }
+    },
+    "workspace_profile_prepare": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "orgProfileId",
+          "name"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "orgProfileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "proxyId": {
+            "type": "string",
+            "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "client_id",
+          "client_name",
+          "client_colour",
+          "tags",
+          "notes",
+          "favourite",
+          "archived_at",
+          "trashed_at",
+          "purge_after",
+          "template_id",
+          "proxy_id",
+          "proxy_label",
+          "fail_closed",
+          "network",
+          "privacy",
+          "sync_status",
+          "team_phase",
+          "version",
+          "created_at",
+          "updated_at",
+          "status",
+          "state",
+          "pid",
+          "adopted",
+          "ready",
+          "window_open",
+          "force_available",
+          "start_urls",
+          "download_dir",
+          "permissions",
+          "runtime_version",
+          "last_error",
+          "crash_count",
+          "last_started_at",
+          "last_clean_shutdown_at",
+          "last_backup_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_colour": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9a-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^tag_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 40
+                }
+              }
+            },
+            "maxItems": 20
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "favourite": {
+            "type": "boolean"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trashed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Set while the profile is in the trash."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purge_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "When a trashed profile is deleted permanently."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^tpl_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proxy_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proxy_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Name of the assigned proxy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fail_closed": {
+            "type": "boolean",
+            "description": "With a proxy: block traffic that cannot go through it."
+          },
+          "network": {
+            "type": "object",
+            "required": [
+              "status",
+              "last_error",
+              "direct_connections",
+              "restart_required"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "off",
+                  "ready",
+                  "active",
+                  "failing",
+                  "bypassing",
+                  "lost"
+                ],
+                "description": "off: no proxy; ready: proxy assigned, profile closed; failing: traffic blocked; bypassing: fail-closed is off and traffic goes direct; lost: reopen the profile."
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "direct_connections": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "restart_required": {
+                "type": "boolean",
+                "description": "Settings changed while the profile was open."
+              }
+            }
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "webrtc": {
+                "enum": [
+                  "default",
+                  "public_interface_only",
+                  "disable_non_proxied_udp"
+                ]
+              },
+              "block_third_party_cookies": {
+                "type": "boolean"
+              },
+              "do_not_track": {
+                "type": "boolean"
+              },
+              "language": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timezone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 800,
+                        "maximum": 3840
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 600,
+                        "maximum": 2160
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text_size": {
+                "enum": [
+                  "default",
+                  "large",
+                  "larger"
+                ]
+              },
+              "reduced_motion": {
+                "type": "boolean"
+              },
+              "preset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "sync_status": {
+            "enum": [
+              "local_only",
+              "shared"
+            ],
+            "description": "shared: linked to an organization profile (backed up there, opened through a session lease). Details: get_sync_status, get_team_status."
+          },
+          "team_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "opening",
+                  "running",
+                  "closing",
+                  "handing_off",
+                  "pending",
+                  "lost",
+                  "taken_over",
+                  "revoked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "closed",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "state": {
+            "enum": [
+              "stopped",
+              "starting",
+              "running",
+              "stopping",
+              "crashed",
+              "recovering"
+            ]
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "adopted": {
+            "type": "boolean",
+            "description": "Running since before this manager instance started."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The browser has started its helper processes."
+          },
+          "window_open": {
+            "type": "boolean",
+            "description": "At least one page (renderer) is open."
+          },
+          "force_available": {
+            "type": "boolean",
+            "description": "Graceful close timed out; an explicit force close is offered."
+          },
+          "start_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https?://"
+            },
+            "maxItems": 10
+          },
+          "download_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permissions": {
+            "type": "object",
+            "required": [
+              "camera",
+              "microphone",
+              "location"
+            ],
+            "properties": {
+              "camera": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "microphone": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              },
+              "location": {
+                "enum": [
+                  "ask",
+                  "block",
+                  "allow"
+                ]
+              }
+            }
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "crash_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_clean_shutdown_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_backup_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "workspace_profile_open": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "orgProfileId",
+          "name"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "orgProfileId": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "local_profile_id",
+          "operation_id",
+          "restoring"
+        ],
+        "properties": {
+          "local_profile_id": {
+            "type": "string",
+            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restoring": {
+            "type": "boolean"
+          }
+        }
+      }
     }
   },
   "events": {

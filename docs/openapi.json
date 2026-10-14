@@ -4673,6 +4673,120 @@
                     "minimum": 1,
                     "maximum": 30,
                     "default": 7
+                  },
+                  "access": {
+                    "type": "object",
+                    "required": [
+                      "scope"
+                    ],
+                    "properties": {
+                      "scope": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "include_future"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "all"
+                                ]
+                              },
+                              "include_future": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "folder_id",
+                              "include_future"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "folder"
+                                ]
+                              },
+                              "folder_id": {
+                                "type": "string",
+                                "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              "include_future": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "profile_ids"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "profiles"
+                                ]
+                              },
+                              "profile_ids": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                                },
+                                "minItems": 1,
+                                "maxItems": 500,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "client_id"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "client"
+                                ]
+                              },
+                              "client_id": {
+                                "type": "string",
+                                "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "launch",
+                            "edit",
+                            "backup_download"
+                          ]
+                        },
+                        "uniqueItems": true,
+                        "maxItems": 3
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -8256,6 +8370,20 @@
                               }
                             ]
                           },
+                          "folder_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "all_profiles": {
+                            "type": "boolean"
+                          },
                           "capabilities": {
                             "type": "array",
                             "items": {
@@ -8474,7 +8602,7 @@
         "tags": [
           "grants"
         ],
-        "description": "Grant a member one client (with all its profiles) or one profile.",
+        "description": "Grant a member one client (with all its profiles), one profile, one folder (every profile in it, now and later: R3) or the whole workspace (every profile, now and later: R3).",
         "requestBody": {
           "required": true,
           "content": {
@@ -8525,6 +8653,68 @@
                       "profile_id": {
                         "type": "string",
                         "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "launch",
+                            "edit",
+                            "backup_download"
+                          ]
+                        },
+                        "uniqueItems": true,
+                        "maxItems": 3
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "user_id",
+                      "folder_id"
+                    ],
+                    "properties": {
+                      "user_id": {
+                        "type": "string",
+                        "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      "folder_id": {
+                        "type": "string",
+                        "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      "capabilities": {
+                        "type": "array",
+                        "items": {
+                          "enum": [
+                            "launch",
+                            "edit",
+                            "backup_download"
+                          ]
+                        },
+                        "uniqueItems": true,
+                        "maxItems": 3
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "user_id",
+                      "all_profiles"
+                    ],
+                    "properties": {
+                      "user_id": {
+                        "type": "string",
+                        "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      "all_profiles": {
+                        "type": "boolean",
+                        "enum": [
+                          true
+                        ]
                       },
                       "capabilities": {
                         "type": "array",
@@ -8602,6 +8792,20 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "all_profiles": {
+                      "type": "boolean"
                     },
                     "capabilities": {
                       "type": "array",
@@ -8902,6 +9106,20 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "all_profiles": {
+                      "type": "boolean"
                     },
                     "capabilities": {
                       "type": "array",
@@ -9307,12 +9525,805 @@
         }
       }
     },
+    "/v1/orgs/{orgId}/access/preview": {
+      "post": {
+        "tags": [
+          "grants"
+        ],
+        "description": "What an access choice reaches now (count and up to 50 names) and whether it follows future profiles. Nothing is granted. Shown before inviting someone or changing a member’s access.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "scope"
+                ],
+                "properties": {
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "include_future"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "all"
+                            ]
+                          },
+                          "include_future": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "folder_id",
+                          "include_future"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "folder"
+                            ]
+                          },
+                          "folder_id": {
+                            "type": "string",
+                            "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "include_future": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "profile_ids"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "profiles"
+                            ]
+                          },
+                          "profile_ids": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "minItems": 1,
+                            "maxItems": 500,
+                            "uniqueItems": true
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "client_id"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "client"
+                            ]
+                          },
+                          "client_id": {
+                            "type": "string",
+                            "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "launch",
+                        "edit",
+                        "backup_download"
+                      ]
+                    },
+                    "uniqueItems": true,
+                    "maxItems": 3
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile_count",
+                    "profiles",
+                    "includes_future",
+                    "capabilities"
+                  ],
+                  "properties": {
+                    "profile_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "profiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "includes_future": {
+                      "type": "boolean"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "launch",
+                          "edit",
+                          "backup_download"
+                        ]
+                      },
+                      "uniqueItems": true,
+                      "maxItems": 3
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/members/{userId}/access": {
+      "put": {
+        "tags": [
+          "grants"
+        ],
+        "description": "Sets a member’s access in one step: their grants are replaced by the chosen scope and capabilities (members and viewers; admins and owners reach everything). Sessions the member may no longer hold end.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "scope"
+                ],
+                "properties": {
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "include_future"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "all"
+                            ]
+                          },
+                          "include_future": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "folder_id",
+                          "include_future"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "folder"
+                            ]
+                          },
+                          "folder_id": {
+                            "type": "string",
+                            "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "include_future": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "profile_ids"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "profiles"
+                            ]
+                          },
+                          "profile_ids": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "minItems": 1,
+                            "maxItems": 500,
+                            "uniqueItems": true
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "client_id"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "client"
+                            ]
+                          },
+                          "client_id": {
+                            "type": "string",
+                            "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "launch",
+                        "edit",
+                        "backup_download"
+                      ]
+                    },
+                    "uniqueItems": true,
+                    "maxItems": 3
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "userId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "user_id",
+                          "client_id",
+                          "profile_id",
+                          "capabilities",
+                          "created_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^grt_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "user_id": {
+                            "type": "string",
+                            "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "client_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^cli_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "profile_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "folder_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "all_profiles": {
+                            "type": "boolean"
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "launch",
+                                "edit",
+                                "backup_download"
+                              ]
+                            },
+                            "uniqueItems": true,
+                            "maxItems": 3
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "UTC, RFC 3339"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/orgs/{orgId}/profiles": {
       "get": {
         "tags": [
           "profiles"
         ],
-        "description": "API tokens: yes (scopes apply). Profiles the caller can see, oldest first; optional name search and client filter.",
+        "description": "API tokens: yes (scopes apply). Profiles the caller can see, oldest first; optional name search, client and (R3) folder filter.",
         "parameters": [
           {
             "schema": {
@@ -9353,6 +10364,16 @@
             "in": "query",
             "name": "client_id",
             "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^(none|fld_[0-9A-HJKMNP-TV-Z]{26})$"
+            },
+            "in": "query",
+            "name": "folder_id",
+            "required": false,
+            "description": "R3: profiles in this folder, or `none` for profiles in no folder."
           },
           {
             "schema": {
@@ -9559,6 +10580,17 @@
                             },
                             "uniqueItems": true,
                             "maxItems": 3
+                          },
+                          "folder_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "created_at": {
                             "type": "string",
@@ -9801,6 +10833,17 @@
                   "notes": {
                     "type": "string",
                     "maxLength": 2000
+                  },
+                  "folder_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -10005,6 +11048,17 @@
                       },
                       "uniqueItems": true,
                       "maxItems": 3
+                    },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -10998,6 +12052,17 @@
                       "uniqueItems": true,
                       "maxItems": 3
                     },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "created_at": {
                       "type": "string",
                       "format": "date-time",
@@ -11439,6 +12504,17 @@
                       },
                       "uniqueItems": true,
                       "maxItems": 3
+                    },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -37509,6 +38585,17 @@
                                 "uniqueItems": true,
                                 "maxItems": 3
                               },
+                              "folder_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "created_at": {
                                 "type": "string",
                                 "format": "date-time",
@@ -37934,6 +39021,17 @@
                       },
                       "uniqueItems": true,
                       "maxItems": 3
+                    },
+                    "folder_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "created_at": {
                       "type": "string",
@@ -40959,7 +42057,7 @@
         "tags": [
           "profiles"
         ],
-        "description": "Puts a profile in a folder, or in none. Needs profile.update on the profile (a grant’s edit capability). Moving a profile never changes who can see or open it.",
+        "description": "Puts a profile in a folder, or in none. Needs profile.update on the profile (a grant’s edit capability). R3: when folder grants make the move change who can reach the profile, it also needs grants.manage (see …/folder-impact first); people who lose access have their open sessions ended.",
         "requestBody": {
           "required": true,
           "content": {
@@ -41033,6 +42131,290 @@
                           "type": "null"
                         }
                       ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orgs/{orgId}/profiles/{profileId}/folder-impact": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "description": "R3: who would gain or lose access if the profile moved to this folder (or to none), because of folder grants, and whether the caller may make that move.",
+        "parameters": [
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^fld_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "none"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "folder_id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "orgId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "in": "path",
+            "name": "profileId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "gains",
+                    "losses",
+                    "allowed"
+                  ],
+                  "properties": {
+                    "gains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "user_id",
+                          "display_name"
+                        ],
+                        "properties": {
+                          "user_id": {
+                            "type": "string",
+                            "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "losses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "user_id",
+                          "display_name"
+                        ],
+                        "properties": {
+                          "user_id": {
+                            "type": "string",
+                            "pattern": "^usr_[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "allowed": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false

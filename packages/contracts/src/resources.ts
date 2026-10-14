@@ -569,6 +569,8 @@ export const Profile = Type.Object(
     in_use: Type.Optional(Type.Union([ProfileInUse, Type.Null()])),
     /** Milestone 08: what the caller may do with this profile (from role and grants). Lists and single reads only. */
     capabilities: Type.Optional(Capabilities),
+    /** R3: the folder it is in (null: none). Lists, single reads, create and update answers. */
+    folder_id: Type.Optional(Type.Union([Id('fld'), Type.Null()])),
     created_at: Timestamp,
     updated_at: Timestamp,
   },
@@ -592,6 +594,8 @@ export const ProfileCreate = Type.Object(
     name: Label,
     client_id: Type.Optional(Type.Union([Id('cli'), Type.Null()])),
     notes: Type.Optional(Type.String({ maxLength: 2000 })),
+    /** R3: created straight into this folder (optional). */
+    folder_id: Type.Optional(Type.Union([Id('fld'), Type.Null()])),
   },
   { additionalProperties: false },
 );

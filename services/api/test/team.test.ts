@@ -287,3 +287,29 @@ describe('folders and future profiles', () => {
     expect(cross.json().code).toBe('NOT_FOUND');
   });
 });
+
+describe('profiles and their folder', () => {
+  it('creates a profile straight into a folder, shows its folder and filters the list by folder', async () => {
+    const folder = await newFolder('Created into');
+    const res = await call('POST', o('/profiles'), owner, { name: 'Filed at once', folder_id: folder });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().folder_id).toBe(folder);
+    const id = res.json().id as string;
+    expect((await call('GET', o(`/profiles/${id}`), owner)).json().folder_id).toBe(folder);
+    const inFolder = await call('GET', o(`/profiles?folder_id=${folder}`), owner);
+    expect((inFolder.json().items as { id: string }[]).map((p) => p.id)).toEqual([id]);
+    const none = await call('GET', o('/profiles?folder_id=none&limit=100'), owner);
+    expect(
+      (none.json().items as { id: string; folder_id: string | null }[]).every((p) => p.folder_id === null),
+    ).toBe(true);
+    expect((none.json().items as { id: string }[]).some((p) => p.id === id)).toBe(false);
+    // A folder of another workspace (or none at all) is not found, and nothing is created.
+    const missing = await call('POST', o('/profiles'), owner, {
+      name: 'Nowhere',
+      folder_id: `fld_${'0'.repeat(26)}`,
+    });
+    expect(missing.statusCode).toBe(404);
+    const bad = await call('GET', o('/profiles?folder_id=elsewhere'), owner);
+    expect(bad.statusCode).toBe(400);
+  });
+});

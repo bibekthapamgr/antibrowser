@@ -1315,6 +1315,62 @@ pub fn migration_report<Rt: Runtime>(
     state.migration_report(&org_id)
 }
 
+// ------------------------------------------------------------------------------- R3 unified profiles (ADR-0022)
+
+/// This computer's copies of an account workspace's profiles (run state, shared session, backup/restore status).
+#[tauri::command]
+pub fn workspace_copies<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    org_id: String,
+) -> R<Vec<crate::unified::WorkspaceCopy>> {
+    caller(&webview)?;
+    state.workspace_copies(&org_id)
+}
+
+/// A copy of a workspace profile on this computer (restored from its newest backup, or empty when it has none yet),
+/// optionally with a proxy of this computer.
+#[tauri::command]
+pub async fn workspace_profile_prepare<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    org_profile_id: String,
+    name: String,
+    proxy_id: Option<String>,
+) -> R<ProfileView> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let proxy = proxy_id
+            .as_deref()
+            .map(ProxyId::parse)
+            .transpose()
+            .map_err(|_| ipc::INVALID_ARGUMENT)?;
+        state.workspace_profile_prepare(&org_id, &org_profile_id, &name, proxy.as_ref())
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Opens a workspace profile through the session lease (downloading it first when it is not on this computer).
+#[tauri::command]
+pub async fn workspace_profile_open<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    org_profile_id: String,
+    name: String,
+) -> R<crate::unified::WorkspaceOpen> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        state.workspace_profile_open(&org_id, &org_profile_id, &name)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
 // ------------------------------------------------------------------------------- automation (milestone 10)
 
 /// Automation on this computer: the organizations it runs jobs for, whether Playwright connections are allowed,

@@ -5,9 +5,9 @@ Desktop multi-profile browser for **authorized business account work**: isolated
 > Separate profiles separate **stored website data**. They do not make profiles appear as different devices or networks, and this product makes no invisibility or ban-prevention claims.
 
 **Status:** milestones 01–12 delivered (desktop 0.12.0; signed updates, off-site backups and a tested restore for the
-test server); the revised roadmap (R1–R7) is under way. Latest: [docs/milestone-r2-status.md](docs/milestone-r2-status.md) —
-self-service accounts and automatic onboarding ([ADR-0021](docs/adr/0021-self-service-accounts-and-onboarding.md)).
-Earlier: [R1](docs/milestone-r1-status.md) (product contracts and safe migration), [12](docs/milestone-12-status.md) (production security, [docs/security/](docs/security/report.md)), [01](docs/milestone-01-status.md),
+test server); the revised roadmap (R1–R7) is under way. Latest: [docs/milestone-r3-status.md](docs/milestone-r3-status.md) —
+unified desktop profiles and simple team sharing ([ADR-0022](docs/adr/0022-unified-profiles-and-team-sharing.md)).
+Earlier: [R2](docs/milestone-r2-status.md) (self-service accounts), [R1](docs/milestone-r1-status.md) (product contracts and safe migration), [12](docs/milestone-12-status.md) (production security, [docs/security/](docs/security/report.md)), [01](docs/milestone-01-status.md),
 [02](docs/milestone-02-status.md), [03](docs/milestone-03-status.md), [04](docs/milestone-04-status.md),
 [05](docs/milestone-05-status.md), [06](docs/milestone-06-status.md), [07](docs/milestone-07-status.md),
 [08](docs/milestone-08-status.md), [09](docs/milestone-09-status.md), [10](docs/milestone-10-status.md),

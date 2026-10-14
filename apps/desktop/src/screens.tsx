@@ -158,6 +158,22 @@ export function SettingsScreen(props: {
       </fieldset>
 
       <fieldset>
+        <legend>Profiles view</legend>
+        <label className="choice">
+          <input
+            type="checkbox"
+            checked={setting(app, 'ui.unified_profiles')?.value === false}
+            onChange={(e) => update('ui.unified_profiles', !e.target.checked)}
+          />
+          Use the earlier screens (Organization, Account, Health, Downloads)
+        </label>
+        <p className="muted small">
+          A fallback while you get used to the new layout. Your profiles, workspaces and access do not change
+          either way.
+        </p>
+      </fieldset>
+
+      <fieldset>
         <legend>When quitting with profiles open</legend>
         {(
           [

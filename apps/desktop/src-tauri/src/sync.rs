@@ -1404,6 +1404,21 @@ pub(crate) fn restoring_here(store: &LocalStore, org_profile_id: &str) -> Option
         })
 }
 
+/// R3: every unfinished first download ("restore here") of an organization: (organization profile, local copy).
+pub(crate) fn restoring_here_of(store: &LocalStore, org_id: &str) -> Vec<(String, ProfileId)> {
+    store
+        .open_sync_jobs()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|j| match load_job(j) {
+            Some(Job::Restore(r)) if r.link_after && r.org_id == org_id => {
+                Some((r.org_profile_id, j.local_profile_id.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 impl AppState {
     /// Cancels one unfinished job (best effort; the server expires what it does not hear about).
     pub(crate) fn cancel_job_quietly(&self, store: &LocalStore, local: &ProfileId, job_id: &str) {

@@ -53,6 +53,9 @@ export const PROFILE_COLUMNS = `p.id, p.org_id, p.name, p.client_id, p.notes, p.
   ${ts('p.last_snapshot_at')} as last_snapshot_at, ${ts('p.created_at')} as created_at,
   ${ts('p.updated_at')} as updated_at`;
 export type ProfileRow = Profile;
+/** R3: the profile's folder (lists, single reads, create and update answers). */
+export const PROFILE_FOLDER = `(select pf.folder_id from profile_folders pf
+  where pf.org_id = p.org_id and pf.profile_id = p.id) as folder_id`;
 
 /** Client columns; every query aliases the table as `c`. */
 export const CLIENT_COLUMNS = `c.id, c.org_id, c.name, c.colour, ${ts('c.archived_at')} as archived_at, c.version,

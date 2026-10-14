@@ -67,7 +67,10 @@ async function open(
     if (/Content Security Policy/i.test(m.text())) cspErrors.push(m.text());
   });
   page.on('pageerror', (e) => cspErrors.push(String(e)));
-  await page.goto(`${server.url}?demo=${encodeURIComponent(demo)}`, { waitUntil: 'networkidle0' });
+  // Milestone 02-12 suites run on the earlier screens (the R3 rollback switch, `classic`); R3 suites ask for
+  // `unified`, the default navigation.
+  const mode = demo.includes('unified') ? demo : `${demo} classic`.trim();
+  await page.goto(`${server.url}?demo=${encodeURIComponent(mode)}`, { waitUntil: 'networkidle0' });
   await page.waitForSelector('h1');
   return page;
 }
@@ -265,6 +268,60 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     },
   },
   { name: 'org-profiles-in-use', demo: 'signedin inuse', prepare: (p) => openOrg(p) },
+  // R3: the default navigation.
+  {
+    name: 'r3-profiles',
+    demo: 'unified signedin linked',
+    prepare: async (p) => {
+      await p.waitForSelector('table.workspace-profiles');
+    },
+  },
+  {
+    name: 'r3-this-computer',
+    demo: 'unified',
+    prepare: async (p) => {
+      await p.waitForSelector('[aria-label="About this view"]');
+    },
+  },
+  {
+    name: 'r3-member-profiles',
+    demo: 'unified member fifty',
+    prepare: async (p) => {
+      await waitWorkspaceRows(p);
+    },
+  },
+  {
+    name: 'r3-create-profile',
+    demo: 'unified signedin',
+    prepare: async (p) => {
+      await waitWorkspaceRows(p);
+      await clickButton(p, '#main', 'New profile');
+      await p.waitForSelector('[role=dialog] form');
+    },
+  },
+  {
+    name: 'r3-team',
+    demo: 'unified signedin',
+    nav: 'Team',
+    prepare: async (p) => {
+      await p.waitForSelector('#org-members-title');
+    },
+  },
+  {
+    name: 'r3-invite-wizard',
+    demo: 'unified signedin fifty',
+    nav: 'Team',
+    prepare: async (p) => {
+      await clickButton(p, '#main', 'Invite someone…');
+      await p.waitForSelector('[role=dialog] input[type=email]');
+      await p.type('[role=dialog] input[type=email]', 'mate@example.test');
+      await clickButton(p, '[role=dialog]', 'Next');
+      await clickButton(p, '[role=dialog]', 'Next');
+      await p.waitForSelector('[role=dialog] .pick-list');
+    },
+  },
+  { name: 'r3-subscription', demo: 'unified signedin', nav: 'Subscription' },
+  { name: 'r3-settings', demo: 'unified signedin', nav: 'Settings' },
   { name: 'welcome', demo: 'fresh' },
   { name: 'profiles-empty', demo: 'rows:0' },
   { name: 'profiles', demo: '' },
@@ -2059,5 +2116,287 @@ describe('app updates (milestone 12)', () => {
       await forged.$$eval('.updates button', (bs) => bs.map((b) => b.textContent?.trim())),
     ).not.toContain('Download 0.12.1');
     await forged.close();
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ R3 (ADR-0022)
+/** Names of the rows of the unified Profiles list. */
+const unifiedRows = (page: Page) =>
+  page.$$eval('table.workspace-profiles tbody th[scope=row]', (ths) => ths.map((t) => t.textContent?.trim()));
+/** The status shown for one row. */
+const rowStatusOf = (page: Page, name: string) =>
+  page.$$eval(
+    'table.workspace-profiles tbody tr',
+    (trs, n) =>
+      trs.find((tr) => tr.querySelector('th')?.textContent?.trim() === n)?.querySelector('.badge')
+        ?.textContent,
+    name,
+  );
+const waitRowStatus = (page: Page, name: string, status: string) =>
+  page.waitForFunction(
+    (n, st) =>
+      [...document.querySelectorAll('table.workspace-profiles tbody tr')]
+        .find((tr) => tr.querySelector('th')?.textContent?.trim() === n)
+        ?.querySelector('.badge')
+        ?.textContent?.startsWith(st),
+    { timeout: 15_000 },
+    name,
+    status,
+  );
+async function clickChoice(page: Page, label: string) {
+  await page.$$eval(
+    '[role=dialog] label.choice',
+    (ls, l) =>
+      ls
+        .find((x) => x.textContent?.includes(l))
+        ?.querySelector('input')
+        ?.click(),
+    label,
+  );
+}
+const waitWorkspaceRows = (page: Page) =>
+  page.waitForFunction(
+    () =>
+      !!document.querySelector('table.workspace-profiles tbody tr') ||
+      !!document.querySelector('.empty-state'),
+    { timeout: 10_000 },
+  );
+
+describe('R3 unified profiles and simple team sharing', () => {
+  it('a fresh user signs up and reaches Create Profile without any organization, client or server setup', async () => {
+    const page = await open('unified fresh server');
+    // First run: no local-workspace step; signed out, the local view says what it is and offers an account.
+    await page.waitForFunction(() => document.querySelector('[aria-label="About this view"]'));
+    expect(await text(page, '.sidebar nav')).toBe('Profiles\nProxies\nTeam\nSubscription\nSettings');
+    await clickButton(page, '#main', 'Sign in or create an account');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Account');
+    await clickButton(page, '#main', 'Create account');
+    await page.waitForSelector('[role=dialog] input[maxlength="120"]');
+    await page.type('[role=dialog] input[maxlength="120"]', 'Bibek Studio');
+    await page.click('[role=dialog] label.check input');
+    await clickButton(page, '[role=dialog]', 'Create workspace');
+    await toastContains(page, 'Welcome! Bibek Studio is ready.');
+    // The new workspace's Profiles open at once, with New profile right there.
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    expect(await page.$eval('.workspace select', (s) => (s as HTMLSelectElement).value)).toMatch(/^org:/);
+    await clickButton(page, '#main', 'New profile');
+    await page.waitForSelector('[role=dialog] form');
+    const fields = await page.$$eval('[role=dialog] label', (ls) =>
+      ls.map((l) => l.childNodes[0]?.textContent?.trim()),
+    );
+    expect(fields).toEqual(['Name', 'Folder (optional)', 'Proxy on this computer (optional)']);
+    await page.type('[role=dialog] input', 'Shop admin');
+    await clickButton(page, '[role=dialog]', 'Create profile');
+    await toastContains(page, 'Profile “Shop admin” created.');
+    await waitRowStatus(page, 'Shop admin', 'Available');
+    // Opening goes through the session lease, then the browser on this computer.
+    await clickButton(page, '#main', 'Open Shop admin');
+    await waitRowStatus(page, 'Shop admin', 'Running');
+    await clickButton(page, '#main', 'Close Shop admin');
+    await waitRowStatus(page, 'Shop admin', 'Available');
+    await page.close();
+  });
+
+  it('an invitation shares exactly the chosen profiles, previewed first; Members open and use only', async () => {
+    const page = await open('unified signedin fifty');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    expect(await unifiedRows(page)).toHaveLength(50);
+    await goTo(page, 'Team');
+    await clickButton(page, '#main', 'Invite someone…');
+    await page.waitForSelector('[role=dialog] input[type=email]');
+    await page.type('[role=dialog] input[type=email]', 'mate@example.test');
+    await clickButton(page, '[role=dialog]', 'Next');
+    // The Member preset is the default: open and use only.
+    expect(await text(page, '[role=dialog]')).toContain(
+      'Cannot change their settings, download backups, delete, share or manage billing',
+    );
+    await clickButton(page, '[role=dialog]', 'Next');
+    await page.waitForSelector('[role=dialog] .pick-list input');
+    await page.$$eval('[role=dialog] .pick-list label', (labels) => {
+      for (const l of labels)
+        if (/^Profile (1[1-9]|20)$/.test(l.textContent?.trim() ?? ''))
+          (l.querySelector('input') as HTMLInputElement).click();
+    });
+    expect(await text(page, '[role=dialog]')).toContain('10 profiles selected');
+    await clickButton(page, '[role=dialog]', 'Preview access');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog] section')?.textContent?.includes('10 profiles'),
+    );
+    const preview = await text(page, '[role=dialog] section');
+    expect(preview).toContain(
+      'will reach 10 profiles (only these; not ones added later) and can open and use them.',
+    );
+    expect(preview).toContain('Profile 11');
+    expect(preview).not.toContain('Profile 21');
+    await clickButton(page, '[role=dialog]', 'Send invitation');
+    await page.waitForSelector('.notice input.mono');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('table.records')].some((t) =>
+        t.textContent?.includes('mate@example.test'),
+      ),
+    );
+    await page.close();
+  });
+
+  it('the teammate sees and opens only the 10 shared profiles, with no billing, export or sharing', async () => {
+    const page = await open('unified member fifty');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    const rows = await unifiedRows(page);
+    expect(rows).toHaveLength(10);
+    expect(rows.every((r) => /^Profile (1[1-9]|20)$/.test(r ?? ''))).toBe(true);
+    const buttons = await page.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim() ?? ''));
+    expect(buttons.some((b) => b.startsWith('Delete') || b.startsWith('Move'))).toBe(false);
+    expect(buttons).not.toContain('New profile');
+    await clickButton(page, '#main', 'Open Profile 12');
+    await waitRowStatus(page, 'Profile 12', 'Running');
+    await goTo(page, 'Subscription');
+    expect(await text(page, '#main')).toContain('managed by its owners and billing managers');
+    await goTo(page, 'Team');
+    expect(await page.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim()))).not.toContain(
+      'Invite someone…',
+    );
+    await page.close();
+  });
+
+  it('switching workspaces never shows the previous workspace’s rows', async () => {
+    const page = await open('unified signedin');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    expect(await unifiedRows(page)).toContain('North shop admin');
+    await page.evaluate(async () => {
+      const demo = (
+        window as unknown as {
+          __pbDemo: { account: { request(r: unknown): Promise<unknown> } };
+        }
+      ).__pbDemo;
+      await demo.account.request({
+        method: 'POST',
+        path: '/v1/organizations',
+        body: { name: 'Second shop' },
+      });
+    });
+    await goTo(page, 'Settings'); // reloads the account and its workspaces
+    await goTo(page, 'Profiles');
+    const second = await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll<HTMLOptionElement>('.workspace option')].find((o) =>
+          o.textContent?.startsWith('Second shop'),
+        )?.value,
+    );
+    // Record every row that appears after the switch starts.
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { __seen: string[] }).__seen = seen;
+      new MutationObserver(() => {
+        for (const th of document.querySelectorAll('table.workspace-profiles tbody th'))
+          seen.push(th.textContent ?? '');
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    await page.select('.workspace select', (await second.jsonValue()) as string);
+    await page.waitForFunction(() => document.querySelector('.empty-state'));
+    const seen = await page.evaluate(() => (window as unknown as { __seen: string[] }).__seen);
+    expect(seen.filter((x) => x.includes('North'))).toEqual([]);
+    expect(await text(page, '.toolbar__title p')).toContain('in Second shop');
+    await page.close();
+  });
+
+  it('a linked profile appears once and opens its earlier session here', async () => {
+    const page = await open('unified signedin linked');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    const rows = await unifiedRows(page);
+    expect(rows.filter((r) => r === 'North shop admin')).toHaveLength(1);
+    expect(rows).not.toContain('Shop admin'); // the local copy is the same row, not a second one
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('#main button')].some(
+        (b) => b.textContent?.trim() === 'Details of North shop admin',
+      ),
+    );
+    await clickButton(page, '#main', 'Open North shop admin');
+    await waitRowStatus(page, 'North shop admin', 'Running');
+    // The local-only view still has it (and only shows this computer's profiles).
+    const local = await page.$eval(
+      '.workspace select',
+      (s) => [...(s as HTMLSelectElement).options].find((o) => o.value.startsWith('local:'))?.value,
+    );
+    await page.select('.workspace select', local as string);
+    await page.waitForFunction(() => document.querySelector('[aria-label="About this view"]'));
+    await page.close();
+  });
+
+  it('recoverable states: a teammate has it open; the server cannot be reached', async () => {
+    const page = await open('unified signedin inuse');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    await waitWorkspaceRows(page);
+    await waitRowStatus(page, 'North shop admin', 'In use by teammate');
+    expect(await page.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim()))).toContain(
+      'Ask for it North shop admin',
+    );
+    await page.close();
+
+    const offline = await open('unified signedin cloudoffline');
+    await offline.waitForFunction(() => document.querySelector('h1')?.textContent === 'Profiles');
+    // Later answers come from the saved copy: marked, and nothing can be opened or changed from it.
+    await goTo(offline, 'Team');
+    await goTo(offline, 'Profiles');
+    // Either the saved copy (marked) or, with nothing saved yet, a plain message with "Try again".
+    await offline.waitForFunction(
+      () =>
+        document.querySelector('#main')?.textContent?.includes('Offline: showing') ||
+        document.querySelector('#main [role=alert]')?.textContent?.includes('cannot be reached'),
+      {
+        timeout: 10_000,
+      },
+    );
+    const open_ = await offline.$$eval('#main table.workspace-profiles button', (bs) =>
+      bs.filter((b) => b.textContent?.startsWith('Open ')).map((b) => (b as HTMLButtonElement).disabled),
+    );
+    expect(open_.every(Boolean)).toBe(true);
+    if (await offline.$('#main [role=alert]')) await clickButton(offline, '#main', 'Try again');
+    await offline.close();
+  });
+
+  it('moving a profile shows who gains or loses access before anything changes', async () => {
+    const page = await open('unified signedin');
+    await waitWorkspaceRows(page);
+    await clickButton(page, '#main', 'New folder');
+    await page.type('[role=dialog] input', 'Shops');
+    await clickButton(page, '[role=dialog]', 'Create folder');
+    await toastContains(page, 'Folder “Shops” created.');
+    // Sam (a Member) gets the folder, with profiles added later.
+    await goTo(page, 'Team');
+    await clickButton(page, '#main', 'Access… of Sam Operator');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('[role=dialog] label.choice')].some(
+        (l) => l.textContent?.includes('The profiles in a folder') && !l.querySelector('input')?.disabled,
+      ),
+    );
+    await clickChoice(page, 'The profiles in a folder');
+    await clickChoice(page, 'added to this folder later');
+    await clickButton(page, '[role=dialog]', 'Preview access');
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog] section')?.textContent?.includes('profiles added there later'),
+    );
+    await clickButton(page, '[role=dialog]', 'Save access');
+    await toastContains(page, 'access was changed');
+    await goTo(page, 'Profiles');
+    await waitWorkspaceRows(page);
+    await clickButton(page, '#main', 'Move… South support desk');
+    await page.select(
+      '[role=dialog] select',
+      (await page.$eval(
+        '[role=dialog] select',
+        (s) => [...(s as HTMLSelectElement).options].find((o) => o.textContent === 'Shops')?.value,
+      )) as string,
+    );
+    await page.waitForFunction(() =>
+      document.querySelector('[role=dialog] section')?.textContent?.includes('Gain access: Sam Operator'),
+    );
+    await clickButton(page, '[role=dialog]', 'Move');
+    await toastContains(page, 'South support desk was moved.');
+    await page.close();
   });
 });

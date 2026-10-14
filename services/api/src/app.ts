@@ -236,7 +236,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.14.0',
+        version: '0.15.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +

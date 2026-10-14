@@ -48,6 +48,8 @@ struct World {
     migration_runs: Vec<Value>,
     profile_limit: Option<u64>,
     created: u32,
+    /// R3: workspace profiles the signed-in person can reach (`GET /v1/orgs/{org}/profiles/{prf}`).
+    reachable: Vec<String>,
 }
 
 struct Mock {
@@ -425,6 +427,23 @@ fn route(req: &Req, base: &str, w: &mut World) -> (u16, Value) {
                 if dry { 200 } else { 201 },
                 json!({ "dry_run": dry, "clients": clients, "profiles": profiles }),
             )
+        }
+        ("GET", p)
+            if p.starts_with(&format!("/v1/orgs/{ORG}/profiles/prf_"))
+                && p.matches('/').count() == 5 =>
+        {
+            let id = p.rsplit('/').next().unwrap_or_default();
+            if w.reachable.iter().any(|r| r == id) {
+                (
+                    200,
+                    json!({ "id": id, "org_id": ORG, "name": "Shop", "version": 1 }),
+                )
+            } else {
+                (
+                    404,
+                    json!({ "code": "NOT_FOUND", "message": "Profile not found" }),
+                )
+            }
         }
         (_, p) if p.starts_with("/v1/") => (
             200,
@@ -1292,4 +1311,82 @@ fn a_build_default_server_is_offered_once_and_create_account_opens_registration(
     f.state
         .apply_default_server(None)
         .unwrap_or_else(|e| panic!("{e:?}"));
+}
+
+// ------------------------------------------------------------------------------------------------ R3 (ADR-0022)
+const NEW_PRF: &str = "prf_01J9ZSEED0R3NEW00000000000";
+const OTHER_PRF: &str = "prf_01J9ZSEED0R3XXX00000000000";
+
+fn copies(f: &Fixture) -> Vec<Value> {
+    ok(invoke(f, "workspace_copies", json!({ "orgId": ORG })))
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_new_workspace_profile_gets_one_empty_linked_copy_here_and_unreachable_ones_are_refused() {
+    let (f, mock, _ws, _ids) = migration_fixture(&[]);
+    // No backup exists yet (a profile just created in the workspace).
+    let server = pb_sync::fake::FakeServer::new(64 * 1024);
+    server.add_profile(ORG, NEW_PRF);
+    f.state
+        .use_sync_backend(Arc::new(server.client(DEVICE, &[ORG])));
+    mock.world().reachable.push(NEW_PRF.to_owned());
+
+    let view = ok(invoke(
+        &f,
+        "workspace_profile_prepare",
+        json!({ "orgId": ORG, "orgProfileId": NEW_PRF, "name": "Shop admin" }),
+    ));
+    let local = view["id"].as_str().unwrap_or_default().to_owned();
+    assert_eq!(view["name"], json!("Shop admin"));
+    let c = copies(&f);
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0]["org_profile_id"], json!(NEW_PRF));
+    assert_eq!(c[0]["profile"]["id"], json!(local));
+    assert_eq!(c[0]["sync"]["linked"], json!(true));
+
+    // Asking again (or opening) uses the same copy: never a second local profile for one workspace profile.
+    let again = ok(invoke(
+        &f,
+        "workspace_profile_prepare",
+        json!({ "orgId": ORG, "orgProfileId": NEW_PRF, "name": "Other name" }),
+    ));
+    assert_eq!(again["id"], json!(local));
+    assert_eq!(copies(&f).len(), 1);
+    assert_eq!(
+        ok(invoke(&f, "list_profiles", json!({})))
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+
+    // A profile the person cannot reach: refused, nothing created here.
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "workspace_profile_prepare",
+            json!({ "orgId": ORG, "orgProfileId": OTHER_PRF, "name": "Not mine" }),
+        ))
+        .as_deref(),
+        Some("SYNC_FORBIDDEN")
+    );
+    assert_eq!(copies(&f).len(), 1);
+    assert_eq!(
+        ok(invoke(&f, "list_profiles", json!({})))
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    // Malformed ids never reach the server.
+    assert_eq!(
+        code(&invoke(
+            &f,
+            "workspace_profile_prepare",
+            json!({ "orgId": ORG, "orgProfileId": "prf_../../x", "name": "x" }),
+        ))
+        .as_deref(),
+        Some("INVALID_ARGUMENT")
+    );
 }

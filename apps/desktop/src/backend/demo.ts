@@ -395,7 +395,13 @@ interface Planned {
   update?: { id: string; version: number };
 }
 
-export function demoBackend(mode = ''): Backend {
+export function demoBackend(requested = ''): Backend {
+  // R3: `classic` (the earlier screens) and `unified` combine with any other mode and are not part of it.
+  const classic = /(^|\s)classic(\s|$)/.test(requested);
+  const mode = requested
+    .split(/\s+/)
+    .filter((m) => m && m !== 'classic' && m !== 'unified')
+    .join(' ');
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const emit = <E extends EventName>(e: E, p: EventPayload<E>) => {
     for (const l of listeners.get(e) ?? []) l(p);
@@ -460,7 +466,13 @@ export function demoBackend(mode = ''): Backend {
     },
     'updates.channel': { key: 'updates.channel', value: 'stable', version: 0, ui_settable: true },
     'updates.automatic': { key: 'updates.automatic', value: true, version: 0, ui_settable: true },
-    'ui.unified_profiles': { key: 'ui.unified_profiles', value: false, version: 0, ui_settable: true },
+    // R3: on by default; `?demo=classic` shows the earlier screens (the rollback switch).
+    'ui.unified_profiles': {
+      key: 'ui.unified_profiles',
+      value: !classic,
+      version: 0,
+      ui_settable: true,
+    },
   };
   const ENUMS: Record<string, unknown[]> = {
     'proxies.allow_private_addresses': [true, false],
@@ -1325,6 +1337,9 @@ export function demoBackend(mode = ''): Backend {
     emit: (p) => emit('sync', p),
     changed: () => changed(),
     teamPhase: (pid) => teamHooks?.phase(pid) ?? null,
+    view: (pid) => view(find(pid)),
+    launch: (pid) => backend.profiles.launch(pid),
+    assignProxy: (pid, proxyId) => backend.network.assign(pid, proxyId, false, find(pid).version),
   });
   syncHooks = sync;
   const migration = demoMigration({

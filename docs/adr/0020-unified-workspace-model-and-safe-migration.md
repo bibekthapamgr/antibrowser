@@ -47,6 +47,8 @@ in the database. The permission matrix gains only `folders.manage` and `features
 - `folders` / `profile_folders` are optional organization of profiles inside a workspace (one folder per profile,
   position, colour, archive). They are **not a grant scope**: moving a profile between folders changes nobody's
   access, and nothing is ever granted "to a folder". Access stays on roles, client grants and profile grants.
+  *Superseded in part by [ADR-0022](0022-unified-profiles-and-team-sharing.md) (R3):* a folder grants only through an
+  explicit, previewed folder grant; a move that changes access shows the impact first and needs `grants.manage`.
 - Folders are **never auto-converted from clients**: a client is a business relationship with its own grants,
   dashboards and download folders. A workspace that wants folders creates them; a later helper may *offer* to create
   folders named after clients, with the grants left exactly as they were.

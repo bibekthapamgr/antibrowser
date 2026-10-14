@@ -183,7 +183,7 @@ describe('feature settings', () => {
     const before = (await get(`/v1/orgs/${org.id}/feature-settings`, owner)).json();
     expect(before.settings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: 'ui.unified_profiles', value: false, set: false, version: null }),
+        expect.objectContaining({ key: 'ui.unified_profiles', value: true, set: false, version: null }),
         expect.objectContaining({ key: 'modules.agency', value: false, set: false }),
       ]),
     );

@@ -1213,3 +1213,64 @@ ul.runs .pb-button {
 .row-actions .pb-button + .pb-button {
   margin-left: var(--pb-space-2);
 }
+
+/* ---------------------------------------------------------------- R3: unified profiles and team sharing */
+.workspace-filters {
+  align-items: flex-end;
+}
+.workspace-profiles td,
+.workspace-profiles th {
+  vertical-align: middle;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--pb-space-2);
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--pb-border-strong);
+  border-radius: var(--pb-radius, 6px);
+}
+.pick-list li + li {
+  margin-top: var(--pb-space-1);
+}
+.preview-list {
+  margin: 0;
+  padding-left: var(--pb-space-4);
+  max-height: 12rem;
+  overflow-y: auto;
+  columns: 2 14rem;
+}
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  font-size: var(--pb-text-sm);
+}
+.steps li {
+  counter-increment: step;
+  color: var(--pb-text-muted);
+}
+.steps li::before {
+  content: counter(step) ". ";
+}
+.steps li[aria-current="step"] {
+  color: inherit;
+  font-weight: 600;
+}
+.choice--block {
+  align-items: flex-start;
+}
+.settings-nav {
+  margin-bottom: 0;
+}
+@media (max-width: 960px) {
+  .workspace-profiles .cell-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

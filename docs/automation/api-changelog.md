@@ -5,6 +5,26 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.15.0 — 2026-10-15 (R3: unified profiles and simple team sharing)
+Added (see ADR-0022; nothing removed or renamed)
+- Grant scopes `folder_id` (a folder's profiles, including ones added later) and `all_profiles` (every profile of the
+  workspace, including ones added later) on `Grant` and `POST /orgs/{org}/grants`; exactly one scope per grant.
+- `POST /orgs/{org}/access/preview` (`members.manage`): what an access choice (`all` / `folder` / `profiles` / `client`,
+  with `include_future` for all and folder) reaches now, by name, and what it allows — before anything is granted.
+- `POST /orgs/{org}/invitations` accepts optional `access` (`{ scope, capabilities? }`, members and viewers only;
+  viewers never get capabilities); it is applied in the same transaction that accepts the invitation.
+- `PUT /orgs/{org}/members/{user}/access` (`grants.manage`): replaces an operator's or viewer's grants with one access
+  choice and ends sessions they may no longer hold (event `grant.access_set`).
+- `GET /orgs/{org}/profiles/{prf}/folder-impact?folder_id=fld_…|none`: who would gain or lose access by a move, and
+  whether the caller may make it.
+- `Profile.folder_id` in lists, single reads, create and update answers; `GET /orgs/{org}/profiles?folder_id=fld_…|none`;
+  optional `folder_id` when creating a profile.
+
+Changed (visible to clients)
+- `PUT /orgs/{org}/profiles/{prf}/folder`: a move that changes who can reach the profile needs `grants.manage`
+  (`403 FORBIDDEN`, `permission: grants.manage`) and ends the sessions of people who lose access.
+- The feature setting `ui.unified_profiles` defaults to `true` (the R3 desktop view; `false` is the rollback).
+
 ## 0.14.0 — 2026-10-15 (R2: self-service accounts and automatic onboarding)
 Added (see ADR-0021; nothing removed or renamed)
 - `GET /onboarding/status`, `POST /onboarding/complete`: onboarding decided by the server (invitations first, one

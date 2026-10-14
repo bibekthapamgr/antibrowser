@@ -51,13 +51,21 @@ ${rows.join('\n')}
 | Clients and profiles | ${ROLES.map((r) => SCOPE_TEXT[ROLE_SCOPE[r]]).join(' | ')} |
 
 A permission on a client or profile applies only inside that reach. **Granted only**: the member's permission grants name
-a whole client (all its profiles, including ones added later) or single profiles. Deny by default: no grant, no access.
+single profiles, a whole client (all its profiles, including ones added later), a folder or the whole workspace (R3,
+[ADR-0022](adr/0022-unified-profiles-and-team-sharing.md)). A folder or whole-workspace grant follows profiles added
+later — that is why it exists only when the person sharing chose "also profiles added later" in a preview; otherwise the
+profiles there at that moment are granted one by one. Deny by default: no grant, no access. One definition of what a grant
+covers (\`services/api/src/tenancy.ts\` \`grantCovers\`) is used for listing, opening (leases), automation and tokens.
+Moving a profile between folders that changes who reaches it needs \`grants.manage\`, and ends the sessions of people
+who lose it.
 
 ## Grant capabilities (milestone 08)
 
 Members who reach profiles through grants also need the capability for the action, in a grant that covers the profile
-("with \`launch\`" above). New operator grants get \`launch\` and \`backup_download\` unless the admin chooses; viewers'
-grants carry none. Permanent deletion, export and sharing (grants) are never grantable.
+("with \`launch\`" above). Access chosen with an invitation or on the Team page (R3) defaults to \`launch\` only (the
+"Member" preset: open and use); grants made one by one through \`POST /orgs/{org}/grants\` keep their earlier default
+(\`launch\` and \`backup_download\`) unless the admin chooses. Viewers' grants carry none. Permanent deletion, export,
+billing and sharing (grants) are never grantable.
 
 | Capability | Permissions it gates |
 |---|---|

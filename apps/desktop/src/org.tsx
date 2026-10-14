@@ -42,13 +42,13 @@ type Section =
   | 'billing'
   | 'activity'
   | 'settings';
-interface Page<T> {
+export interface Page<T> {
   items: T[];
   next_cursor: string | null;
 }
 
 /** Marks a screen whose data came from the offline cache. */
-function Stale({ at }: { at: string | null }) {
+export function Stale({ at }: { at: string | null }) {
   return (
     <p className="notice" role="status">
       Offline: showing information saved {at ? `at ${when(at)}` : 'earlier'}. Changes need a connection.
@@ -57,7 +57,12 @@ function Stale({ at }: { at: string | null }) {
 }
 
 /** Loads one API resource with offline fallback; `reload` refetches. */
-function useResource<T>(backend: Backend, path: string | null, notify: Notify, query?: [string, string][]) {
+export function useResource<T>(
+  backend: Backend,
+  path: string | null,
+  notify: Notify,
+  query?: [string, string][],
+) {
   const [data, setData] = useState<T | null>(null);
   const [stale, setStale] = useState<string | null | false>(false);
   const [nonce, setNonce] = useState(0);
@@ -174,7 +179,7 @@ export function OrganizationScreen(props: {
   );
 }
 
-interface SectionProps {
+export interface SectionProps {
   backend: Backend;
   orgId: string;
   role: Role;
@@ -540,7 +545,7 @@ function ProfileDialog(props: {
 }
 
 // ----------------------------------------------------------------------------- clients
-function ClientsSection(props: SectionProps) {
+export function ClientsSection(props: SectionProps) {
   const { backend, orgId, role, notify, offline } = props;
   const list = useResource<Page<OrgClient>>(backend, `/v1/orgs/${orgId}/clients`, notify, [['limit', '100']]);
   const [name, setName] = useState('');
@@ -726,7 +731,14 @@ function RenameDialog(props: {
 }
 
 // ----------------------------------------------------------------------------- members
-function MembersSection(props: SectionProps & { onLeft: () => void; onChanged: () => void }) {
+export function MembersSection(
+  props: SectionProps & {
+    onLeft: () => void;
+    onChanged: () => void;
+    /** R3: the Team page edits an operator's or viewer's profile access in one step. */
+    onEditAccess?: ((m: Member) => void) | undefined;
+  },
+) {
   const { backend, orgId, role, notify, offline, me } = props;
   const list = useResource<Page<Member>>(backend, `/v1/orgs/${orgId}/members`, notify, [['limit', '100']]);
   const [removing, setRemoving] = useState<Member | null>(null);
@@ -817,22 +829,36 @@ function MembersSection(props: SectionProps & { onLeft: () => void; onChanged: (
                   </td>
                   <td>{when(m.created_at)}</td>
                   <td>
-                    {m.user_id === me ? (
-                      <button
-                        type="button"
-                        className="pb-button"
-                        disabled={offline}
-                        onClick={() => setRemoving(m)}
-                      >
-                        Leave
-                      </button>
-                    ) : (
-                      editable && (
-                        <button type="button" className="pb-button" onClick={() => setRemoving(m)}>
-                          Remove<span className="pb-sr-only"> {m.display_name}</span>
+                    <div className="cell-actions">
+                      {props.onEditAccess &&
+                        can(role, 'grants.manage') &&
+                        (m.role === 'operator' || m.role === 'viewer') && (
+                          <button
+                            type="button"
+                            className="pb-button"
+                            disabled={offline}
+                            onClick={() => props.onEditAccess?.(m)}
+                          >
+                            Access…<span className="pb-sr-only"> of {m.display_name}</span>
+                          </button>
+                        )}
+                      {m.user_id === me ? (
+                        <button
+                          type="button"
+                          className="pb-button"
+                          disabled={offline}
+                          onClick={() => setRemoving(m)}
+                        >
+                          Leave
                         </button>
-                      )
-                    )}
+                      ) : (
+                        editable && (
+                          <button type="button" className="pb-button" onClick={() => setRemoving(m)}>
+                            Remove<span className="pb-sr-only"> {m.display_name}</span>
+                          </button>
+                        )
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -841,8 +867,9 @@ function MembersSection(props: SectionProps & { onLeft: () => void; onChanged: (
         </table>
       )}
       <p className="muted small">
-        Owners manage ownership and billing; admins manage members, clients and access. Operators and viewers
-        only see the clients and profiles they are given in Access.
+        {props.onEditAccess
+          ? 'Owners manage ownership and billing; admins manage members and access. Members and viewers only see the profiles they are given (Access…).'
+          : 'Owners manage ownership and billing; admins manage members, clients and access. Operators and viewers only see the clients and profiles they are given in Access.'}
       </p>
       {removing && (
         <Dialog
@@ -1007,7 +1034,22 @@ function TransferDialog(props: {
 }
 
 // ----------------------------------------------------------------------------- invitations
-function InvitationsSection(props: SectionProps) {
+/** An invitation just created: its one-time code is shown only now. */
+export interface CreatedInvitation {
+  email: string;
+  code: string;
+  expires: string;
+  emailed: boolean;
+}
+
+export function InvitationsSection(
+  props: SectionProps & {
+    /** R3: the Team page invites through its wizard (email, role, access, preview); this lists them. */
+    onInvite?: () => void;
+    created?: CreatedInvitation | null;
+    onCreatedDone?: () => void;
+  },
+) {
   const { backend, orgId, notify, offline } = props;
   const list = useResource<Page<Invitation>>(backend, `/v1/orgs/${orgId}/invitations`, notify, [
     ['limit', '100'],
@@ -1015,12 +1057,9 @@ function InvitationsSection(props: SectionProps) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof ASSIGNABLE_ROLES)[number]>('operator');
   const [days, setDays] = useState('7');
-  const [created, setCreated] = useState<{
-    email: string;
-    code: string;
-    expires: string;
-    emailed: boolean;
-  } | null>(null);
+  const [ownCreated, setCreated] = useState<CreatedInvitation | null>(null);
+  const created = props.onInvite ? (props.created ?? null) : ownCreated;
+  const done = () => (props.onInvite ? props.onCreatedDone?.() : setCreated(null));
   const codeId = useId();
 
   const invite = async (e: FormEvent) => {
@@ -1061,53 +1100,70 @@ function InvitationsSection(props: SectionProps) {
 
   return (
     <section className="stack" aria-labelledby="org-invitations-title">
-      <h2 id="org-invitations-title">Invitations</h2>
-      <form className="card stack" onSubmit={invite} aria-label="Invite someone">
-        <div className="row">
-          <label className="grow">
-            E-mail address
-            <input
-              type="email"
-              required
-              maxLength={254}
-              value={email}
-              disabled={offline}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label>
-            Role
-            <select value={role} onChange={(e) => setRole(e.target.value as typeof role)}>
-              {ASSIGNABLE_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABEL[r]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Valid for
-            <select value={days} onChange={(e) => setDays(e.target.value)}>
-              {['1', '3', '7', '14', '30'].map((d) => (
-                <option key={d} value={d}>
-                  {d === '1' ? '1 day' : `${d} days`}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <p className="muted small">{ROLE_HELP[role]}</p>
-        <div className="row row--end">
+      <div className="row">
+        <h2 id="org-invitations-title" className="grow">
+          {props.onInvite ? 'Pending invitations' : 'Invitations'}
+        </h2>
+        {props.onInvite && (
           <button
-            type="submit"
+            type="button"
             className="pb-button"
             data-variant="primary"
-            disabled={offline || !email.trim()}
+            disabled={offline}
+            onClick={props.onInvite}
           >
-            Create invitation
+            Invite someone…
           </button>
-        </div>
-      </form>
+        )}
+      </div>
+      {!props.onInvite && (
+        <form className="card stack" onSubmit={invite} aria-label="Invite someone">
+          <div className="row">
+            <label className="grow">
+              E-mail address
+              <input
+                type="email"
+                required
+                maxLength={254}
+                value={email}
+                disabled={offline}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label>
+              Role
+              <select value={role} onChange={(e) => setRole(e.target.value as typeof role)}>
+                {ASSIGNABLE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Valid for
+              <select value={days} onChange={(e) => setDays(e.target.value)}>
+                {['1', '3', '7', '14', '30'].map((d) => (
+                  <option key={d} value={d}>
+                    {d === '1' ? '1 day' : `${d} days`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="muted small">{ROLE_HELP[role]}</p>
+          <div className="row row--end">
+            <button
+              type="submit"
+              className="pb-button"
+              data-variant="primary"
+              disabled={offline || !email.trim()}
+            >
+              Create invitation
+            </button>
+          </div>
+        </form>
+      )}
       {created && (
         <div className="notice stack" role="status">
           <p>
@@ -1148,12 +1204,14 @@ function InvitationsSection(props: SectionProps) {
             >
               Copy code
             </button>
-            <button type="button" className="pb-button" onClick={() => setCreated(null)}>
+            <button type="button" className="pb-button" onClick={done}>
               Done
             </button>
           </div>
           <p className="muted small">
-            They paste it in Project Browser under Account → Join an organization.
+            {props.onInvite
+              ? 'They open the link in the e-mail, or paste the code in Project Browser under Settings → Account → Join a workspace. Signing in opens the profiles shared with them.'
+              : 'They paste it in Project Browser under Account → Join an organization.'}
           </p>
         </div>
       )}
@@ -1210,7 +1268,7 @@ function InvitationsSection(props: SectionProps) {
 }
 
 // ----------------------------------------------------------------------------- access (grants)
-function AccessSection(props: SectionProps) {
+export function AccessSection(props: SectionProps) {
   const { backend, orgId, notify, offline } = props;
   const members = useResource<Page<Member>>(backend, `/v1/orgs/${orgId}/members`, notify, [['limit', '100']]);
   const clients = useResource<Page<OrgClient>>(backend, `/v1/orgs/${orgId}/clients`, notify, [
@@ -1418,7 +1476,7 @@ const ACTION_TEXT: Record<string, string> = {
   'org.access': 'was refused access',
 };
 
-function ActivitySection(props: SectionProps) {
+export function ActivitySection(props: SectionProps) {
   const { backend, orgId, notify } = props;
   const events = useResource<Page<AuditEvent>>(backend, `/v1/orgs/${orgId}/audit-events`, notify, [
     ['limit', '100'],
@@ -1468,7 +1526,9 @@ function ActivitySection(props: SectionProps) {
 }
 
 // ----------------------------------------------------------------------------- settings
-function SettingsSection(props: SectionProps & { org: Organization; app: AppView; onChanged: () => void }) {
+export function SettingsSection(
+  props: SectionProps & { org: Organization; app: AppView; onChanged: () => void },
+) {
   const { backend, orgId, role, notify, offline, org } = props;
   const [renaming, setRenaming] = useState(false);
   const [copying, setCopying] = useState(false);

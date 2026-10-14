@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-profile-prepare"
+description = "Enables the workspace_profile_prepare command without any pre-configured scope."
+commands.allow = ["workspace_profile_prepare"]
+
+[[permission]]
+identifier = "deny-workspace-profile-prepare"
+description = "Denies the workspace_profile_prepare command without any pre-configured scope."
+commands.deny = ["workspace_profile_prepare"]

@@ -1,10 +1,12 @@
 import type { OnboardingResult } from '@pb/contracts/onboarding';
-import type { Workspaces } from '@pb/contracts/resources';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Organization, Workspaces } from '@pb/contracts/resources';
+import type { FeatureSettings } from '@pb/contracts/workspace';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { AccountScreen } from './account.tsx';
 import type { AccountView, AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
-import { ApiFailure, get, ROLE_LABEL } from './cloud.ts';
+import { BillingBanner } from './billing.tsx';
+import { ApiFailure, can, get, getAll, ROLE_LABEL } from './cloud.ts';
 import { HealthScreen, type HealthTab } from './health.tsx';
 import { useLauncher } from './launch.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
@@ -27,10 +29,29 @@ import {
   Welcome,
 } from './screens.tsx';
 import { withClient } from './status.tsx';
+import { seatUsage, TeamScreen } from './team-access.tsx';
 import { UpdateBanner } from './updates.tsx';
+import {
+  AgencyTools,
+  SubscriptionScreen,
+  ThisComputerBanner,
+  WorkspaceProfiles,
+  WorkspaceSettings,
+} from './workspace.tsx';
 
-type View = 'profiles' | 'proxies' | 'downloads' | 'health' | 'account' | 'settings' | 'organization';
-const NAV: [View, string][] = [
+type View =
+  | 'profiles'
+  | 'proxies'
+  | 'downloads'
+  | 'health'
+  | 'account'
+  | 'settings'
+  | 'organization'
+  | 'team'
+  | 'subscription'
+  | 'agency';
+/** The earlier screens (the `ui.unified_profiles` rollback switch turned off). */
+const CLASSIC_NAV: [View, string][] = [
   ['profiles', 'Profiles'],
   ['proxies', 'Proxies'],
   ['downloads', 'Downloads and updates'],
@@ -38,7 +59,48 @@ const NAV: [View, string][] = [
   ['account', 'Account'],
   ['settings', 'Settings'],
 ];
+/** R3 (ADR-0022): the default navigation. */
+const UNIFIED_NAV: [View, string][] = [
+  ['profiles', 'Profiles'],
+  ['proxies', 'Proxies'],
+  ['team', 'Team'],
+  ['subscription', 'Subscription'],
+  ['settings', 'Settings'],
+];
+type SettingsTab = 'general' | 'account' | 'updates' | 'health' | 'workspace';
+const SETTINGS_TABS: [SettingsTab, string][] = [
+  ['general', 'General'],
+  ['account', 'Account'],
+  ['updates', 'Updates and downloads'],
+  ['health', 'Health and diagnostics'],
+  ['workspace', 'Workspace'],
+];
 type OrgWorkspace = Workspaces['items'][number];
+/** What the current account workspace offers this person (loaded per workspace; never shown for another one). */
+interface Scope {
+  orgId: string;
+  org: Organization;
+  agency: boolean;
+  developerTools: boolean;
+  seats: { used: number; allowed: number | null } | null;
+  profilesAllowed: number | null;
+}
+const COMPUTER = 'computer';
+/** The workspace chosen in this window (a per-window convenience; the server keeps the person's default). */
+function rememberedScope(): string | null {
+  try {
+    return sessionStorage.getItem('pb.scope');
+  } catch {
+    return null;
+  }
+}
+function rememberScope(v: string): void {
+  try {
+    sessionStorage.setItem('pb.scope', v);
+  } catch {
+    // Not kept: the default workspace opens next time.
+  }
+}
 
 export function App({ backend }: { backend: Backend }) {
   const [app, setApp] = useState<AppView | null>(null);
@@ -58,9 +120,45 @@ export function App({ backend }: { backend: Backend }) {
   const [orgId, setOrgId] = useState<string | null>(null);
   const reported = useRef(false);
   const launcher = useLauncher(backend, notify);
+  const unified = app?.settings.find((x) => x.key === 'ui.unified_profiles')?.value !== false;
+  const unifiedRef = useRef(unified);
+  unifiedRef.current = unified;
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  // R3: the one active-workspace context. `COMPUTER` is the local-only view; otherwise an account workspace id.
+  const [scopeChoice, setScopeChoice] = useState<string | null>(rememberedScope);
+  const [defaultOrg, setDefaultOrg] = useState<string | null>(null);
+  const [scope, setScope] = useState<Scope | null>(null);
+  const [scopeNonce, setScopeNonce] = useState(0);
   const go = useCallback((v: View, tab?: HealthTab) => {
+    if (unifiedRef.current) {
+      // Earlier destinations now live under Settings (deep links and notices keep working).
+      if (v === 'downloads') {
+        setSettingsTab('updates');
+        setView('settings');
+        return;
+      }
+      if (v === 'health') {
+        setSettingsTab('health');
+        if (tab) setHealthTab(tab);
+        setView('settings');
+        return;
+      }
+      if (v === 'account') {
+        setSettingsTab('account');
+        setView('settings');
+        return;
+      }
+      if (v === 'organization') {
+        setView('profiles');
+        return;
+      }
+    }
     setView(v);
     if (tab) setHealthTab(tab);
+  }, []);
+  const chooseScope = useCallback((v: string) => {
+    rememberScope(v);
+    setScopeChoice(v);
   }, []);
   /** Profile names in notices: "Shop admin (Client North)", or a fallback when it cannot be read. */
   const nameOf = useCallback(
@@ -97,6 +195,10 @@ export function App({ backend }: { backend: Backend }) {
       }
       const res = await get<Workspaces>(backend, '/v1/me/workspaces');
       setOrgs(res.data.items);
+      // R3: the workspace the person's apps open first (R2 onboarding keeps it on the server).
+      void get<{ default_org_id: string | null }>(backend, '/v1/onboarding/status')
+        .then((r) => setDefaultOrg(r.data.default_org_id))
+        .catch(() => undefined);
     } catch {
       setOrgs((o) => o);
     }
@@ -114,10 +216,15 @@ export function App({ backend }: { backend: Backend }) {
       setOnboardingNeed(null);
       notify(onboardingMessage(r));
       setView('profiles');
+      // A new or joined workspace opens at once on its profiles (an invited member sees what was shared).
+      if (r.status.default_org_id) {
+        setDefaultOrg(r.status.default_org_id);
+        chooseScope(r.status.default_org_id);
+      }
       void refreshAccount();
       setRefreshKey((k) => k + 1);
     },
-    [notify, refreshAccount],
+    [notify, refreshAccount, chooseScope],
   );
   const finishOnboarding = useCallback(async () => {
     try {
@@ -156,6 +263,78 @@ export function App({ backend }: { backend: Backend }) {
       }),
     [backend, notify, refreshAccount, finishOnboarding],
   );
+
+  // R3: the effective workspace: the one chosen in this window if it is still one of the person's, else their default
+  // workspace, else the first; signed out (or with no workspace) it is this computer.
+  const signedIn = account?.status === 'signed_in';
+  const scopeId =
+    !signedIn || orgs.length === 0
+      ? COMPUTER
+      : scopeChoice === COMPUTER
+        ? COMPUTER
+        : orgs.some((o) => o.org_id === scopeChoice)
+          ? (scopeChoice as string)
+          : orgs.some((o) => o.org_id === defaultOrg)
+            ? (defaultOrg as string)
+            : (orgs[0]?.org_id ?? COMPUTER);
+  // Loads what the workspace offers. Switching drops the previous workspace's data at once (no old rows or status can
+  // show), and an answer for a workspace that is no longer current is ignored.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scopeNonce and refreshKey reload
+  useEffect(() => {
+    setScope((s) => (s && s.orgId === scopeId ? s : null));
+    if (!unified || scopeId === COMPUTER) return;
+    let live = true;
+    const id = scopeId;
+    (async () => {
+      try {
+        const org = (await get<Organization>(backend, `/v1/orgs/${id}`)).data;
+        const [features, clients, seats, usage] = await Promise.all([
+          get<FeatureSettings>(backend, `/v1/orgs/${id}/feature-settings`).catch(() => null),
+          can(org.role, 'clients.read')
+            ? getAll<{ id: string }>(backend, `/v1/orgs/${id}/clients`, [], 1).catch(() => null)
+            : Promise.resolve(null),
+          seatUsage(backend, id, org.role),
+          can(org.role, 'billing.read')
+            ? get<{ limits: { profiles: number | null } }>(backend, `/v1/orgs/${id}/billing/usage`).catch(
+                () => null,
+              )
+            : Promise.resolve(null),
+        ]);
+        if (!live) return;
+        const flag = (k: string) => features?.data.settings.find((x) => x.key === k)?.value === true;
+        setScope({
+          orgId: id,
+          org,
+          agency:
+            can(org.role, 'clients.read') && (flag('modules.agency') || (clients?.items.length ?? 0) > 0),
+          developerTools: flag('modules.automation'),
+          seats,
+          profilesAllowed: usage?.data.limits.profiles ?? null,
+        });
+      } catch (e) {
+        if (live) notify(errorMessage(e, 'The workspace could not be loaded.'), 'error');
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [backend, scopeId, unified, scopeNonce, notify]);
+  // The R3 default navigation has no Organization, Account, Health or Downloads screens of its own.
+  useEffect(() => {
+    if (unified)
+      setView((v) => (['organization', 'downloads', 'health', 'account'].includes(v) ? 'profiles' : v));
+    else setView((v) => (['team', 'subscription', 'agency'].includes(v) ? 'profiles' : v));
+  }, [unified]);
+  // First run of the R3 app: a local container for this computer's copies is made without asking.
+  const madeLocal = useRef(false);
+  useEffect(() => {
+    if (!app || !unified || !app.first_run || madeLocal.current) return;
+    madeLocal.current = true;
+    void backend.workspaces
+      .createWorkspace('This computer')
+      .then(() => refresh())
+      .catch((e) => notify(errorMessage(e), 'error'));
+  }, [app, unified, backend, refresh, notify]);
 
   // Record manager startup time once the first real screen has rendered (kept separate from browser timings).
   useEffect(() => {
@@ -351,6 +530,17 @@ export function App({ backend }: { backend: Backend }) {
     };
   }, [backend, notify, raise, resolve, nameOf, go]);
 
+  const orgScope = unified && scopeId !== COMPUTER ? scopeId : null;
+  const NAV: [View, string][] = unified
+    ? [
+        ...UNIFIED_NAV.slice(0, 2),
+        ...(scope?.agency && scope.orgId === orgScope
+          ? ([['agency', 'Agency tools']] as [View, string][])
+          : []),
+        ...UNIFIED_NAV.slice(2),
+      ]
+    : CLASSIC_NAV;
+
   useShortcuts({
     palette: () => setPalette(true),
     help: () => setShortcuts(true),
@@ -431,9 +621,14 @@ export function App({ backend }: { backend: Backend }) {
     ...orgs.map(
       (o): Command => ({
         id: `org-${o.org_id}`,
-        label: `Go to organization ${o.name}`,
-        hint: 'Organization',
+        label: unified ? `Switch to workspace ${o.name}` : `Go to organization ${o.name}`,
+        hint: unified ? 'Workspace' : 'Organization',
         run: () => {
+          if (unified) {
+            chooseScope(o.org_id);
+            setView('profiles');
+            return;
+          }
           setOrgId(o.org_id);
           setView('organization');
         },
@@ -458,12 +653,373 @@ export function App({ backend }: { backend: Backend }) {
       </>
     );
   }
+  if (app.first_run && unified) {
+    return (
+      <p role="status" className="loading">
+        Getting ready…
+      </p>
+    );
+  }
   if (app.first_run) {
     return (
       <>
         <Welcome backend={backend} onDone={refresh} notify={notify} />
         {live}
       </>
+    );
+  }
+
+  // Shared by both layouts: prompts and dialogs over the screens.
+  const overlays = (
+    <>
+      {app.recovery.previous_session_crashed && (
+        <CrashPrompt
+          backend={backend}
+          app={app}
+          onDone={refresh}
+          onDiagnostics={() => go('health', 'diagnostics')}
+        />
+      )}
+      {quit !== null && (
+        <QuitPrompt
+          backend={backend}
+          running={quit.running}
+          unresponsive={quit.unresponsive}
+          notify={notify}
+          onClose={() => setQuit(null)}
+        />
+      )}
+      {palette && (
+        <CommandPalette
+          backend={backend}
+          commands={commands}
+          onClose={() => setPalette(false)}
+          onOpenProfile={(p) => void launcher.open([p])}
+          onShowProfile={(p) => {
+            if (unified) chooseScope(COMPUTER);
+            setView('profiles');
+            setShowProfile({ id: p.id, nonce: Date.now() });
+          }}
+        />
+      )}
+      {shortcuts && <ShortcutsHelp screens={NAV.map(([, l]) => l)} onClose={() => setShortcuts(false)} />}
+      {onboardingNeed && (
+        <OnboardingDialog
+          backend={backend}
+          need={onboardingNeed}
+          onDone={onboarded}
+          onNeed={setOnboardingNeed}
+          onClose={() => setOnboardingNeed(null)}
+          onSignInAgain={() => {
+            setOnboardingNeed(null);
+            void backend.account.signIn().catch((e) => notify(errorMessage(e), 'error'));
+          }}
+        />
+      )}
+      {noticesOpen && (
+        <NoticeCentre notices={notices} onDismiss={resolve} onClose={() => setNoticesOpen(false)} />
+      )}
+      {launcher.dialog}
+      {live}
+    </>
+  );
+
+  if (unified) {
+    const ready = orgScope ? (scope?.orgId === orgScope ? scope : null) : null;
+    const common = ready
+      ? {
+          backend,
+          orgId: ready.orgId,
+          role: ready.org.role,
+          notify,
+          offline: false,
+          me: account?.user?.id ?? '',
+        }
+      : null;
+    const signIn = () => go('account');
+    const needWorkspace = (what: string) => (
+      <section className="screen stack" aria-labelledby="need-title">
+        <h1 id="need-title">{what}</h1>
+        <p className="muted">
+          {signedIn
+            ? 'Choose an account workspace in the sidebar. “This computer” has no team or subscription.'
+            : 'Sign in or create an account to share profiles with a team. Your workspace’s plan covers everyone in it.'}
+        </p>
+        {!signedIn && (
+          <div className="row">
+            <button type="button" className="pb-button" data-variant="primary" onClick={signIn}>
+              Sign in or create an account
+            </button>
+          </div>
+        )}
+      </section>
+    );
+    const loadingWorkspace = (
+      <p role="status" className="loading">
+        Loading workspace…
+      </p>
+    );
+    return (
+      <div className="layout">
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
+        <aside className="sidebar" aria-label="Workspace and navigation">
+          <label className="workspace">
+            <span className="sidebar__label">Workspace</span>
+            <select
+              value={orgScope ? `org:${orgScope}` : `local:${app.active_workspace_id ?? ''}`}
+              onChange={async (e) => {
+                const [kind, id] = e.target.value.split(':');
+                if (kind === 'org' && id) {
+                  chooseScope(id);
+                  return;
+                }
+                try {
+                  if (id && id !== app.active_workspace_id) await backend.workspaces.setActiveWorkspace(id);
+                  chooseScope(COMPUTER);
+                  await refresh();
+                  setRefreshKey((k) => k + 1);
+                } catch (err) {
+                  notify(errorMessage(err), 'error');
+                }
+              }}
+            >
+              {orgs.length > 0 && (
+                <optgroup label="Account workspaces">
+                  {orgs.map((o) => (
+                    <option key={o.org_id} value={`org:${o.org_id}`}>
+                      {o.name} ({ROLE_LABEL[o.role]})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="This computer only">
+                {app.workspaces.map((w) => (
+                  <option key={w.id} value={`local:${w.id}`}>
+                    {app.workspaces.length === 1 ? 'This computer' : `This computer: ${w.name}`}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+          <nav aria-label="Main">
+            <ul>
+              {NAV.map(([id, label]) => (
+                <li key={id}>
+                  <button
+                    type="button"
+                    className="nav-item"
+                    aria-current={view === id ? 'page' : undefined}
+                    onClick={() => {
+                      setView(id);
+                      if (id === 'settings') {
+                        void refresh();
+                        void refreshAccount();
+                      }
+                    }}
+                  >
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <div ref={setFolderSlot} className="sidebar__folders" hidden={view !== 'profiles' || !!orgScope} />
+          {importOp && (
+            <div className="sidebar__import" role="status">
+              Importing profiles…
+              <progress aria-label="Import progress" value={importOp.progress ?? undefined} max={1} />
+            </div>
+          )}
+          <button
+            type="button"
+            className="nav-item notices-button"
+            aria-label={`Notifications: ${notices.length === 0 ? 'none' : notices.length}`}
+            onClick={() => setNoticesOpen(true)}
+          >
+            Notifications{notices.length > 0 ? ` (${notices.length})` : ''}
+          </button>
+          <p className="sidebar__hint">
+            <kbd>{MOD()}K</kbd> finds anything · <kbd>?</kbd> shortcuts
+          </p>
+          <div className="sidebar__status" role="status">
+            {app.running_count === 0
+              ? 'No profiles open'
+              : `${app.running_count} profile${app.running_count === 1 ? '' : 's'} open on this computer`}
+            <span className="sidebar__hint">Profiles run in a browser on this computer.</span>
+          </div>
+          <p className="sidebar__note">
+            Version {app.app.version}
+            {signedIn && account?.user ? ` · ${account.user.display_name}` : ''}
+          </p>
+        </aside>
+
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}
+        <main className="main" id="main" tabIndex={0} aria-label="Content">
+          <Fragment key={orgScope ?? `local:${app.active_workspace_id ?? ''}`}>
+            <ReconnectBanner backend={backend} account={account} refreshKey={refreshKey} />
+            <UpdateBanner
+              backend={backend}
+              refreshKey={refreshKey}
+              onOpen={() => {
+                setSettingsTab('updates');
+                setView('settings');
+              }}
+            />
+            {ready && (
+              <BillingBanner
+                billing={ready.org.billing}
+                role={ready.org.role}
+                onOpenBilling={() => setView('subscription')}
+              />
+            )}
+            {view === 'profiles' &&
+              (orgScope ? (
+                ready && common ? (
+                  <WorkspaceProfiles
+                    backend={backend}
+                    orgId={ready.orgId}
+                    org={ready.org}
+                    refreshKey={refreshKey}
+                    notify={notify}
+                    me={common.me}
+                    allowed={ready.profilesAllowed}
+                    onOpenSubscription={() => setView('subscription')}
+                  />
+                ) : (
+                  loadingWorkspace
+                )
+              ) : (
+                <>
+                  <ThisComputerBanner
+                    backend={backend}
+                    app={app}
+                    orgs={orgs}
+                    notify={notify}
+                    signedIn={signedIn}
+                    onSignIn={signIn}
+                    onMoved={(id) => {
+                      chooseScope(id);
+                      setRefreshKey((k) => k + 1);
+                    }}
+                  />
+                  <ProfilesScreen
+                    backend={backend}
+                    refreshKey={refreshKey}
+                    notify={notify}
+                    runningCount={app.running_count}
+                    folderSlot={folderSlot}
+                    showProfile={showProfile}
+                  />
+                </>
+              ))}
+            {view === 'proxies' && (
+              <ProxiesScreen backend={backend} refreshKey={refreshKey} notify={notify} />
+            )}
+            {view === 'agency' && (common ? <AgencyTools {...common} /> : loadingWorkspace)}
+            {view === 'team' &&
+              (!orgScope ? (
+                needWorkspace('Team')
+              ) : ready && common ? (
+                <TeamScreen
+                  {...common}
+                  seats={ready.seats}
+                  onLeft={() => {
+                    chooseScope(COMPUTER);
+                    setView('profiles');
+                    void refreshAccount();
+                  }}
+                  onChanged={() => setScopeNonce((n) => n + 1)}
+                />
+              ) : (
+                loadingWorkspace
+              ))}
+            {view === 'subscription' &&
+              (!orgScope ? (
+                needWorkspace('Subscription')
+              ) : ready && common ? (
+                <SubscriptionScreen
+                  {...common}
+                  org={ready.org}
+                  onChanged={() => setScopeNonce((n) => n + 1)}
+                />
+              ) : (
+                loadingWorkspace
+              ))}
+            {view === 'settings' && (
+              <div className="stack">
+                <nav aria-label="Settings sections" className="org-nav settings-nav">
+                  {SETTINGS_TABS.filter(([t]) => t !== 'workspace' || !!ready).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="pb-button"
+                      aria-current={settingsTab === id ? 'page' : undefined}
+                      onClick={() => setSettingsTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
+                {settingsTab === 'general' && (
+                  <SettingsScreen
+                    backend={backend}
+                    app={app}
+                    refreshKey={refreshKey}
+                    onChanged={refresh}
+                    notify={notify}
+                    signedIn={signedIn}
+                  />
+                )}
+                {settingsTab === 'account' && (
+                  <AccountScreen
+                    backend={backend}
+                    account={account}
+                    refreshKey={refreshKey}
+                    notify={notify}
+                    onChanged={refreshAccount}
+                    onOpenOrganization={async (id) => {
+                      await refreshAccount();
+                      chooseScope(id);
+                      setView('profiles');
+                    }}
+                  />
+                )}
+                {settingsTab === 'updates' && (
+                  <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
+                )}
+                {settingsTab === 'health' && (
+                  <HealthScreen
+                    backend={backend}
+                    notify={notify}
+                    refreshKey={refreshKey}
+                    tab={healthTab}
+                    onTab={setHealthTab}
+                    onNavigate={(v) => go(v)}
+                  />
+                )}
+                {settingsTab === 'workspace' && ready && common && (
+                  <section className="screen stack" aria-labelledby="ws-settings-title">
+                    <h1 id="ws-settings-title">Workspace</h1>
+                    <WorkspaceSettings
+                      {...common}
+                      org={ready.org}
+                      app={app}
+                      developerTools={ready.developerTools}
+                      onChanged={() => {
+                        setScopeNonce((n) => n + 1);
+                        void refreshAccount();
+                      }}
+                    />
+                  </section>
+                )}
+              </div>
+            )}
+          </Fragment>
+        </main>
+        {overlays}
+      </div>
     );
   }
 
@@ -636,55 +1192,7 @@ export function App({ backend }: { backend: Backend }) {
           />
         )}
       </main>
-
-      {app.recovery.previous_session_crashed && (
-        <CrashPrompt
-          backend={backend}
-          app={app}
-          onDone={refresh}
-          onDiagnostics={() => go('health', 'diagnostics')}
-        />
-      )}
-      {quit !== null && (
-        <QuitPrompt
-          backend={backend}
-          running={quit.running}
-          unresponsive={quit.unresponsive}
-          notify={notify}
-          onClose={() => setQuit(null)}
-        />
-      )}
-      {palette && (
-        <CommandPalette
-          backend={backend}
-          commands={commands}
-          onClose={() => setPalette(false)}
-          onOpenProfile={(p) => void launcher.open([p])}
-          onShowProfile={(p) => {
-            setView('profiles');
-            setShowProfile({ id: p.id, nonce: Date.now() });
-          }}
-        />
-      )}
-      {shortcuts && <ShortcutsHelp screens={NAV.map(([, l]) => l)} onClose={() => setShortcuts(false)} />}
-      {onboardingNeed && (
-        <OnboardingDialog
-          backend={backend}
-          need={onboardingNeed}
-          onDone={onboarded}
-          onNeed={setOnboardingNeed}
-          onClose={() => setOnboardingNeed(null)}
-          onSignInAgain={() => {
-            setOnboardingNeed(null);
-            void backend.account.signIn().catch((e) => notify(errorMessage(e), 'error'));
-          }}
-        />
-      )}
-      {noticesOpen && (
-        <NoticeCentre notices={notices} onDismiss={resolve} onClose={() => setNoticesOpen(false)} />
-      )}
-      {launcher.dialog}
-      {live}
+      {overlays}
     </div>
   );
 }

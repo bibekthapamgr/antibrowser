@@ -55,6 +55,8 @@ import type {
   Template,
   UpdateStatus,
   Workspace,
+  WorkspaceCopy,
+  WorkspaceOpen,
 } from '@pb/contracts/ipc';
 
 export type {
@@ -117,6 +119,8 @@ export type {
   Template,
   UpdateStatus,
   Workspace,
+  WorkspaceCopy,
+  WorkspaceOpen,
 } from '@pb/contracts/ipc';
 
 export type Permission = 'ask' | 'block' | 'allow';
@@ -304,6 +308,15 @@ export interface SyncRepository {
   restore(profileId: string, snapshotId: string | null, asCopy: boolean): Promise<SyncStatus>;
   /** Puts an organization profile on this computer: a new local profile, restored from its newest backup. */
   restoreHere(orgId: string, orgProfileId: string, name: string): Promise<ProfileView>;
+  /** R3: this computer's copies of a workspace's profiles (the merged Profiles list), including first downloads. */
+  copies(orgId: string): Promise<WorkspaceCopy[]>;
+  /**
+   * R3: makes sure this computer has a copy of a workspace profile (existing; restored from its newest backup; or an
+   * empty linked copy when it was never backed up). `proxyId` (this computer only) is set on a new copy.
+   */
+  prepare(orgId: string, orgProfileId: string, name: string, proxyId?: string): Promise<ProfileView>;
+  /** R3: opens a workspace profile through the usual path (lease, newest backup, browser). */
+  openWorkspaceProfile(orgId: string, orgProfileId: string, name: string): Promise<WorkspaceOpen>;
 }
 
 /**

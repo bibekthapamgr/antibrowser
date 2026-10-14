@@ -55,6 +55,24 @@ const token = () =>
 const now = () => new Date().toISOString();
 const DAY = 86_400_000;
 
+/** R3: one grant scope (exactly one of client, profile, folder or all profiles). */
+interface DemoScopeRow {
+  client_id: string | null;
+  profile_id: string | null;
+  folder_id?: string | null;
+  all_profiles?: boolean;
+}
+interface DemoFolder {
+  id: string;
+  name: string;
+  colour: string | null;
+  position: number;
+  archived_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface OrgRec {
   id: string;
   name: string;
@@ -102,15 +120,20 @@ interface OrgRec {
     expires_at: string;
     accepted_at: string | null;
     revoked: boolean;
+    /** R3: the access chosen with the invitation, applied when it is accepted. */
+    access?: DemoScopeRow[];
+    caps?: GrantCapability[];
   }[];
-  grants: {
+  grants: (DemoScopeRow & {
     id: string;
     user_id: string;
-    client_id: string | null;
-    profile_id: string | null;
     capabilities: GrantCapability[];
     created_at: string;
-  }[];
+  })[];
+  /** R3: folders and which folder each profile is in; R1 feature settings that were set. */
+  features?: Record<string, { value: boolean; version: number; updated_at: string }>;
+  folders: DemoFolder[];
+  profileFolder: Map<string, string>;
   /** Milestone 08: each profile's current lease, access requests and recovery copies. */
   leases: Map<string, DemoLease>;
   requests: DemoRequest[];
@@ -364,9 +387,12 @@ export function demoCloud(opts: {
   const orgs = new Map<string, OrgRec>();
   const cache = new Map<string, { body: unknown; at: string }>();
   const links: { local_profile_id: string; org_id: string; org_profile_id: string; linked_at: string }[] = [];
+  // R3 (`?demo=server`): the server is already set (as in a public build), nobody is signed in yet.
   let server: string | null =
-    opts.mode.includes('signedin') || opts.mode.includes('member') ? 'https://browser.example.test' : null;
-  let status: AccountView['status'] = server ? 'signed_in' : 'signed_out';
+    opts.mode.includes('signedin') || opts.mode.includes('member') || opts.mode.includes('server')
+      ? 'https://browser.example.test'
+      : null;
+  let status: AccountView['status'] = server && !opts.mode.includes('server') ? 'signed_in' : 'signed_out';
   let signingIn = false;
   let recentAuthUntil = 0;
   let requests = 0;
@@ -412,6 +438,8 @@ export function demoCloud(opts: {
       ],
       invitations: [],
       grants: [],
+      folders: [],
+      profileFolder: new Map(),
       audit: [],
       leases: new Map(),
       requests: [],
@@ -449,6 +477,19 @@ export function demoCloud(opts: {
         deleted: false,
       });
     }
+    // R3 (`?demo=fifty`): a workspace of 50 profiles, for sharing exactly some of them.
+    if (opts.mode.includes('fifty'))
+      for (let i = org.profiles.length + 1; i <= 50; i++)
+        org.profiles.push({
+          id: rid('prf'),
+          name: `Profile ${String(i).padStart(2, '0')}`,
+          client_id: null,
+          notes: '',
+          version: 1,
+          created_at: t,
+          updated_at: t,
+          deleted: false,
+        });
     // One profile already has an encrypted backup made on Sam's computer (milestone 07).
     const backedUp = org.profiles[0];
     if (backedUp) {
@@ -473,14 +514,26 @@ export function demoCloud(opts: {
       });
     }
     const grantTo = myRole === 'operator' ? me.id : sam.id;
-    org.grants.push({
-      id: rid('grt'),
-      user_id: grantTo,
-      client_id: north?.id ?? null,
-      profile_id: null,
-      capabilities: ['launch', 'backup_download'],
-      created_at: t,
-    });
+    if (opts.mode.includes('fifty') && myRole === 'operator') {
+      // R3: exactly 10 of the 50 profiles were shared with this Member (open and use only).
+      for (const p of org.profiles.filter((x) => /^Profile (1[1-9]|20)$/.test(x.name)))
+        org.grants.push({
+          id: rid('grt'),
+          user_id: me.id,
+          client_id: null,
+          profile_id: p.id,
+          capabilities: ['launch'],
+          created_at: t,
+        });
+    } else
+      org.grants.push({
+        id: rid('grt'),
+        user_id: grantTo,
+        client_id: north?.id ?? null,
+        profile_id: null,
+        capabilities: ['launch', 'backup_download'],
+        created_at: t,
+      });
     // Milestone 09: open tasks, shared bookmarks, a "warn" extension policy and one device report.
     if (north) {
       const day = (n: number) => new Date(Date.now() + n * DAY).toISOString();
@@ -619,14 +672,18 @@ export function demoCloud(opts: {
     });
   const role = (org: OrgRec) => org.members.get(me.id)?.role ?? null;
   const allows = (r: Role, p: Permission) => ROLE_PERMISSIONS[r].includes(p);
-  const visibleProfile = (org: OrgRec, p: OrgRec['profiles'][number]) => {
-    const r = role(org);
+  /** R3: the one definition of what a grant reaches (services/api tenancy.ts grantCovers). */
+  const covers = (org: OrgRec, g: DemoScopeRow, p: OrgRec['profiles'][number]) =>
+    g.profile_id === p.id ||
+    (!!g.client_id && g.client_id === p.client_id) ||
+    (!!g.folder_id && org.profileFolder.get(p.id) === g.folder_id) ||
+    !!g.all_profiles;
+  const visibleProfile = (org: OrgRec, p: OrgRec['profiles'][number], userId = me.id) => {
+    const r = org.members.get(userId)?.role;
     if (!r || p.deleted) return false;
     if (ROLE_SCOPE[r] === 'organization') return true;
     if (ROLE_SCOPE[r] === 'none') return false;
-    return org.grants.some(
-      (g) => g.user_id === me.id && (g.profile_id === p.id || (g.client_id && g.client_id === p.client_id)),
-    );
+    return org.grants.some((g) => g.user_id === userId && covers(org, g, p));
   };
   const visibleClient = (org: OrgRec, c: OrgRec['clients'][number]) => {
     const r = role(org);
@@ -636,7 +693,8 @@ export function demoCloud(opts: {
     return org.grants.some(
       (g) =>
         g.user_id === me.id &&
-        (g.client_id === c.id || org.profiles.some((p) => p.id === g.profile_id && p.client_id === c.id)),
+        (g.client_id === c.id ||
+          org.profiles.some((p) => !p.deleted && p.client_id === c.id && covers(org, g, p))),
     );
   };
   const page = <T>(items: T[]) => ({ status: 200, body: { items: items.slice(0, 100), next_cursor: null } });
@@ -680,8 +738,7 @@ export function demoCloud(opts: {
     if (r !== 'operator') return [];
     const caps = new Set<GrantCapability>();
     for (const g of org.grants)
-      if (g.user_id === userId && (g.profile_id === p.id || (g.client_id && g.client_id === p.client_id)))
-        for (const c of g.capabilities) caps.add(c);
+      if (g.user_id === userId && covers(org, g, p)) for (const c of g.capabilities) caps.add(c);
     return ALL_CAPS.filter((c) => caps.has(c));
   };
   const openLease = (org: OrgRec, profileId: string) => {
@@ -747,6 +804,102 @@ export function demoCloud(opts: {
         fulfil(org, profileId);
       }
     }
+  };
+
+  // ------------------------------------------------------------------ R3: access in one step (services/api access.ts)
+  type Scope =
+    | { kind: 'all'; include_future?: boolean }
+    | { kind: 'folder'; folder_id: string; include_future?: boolean }
+    | { kind: 'profiles'; profile_ids: string[] }
+    | { kind: 'client'; client_id: string };
+  const none: DemoScopeRow = { client_id: null, profile_id: null, folder_id: null, all_profiles: false };
+  const reachNow = (org: OrgRec, scope: Scope) =>
+    org.profiles.filter(
+      (p) =>
+        !p.deleted &&
+        (scope.kind === 'all' ||
+          (scope.kind === 'folder' && org.profileFolder.get(p.id) === scope.folder_id) ||
+          (scope.kind === 'profiles' && scope.profile_ids.includes(p.id)) ||
+          (scope.kind === 'client' && p.client_id === scope.client_id)),
+    );
+  /** The grant rows a scope becomes, or an error answer. */
+  const scopeRows = (org: OrgRec, scope: Scope): DemoScopeRow[] | { status: number; body: unknown } => {
+    if (scope.kind === 'folder' && !org.folders.some((f) => f.id === scope.folder_id && !f.archived_at))
+      return notFound('Folder');
+    if (scope.kind === 'client') {
+      if (!org.clients.some((c) => c.id === scope.client_id)) return notFound('Client');
+      return [{ ...none, client_id: scope.client_id }];
+    }
+    if (scope.kind === 'all' && scope.include_future) return [{ ...none, all_profiles: true }];
+    if (scope.kind === 'folder' && scope.include_future) return [{ ...none, folder_id: scope.folder_id }];
+    const reach = reachNow(org, scope);
+    if (scope.kind === 'profiles' && reach.length !== new Set(scope.profile_ids).size)
+      return notFound('A selected profile');
+    return reach.map((p) => ({ ...none, profile_id: p.id }));
+  };
+  const previewOf = (org: OrgRec, scope: Scope, caps: GrantCapability[]) => {
+    if (scope.kind === 'folder' && !org.folders.some((f) => f.id === scope.folder_id && !f.archived_at))
+      return notFound('Folder');
+    const reach = reachNow(org, scope);
+    if (scope.kind === 'profiles' && reach.length !== new Set(scope.profile_ids).size)
+      return notFound('A selected profile');
+    return {
+      status: 200,
+      body: {
+        profile_count: reach.length,
+        profiles: [...reach]
+          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+          .slice(0, 50)
+          .map((p) => ({ id: p.id, name: p.name })),
+        includes_future:
+          scope.kind === 'client' ||
+          ((scope.kind === 'all' || scope.kind === 'folder') && !!scope.include_future),
+        capabilities: [...new Set(caps)].sort(),
+      },
+    };
+  };
+  const capsAsked = (v: unknown): GrantCapability[] | null =>
+    Array.isArray(v) ? ALL_CAPS.filter((c) => (v as string[]).includes(c)) : null;
+  /** Gives `userId` the rows (replacing nothing); viewers get no capabilities. */
+  const grantRows = (org: OrgRec, userId: string, rows: DemoScopeRow[], caps: GrantCapability[]) => {
+    const viewer = org.members.get(userId)?.role === 'viewer';
+    for (const row of rows) {
+      const same = org.grants.find(
+        (g) =>
+          g.user_id === userId &&
+          g.client_id === row.client_id &&
+          g.profile_id === row.profile_id &&
+          (g.folder_id ?? null) === (row.folder_id ?? null) &&
+          !!g.all_profiles === !!row.all_profiles,
+      );
+      if (same) continue;
+      org.grants.push({
+        id: rid('grt'),
+        user_id: userId,
+        ...row,
+        capabilities: viewer ? [] : caps,
+        created_at: now(),
+      });
+    }
+  };
+  /** Who (operators and viewers) would gain or lose a profile if it moved to `folder`. */
+  const folderImpact = (org: OrgRec, p: OrgRec['profiles'][number], folder: string | null) => {
+    const gains: { user_id: string; display_name: string }[] = [];
+    const losses: { user_id: string; display_name: string }[] = [];
+    const before = org.profileFolder.get(p.id) ?? null;
+    for (const [userId, m] of org.members) {
+      if (ROLE_SCOPE[m.role] !== 'granted') continue;
+      const had = visibleProfile(org, p, userId);
+      if (folder) org.profileFolder.set(p.id, folder);
+      else org.profileFolder.delete(p.id);
+      const has = visibleProfile(org, p, userId);
+      if (before) org.profileFolder.set(p.id, before);
+      else org.profileFolder.delete(p.id);
+      const who = { user_id: userId, display_name: people.get(userId)?.display_name ?? 'Member' };
+      if (has && !had) gains.push(who);
+      if (had && !has) losses.push(who);
+    }
+    return { gains, losses };
   };
 
   /** The API itself. Returns `{status, body}`; paths are already allow-listed by the caller. */
@@ -846,6 +999,8 @@ export function demoCloud(opts: {
         ],
         invitations: [],
         grants: [],
+        folders: [],
+        profileFolder: new Map(),
         audit: [],
         leases: new Map(),
         requests: [],
@@ -973,6 +1128,12 @@ export function demoCloud(opts: {
         return err(409, 'ALREADY_MEMBER', 'You are already a member of this organization');
       found.i.accepted_at = now();
       found.o.members.set(me.id, { role: found.i.role, version: 1, created_at: now() });
+      if (found.i.access && found.i.role !== 'admin') {
+        const live = found.i.access.filter(
+          (row) => !row.profile_id || found.o.profiles.some((p) => p.id === row.profile_id && !p.deleted),
+        );
+        grantRows(found.o, me.id, live, found.i.caps ?? ['launch']);
+      }
       audit(found.o, 'invitation.accepted', found.i.id);
       return { status: 200, body: { org_id: found.o.id, role: found.i.role } };
     }
@@ -1014,6 +1175,104 @@ export function demoCloud(opts: {
         status: 200,
         body: { id: org.id, name: org.name, role: r, version: org.version, created_at: org.created_at },
       };
+    }
+    if (c === 'members' && d && e === 'access') {
+      const denied = need('grants.manage');
+      if (denied) return denied;
+      const m = org.members.get(d);
+      if (!m) return notFound('Member');
+      if (m.role !== 'operator' && m.role !== 'viewer')
+        return err(
+          400,
+          'VALIDATION_FAILED',
+          'Owners, admins and billing managers do not take profile access',
+        );
+      const access = body as { scope?: Scope; capabilities?: string[] } | null;
+      const rows = access?.scope ? scopeRows(org, access.scope) : [];
+      if (!Array.isArray(rows)) return rows;
+      org.grants = org.grants.filter((g) => g.user_id !== d);
+      grantRows(org, d, rows, capsAsked(access?.capabilities) ?? ['launch']);
+      endOutOfReach(org);
+      audit(org, 'grant.access_set', d);
+      return { status: 200, body: { items: org.grants.filter((g) => g.user_id === d) } };
+    }
+    if (c === 'feature-settings') {
+      const DEFAULTS: Record<string, boolean> = {
+        'ui.unified_profiles': true,
+        'modules.agency': false,
+        'modules.automation': opts.mode.includes('devtools'),
+      };
+      org.features ??= {};
+      const feats = org.features;
+      const view = () => ({
+        settings: Object.entries(DEFAULTS).map(([key, def]) => ({
+          key,
+          value: feats[key]?.value ?? def,
+          set: !!feats[key],
+          version: feats[key]?.version ?? null,
+          updated_at: feats[key]?.updated_at ?? null,
+        })),
+      });
+      if (req.method === 'GET') return need('org.read') ?? { status: 200, body: view() };
+      const denied = need('features.manage');
+      if (denied) return denied;
+      for (const x of (body.settings as { key: string; value: boolean }[]) ?? []) {
+        if (!(x.key in DEFAULTS)) return err(400, 'VALIDATION_FAILED', 'Unknown setting');
+        feats[x.key] = { value: x.value, version: (feats[x.key]?.version ?? 0) + 1, updated_at: t };
+      }
+      return { status: 200, body: view() };
+    }
+    if (c === 'access' && d === 'preview') {
+      const denied = need('members.manage');
+      if (denied) return denied;
+      const access = body as { scope: Scope; capabilities?: string[] };
+      return previewOf(org, access.scope, capsAsked(access.capabilities) ?? ['launch']);
+    }
+    if (c === 'folders') {
+      if (req.method === 'GET') {
+        const denied = need('profile.read');
+        if (denied) return denied;
+        return page(
+          org.folders
+            .filter((x) => !x.archived_at)
+            .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+            .map((x) => ({
+              ...x,
+              org_id: org.id,
+              profile_count: org.profiles.filter(
+                (p) => visibleProfile(org, p) && org.profileFolder.get(p.id) === x.id,
+              ).length,
+            })),
+        );
+      }
+      const denied = need('folders.manage');
+      if (denied) return denied;
+      const name = String(body.name ?? '').trim();
+      if (!d) {
+        if (!name) return err(400, 'VALIDATION_FAILED', 'A folder needs a name');
+        if (org.folders.some((x) => !x.archived_at && x.name.toLowerCase() === name.toLowerCase()))
+          return err(409, 'ALREADY_EXISTS', 'A folder with this name already exists');
+        const fld: DemoFolder = {
+          id: rid('fld'),
+          name,
+          colour: (body.colour as string | null) ?? null,
+          position: org.folders.length,
+          archived_at: null,
+          version: 1,
+          created_at: t,
+          updated_at: t,
+        };
+        org.folders.push(fld);
+        audit(org, 'folder.created', fld.id);
+        return { status: 201, body: { ...fld, org_id: org.id, profile_count: 0 } };
+      }
+      const fld = org.folders.find((x) => x.id === d);
+      if (!fld) return notFound('Folder');
+      if (name) fld.name = name;
+      if (typeof body.archived === 'boolean') fld.archived_at = body.archived ? t : null;
+      fld.version++;
+      fld.updated_at = t;
+      return { status: 200, body: { ...fld, org_id: org.id, profile_count: 0 } };
     }
     if (c === 'members') {
       if (!d) return need('members.read') ?? page([...org.members.keys()].map((u) => memberRow(org, u)));
@@ -1097,7 +1356,16 @@ export function demoCloud(opts: {
         expires_at: new Date(Date.now() + Number(body.expires_in_days ?? 7) * DAY).toISOString(),
         accepted_at: null,
         revoked: false,
-      };
+      } as OrgRec['invitations'][number];
+      const access = body.access as { scope: Scope; capabilities?: string[] } | undefined;
+      if (access) {
+        if (inv.role !== 'operator' && inv.role !== 'viewer')
+          return err(400, 'VALIDATION_FAILED', 'Only members and viewers are invited with profile access');
+        const rows = scopeRows(org, access.scope);
+        if (!Array.isArray(rows)) return rows;
+        inv.access = rows;
+        inv.caps = inv.role === 'viewer' ? [] : (capsAsked(access.capabilities) ?? ['launch']);
+      }
       org.invitations.unshift(inv);
       audit(org, 'invitation.created', inv.id);
       return { status: 201, body: { invitation: invitationRow(inv), token: inv.token } };
@@ -1586,13 +1854,21 @@ export function demoCloud(opts: {
         user_id: String(body.user_id),
         client_id: (body.client_id as string) ?? null,
         profile_id: (body.profile_id as string) ?? null,
+        folder_id: (body.folder_id as string) ?? null,
+        all_profiles: body.all_profiles === true,
         capabilities: memberRole === 'viewer' ? [] : (asked ?? defaultCapabilities(memberRole ?? 'viewer')),
         created_at: t,
       };
       if (!org.members.has(g.user_id)) return notFound('Member');
+      if (g.folder_id && !org.folders.some((x) => x.id === g.folder_id)) return notFound('Folder');
       if (
         org.grants.some(
-          (x) => x.user_id === g.user_id && x.client_id === g.client_id && x.profile_id === g.profile_id,
+          (x) =>
+            x.user_id === g.user_id &&
+            x.client_id === g.client_id &&
+            x.profile_id === g.profile_id &&
+            (x.folder_id ?? null) === g.folder_id &&
+            !!x.all_profiles === g.all_profiles,
         )
       )
         return err(409, 'ALREADY_EXISTS', 'This member already has this grant');
@@ -1612,6 +1888,7 @@ export function demoCloud(opts: {
         last_snapshot_at: sync.head(org.id, p.id).snapshot?.committed_at ?? null,
         in_use: inUse(org, p.id),
         capabilities: capsOf(org, p),
+        folder_id: org.profileFolder.get(p.id) ?? null,
         created_at: p.created_at,
         updated_at: p.updated_at,
       });
@@ -1626,7 +1903,8 @@ export function demoCloud(opts: {
                 (p) =>
                   visibleProfile(org, p) &&
                   (!text || p.name.toLowerCase().includes(text)) &&
-                  (!q.get('client_id') || p.client_id === q.get('client_id')),
+                  (!q.get('client_id') || p.client_id === q.get('client_id')) &&
+                  (!q.get('folder_id') || (org.profileFolder.get(p.id) ?? 'none') === q.get('folder_id')),
               )
               .map(view),
           );
@@ -1643,7 +1921,10 @@ export function demoCloud(opts: {
           updated_at: t,
           deleted: false,
         };
+        const folder = (body.folder_id as string | null) ?? null;
+        if (folder && !org.folders.some((x) => x.id === folder && !x.archived_at)) return notFound('Folder');
         org.profiles.push(p);
+        if (folder) org.profileFolder.set(p.id, folder);
         audit(org, 'profile.created', p.id);
         return { status: 201, body: view(p) };
       }
@@ -1661,6 +1942,27 @@ export function demoCloud(opts: {
       }
       const p = org.profiles.find((x) => x.id === d && visibleProfile(org, x));
       if (!p) return notFound('Profile');
+      // R3: its folder (a move that changes who can open it needs grants.manage) and the impact shown first.
+      if (e === 'folder' || e === 'folder-impact') {
+        const target = e === 'folder' ? ((body.folder_id as string | null) ?? null) : q.get('folder_id');
+        const folder = target === 'none' ? null : (target ?? null);
+        if (folder && !org.folders.some((x) => x.id === folder && !x.archived_at)) return notFound('Folder');
+        const impact = folderImpact(org, p, folder);
+        const changes = impact.gains.length + impact.losses.length > 0;
+        const allowed = allows(r, 'profile.update') && (!changes || allows(r, 'grants.manage'));
+        if (e === 'folder-impact') return { status: 200, body: { ...impact, allowed } };
+        const refused = !allows(r, 'profile.update')
+          ? need('profile.update')
+          : !allowed
+            ? need('grants.manage')
+            : null;
+        if (refused) return refused;
+        if (folder) org.profileFolder.set(p.id, folder);
+        else org.profileFolder.delete(p.id);
+        endOutOfReach(org);
+        audit(org, 'profile.folder_set', p.id);
+        return { status: 200, body: { profile_id: p.id, folder_id: folder } };
+      }
       // Milestone 08: who has it open, access requests and forced takeover.
       const [, , , , , f, g] = parts;
       if (e === 'leases' && f === 'current') {

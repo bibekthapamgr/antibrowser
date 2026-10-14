@@ -30,6 +30,7 @@ pub mod supervisor;
 pub mod sync;
 pub mod team;
 pub mod transfer;
+pub mod unified;
 
 use crate::events::{DEEP_LINK, QUIT_REQUESTED};
 use crate::state::AppState;
@@ -149,6 +150,9 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::migration_run,
         commands::migration_rollback,
         commands::migration_report,
+        commands::workspace_copies,
+        commands::workspace_profile_prepare,
+        commands::workspace_profile_open,
         commands::billing_open_checkout,
         commands::billing_open_portal,
         commands::billing_open_invoice,

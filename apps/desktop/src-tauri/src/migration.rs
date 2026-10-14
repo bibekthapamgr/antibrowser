@@ -98,7 +98,7 @@ pub struct MigrationReport {
 }
 
 impl AppState {
-    fn migration_context(&self, org_id: &str) -> Result<(String, String), IpcError> {
+    pub(crate) fn migration_context(&self, org_id: &str) -> Result<(String, String), IpcError> {
         if org_id.len() != 30 || !org_id.starts_with("org_") {
             return Err(ipc::INVALID_ARGUMENT);
         }
@@ -117,7 +117,7 @@ impl AppState {
 
     /// A signed request to the server (refreshing the token once), as the shell makes it: not through the window's
     /// allow-list.
-    fn migration_call(
+    pub(crate) fn migration_call(
         &self,
         server: &str,
         method: Method,

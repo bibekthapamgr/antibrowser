@@ -614,3 +614,76 @@ fn a_restore_interrupted_mid_switch_is_finished_at_start_up() {
     assert_eq!(cookies(&g, &id), b"restored");
     assert!(!root.join("user-data.incoming").exists());
 }
+
+/// R3 (ADR-0022): opening a workspace profile that is not on this computer downloads its newest backup into one new
+/// local copy, then opens it through the usual lease; the unified list shows that copy once, first while it
+/// downloads and then linked.
+#[test]
+fn opening_a_workspace_profile_here_restores_it_once_and_then_opens_it() {
+    let server = FakeServer::new(64 * 1024);
+    server.add_profile(ORG, PRF);
+    let a = fixture();
+    connect(&a, &server, DEV_A);
+    let id_a = linked_profile(&a);
+    invoke(&a, "sync_backup_now", json!({ "profileId": id_a })).unwrap_or_else(|e| panic!("{e}"));
+    a.state.run_sync_jobs();
+
+    let b = fixture();
+    connect(&b, &server, DEV_B);
+    invoke(&b, "create_workspace", json!({ "name": "Home" })).unwrap_or_else(|e| panic!("{e}"));
+    let opened = invoke(
+        &b,
+        "workspace_profile_open",
+        json!({ "orgId": ORG, "orgProfileId": PRF, "name": "Shop" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(opened["restoring"], json!(true), "{opened}");
+    assert_eq!(opened["operation_id"], Value::Null);
+    let local = opened["local_profile_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let copies = |f: &Fixture| {
+        invoke(f, "workspace_copies", json!({ "orgId": ORG }))
+            .unwrap_or_else(|e| panic!("{e}"))
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    // While it downloads: one row, this copy, marked as restoring.
+    let c = copies(&b);
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0]["profile"]["id"], json!(local));
+    assert_eq!(c[0]["sync"]["restoring"], json!(true));
+    // Opening again meanwhile does not make a second copy.
+    let again = invoke(
+        &b,
+        "workspace_profile_open",
+        json!({ "orgId": ORG, "orgProfileId": PRF, "name": "Shop" }),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again["local_profile_id"], json!(local));
+
+    b.state.run_sync_jobs();
+    assert_eq!(cookies(&b, &local), b"cookies-v1");
+    // The launch follows by itself once the copy is complete (lease first, as for any shared profile).
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let state = invoke(&b, "get_profile_status", json!({ "profileId": local }))
+            .map(|s| s["profile"]["state"].clone())
+            .unwrap_or(Value::Null);
+        if state == json!("running") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never opened: {state}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(team(&b, &local)["phase"], json!("running"));
+    let c = copies(&b);
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0]["sync"]["linked"], json!(true));
+    close(&b, &local, b"cookies-from-b");
+}

@@ -71,15 +71,48 @@ export function can(role: Role | null | undefined, permission: Permission): bool
 export const ROLE_LABEL: Record<Role, string> = {
   owner: 'Owner',
   admin: 'Admin',
-  operator: 'Operator',
+  operator: 'Member',
   viewer: 'Viewer',
-  billing: 'Billing',
+  billing: 'Billing manager',
 };
 
 export const ROLE_HELP: Record<Role, string> = {
   owner: 'Everything, including ownership and billing.',
   admin: 'Members, invitations, clients, access and profiles. No billing.',
-  operator: 'Uses the clients and profiles they are given access to.',
-  viewer: 'Sees the clients and profiles they are given access to. Cannot open or export them.',
+  operator:
+    'Opens and uses the profiles they are given. No editing, exporting, deleting, sharing or billing unless given.',
+  viewer: 'Sees the profiles they are given. Cannot open or export them.',
   billing: 'Subscription and invoices only. No profiles.',
 };
+
+/** Every page of a list (100 at a time, at most `pages` pages); stale when any page came from the offline cache. */
+export async function getAll<T>(
+  backend: Backend,
+  path: string,
+  query: [string, string][] = [],
+  pages = 20,
+): Promise<{ items: T[]; stale: boolean; fetchedAt: string | null; complete: boolean }> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  let stale = false;
+  let fetchedAt: string | null = null;
+  for (let i = 0; i < pages; i++) {
+    const res: ApiResult<{ items: T[]; next_cursor: string | null }> = await get(backend, path, [
+      ...query,
+      ['limit', '100'],
+      ...(cursor ? ([['cursor', cursor]] as [string, string][]) : []),
+    ]);
+    items.push(...res.data.items);
+    stale ||= res.stale;
+    fetchedAt ??= res.fetchedAt;
+    cursor = res.data.next_cursor;
+    if (!cursor) return { items, stale, fetchedAt, complete: true };
+  }
+  return { items, stale, fetchedAt, complete: false };
+}
+
+/** The machine code of an IPC or API error, if any. */
+export const codeOf = (e: unknown): string | null =>
+  e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string'
+    ? (e as { code: string }).code
+    : null;

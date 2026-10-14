@@ -177,6 +177,11 @@ const RULES: &[Rule] = &[
     rule(Method::Put, "/v1/orgs/{org}/profiles/{prf}/folder"),
     rule(Method::Get, "/v1/orgs/{org}/feature-settings"),
     rule(Method::Put, "/v1/orgs/{org}/feature-settings"),
+    // R3 (ADR-0022): access chosen in one step (previewed before it is granted), a member's access replaced, and the
+    // access impact of moving a profile to another folder (live: shown just before the move).
+    rule(Method::Post, "/v1/orgs/{org}/access/preview"),
+    rule(Method::Put, "/v1/orgs/{org}/members/{usr}/access"),
+    live(Method::Get, "/v1/orgs/{org}/profiles/{prf}/folder-impact"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -293,6 +298,8 @@ pub fn check(
             "profile_id" => is_id("prf", v),
             "agent_id" => is_id("agt", v),
             "all" => v == "true" || v == "false",
+            // R3: a folder (or `none`: out of every folder).
+            "folder_id" => v == "none" || is_id("fld", v),
             _ => false,
         };
         if !ok || method != Method::Get || pairs.iter().any(|(pk, _): &(&str, &str)| *pk == k) {
@@ -681,5 +688,46 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+    #[test]
+    fn r3_team_sharing_routes() {
+        const USR: &str = "usr_01J9ZSEED0A010000000000000";
+        assert!(check("POST", &format!("/v1/orgs/{ORG}/access/preview"), &[], None).is_ok());
+        assert!(
+            check(
+                "PUT",
+                &format!("/v1/orgs/{ORG}/members/{USR}/access"),
+                &[],
+                None
+            )
+            .is_ok()
+        );
+        // Shown just before a move: never from the offline cache.
+        let impact = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/profiles/{PRF}/folder-impact"),
+            &q(&[("folder_id", "none")]),
+            None,
+        );
+        assert_eq!(impact.map(|a| a.cache_key), Ok(None));
+        assert_eq!(
+            check(
+                "GET",
+                &format!("/v1/orgs/{ORG}/profiles/{PRF}/folder-impact"),
+                &q(&[("folder_id", "nope")]),
+                None,
+            ),
+            Err(Refused::BadParameter)
+        );
+        // Granting stays a member-management action: the window cannot change roles through the access route.
+        assert_eq!(
+            check(
+                "POST",
+                &format!("/v1/orgs/{ORG}/members/{USR}/access"),
+                &[],
+                None
+            ),
+            Err(Refused::NotAllowed)
+        );
     }
 }
