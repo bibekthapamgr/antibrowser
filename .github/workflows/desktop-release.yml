@@ -6,10 +6,10 @@ name: desktop release
 #  release  build this commit's version (the version in tauri.conf.json), sign it and offer it on a channel
 #  promote  offer another channel's release, unchanged (the same signed files), e.g. canary → stable
 #  pause    stop offering updates on a channel (a release under investigation); resume undoes it
-#  revoke   mark app versions and browser runtime archives as known-bad: never offered or installed, a manager
-#           running one says it must be updated, a revoked runtime is not opened; never touches customer data
+#  revoke   mark app versions and browser runtime archives as known-bad on every channel: never offered or installed,
+#           a manager running one says it must be updated, a revoked runtime is not opened; never touches customer data
 #  minimum  every manager below this version says it must be updated
-#  refresh  re-sign the channel manifests (they expire after 90 days so a frozen copy cannot be replayed forever)
+#  refresh  re-sign the channel manifests (valid 30 days, re-signed weekly: a frozen copy stops working within weeks)
 #
 # Keys: the build jobs have no secrets. Only the `publish` job runs in the protected `release` environment (required
 # reviewer, main branch only), which holds TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD. It
@@ -100,7 +100,9 @@ jobs:
               [ "$FROM" != "$CHANNEL" ] || fail "promote from another channel" ;;
             pause|resume) ;;
             revoke)
-              [ -n "$VERSIONS$RUNTIME_SHA256" ] || fail "revoke: give versions and/or runtime SHA-256 values" ;;
+              [ -n "$VERSIONS$RUNTIME_SHA256" ] || fail "revoke: give versions and/or runtime SHA-256 values"
+              # A known-bad build is bad everywhere, and a computer learns revocations only from the channel it follows.
+              channels="dev canary stable" ;;
             minimum)
               [ -n "$VERSION" ] || fail "minimum: give the version" ;;
             refresh)

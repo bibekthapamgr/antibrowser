@@ -110,6 +110,9 @@ hba_file = '$DRILL/pg_hba.conf'
 ident_file = '$DRILL/pg_ident.conf'
 shared_buffers = 32MB
 max_connections = 20
+# Recover to the end of the archived log, then open: no read-only standby phase (it would also demand at least the
+# live server's max_connections and other limits, which this small cluster does not need).
+hot_standby = off
 archive_mode = off
 logging_collector = off
 EOF
@@ -118,7 +121,8 @@ printf 'local all all trust\n' > "$DRILL/pg_hba.conf"
 chown postgres:postgres "$DRILL/postgresql.conf" "$DRILL/pg_hba.conf" "$DRILL/pg_ident.conf"
 chmod 600 "$DRILL/postgresql.conf" "$DRILL/pg_hba.conf" "$DRILL/pg_ident.conf"
 port_in_use "$DRILL_PORT" && die "port $DRILL_PORT is in use"
-as_pg "$PG_BIN/pg_ctl" -D "$DRILL/data" -o "-c config_file=$DRILL/postgresql.conf" -l "$DRILL/run/drill.log" -w -t 900 start >/dev/null
+as_pg "$PG_BIN/pg_ctl" -D "$DRILL/data" -o "-c config_file=$DRILL/postgresql.conf" -l "$DRILL/run/drill.log" -w -t 900 start >/dev/null \
+  || { tail -30 "$DRILL/run/drill.log" >&2; die "the restored cluster did not start (its log is above)"; }
 for _ in $(seq 1 900); do
   [[ $(psql_drill -c 'select pg_is_in_recovery()' 2>/dev/null) == f ]] && break
   sleep 1

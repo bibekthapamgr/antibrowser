@@ -203,6 +203,29 @@ jobs:
           ss -ltnH | grep -q ':5499 ' && { echo "::error title=restore drill::the drill cluster still listens"; exit 1; }
           echo "::notice title=Restore drill::$(jq -r '"database and snapshot objects restored from the off-site copy into an isolated cluster; two tenants linked (row, object, key) without cross-access; recovery point \(.recovery_point_seconds) s, recovery time \(.recovery_time_seconds) s"' "$RUNNER_TEMP/drill.json")"
 
+      - name: Deleted snapshot objects stay off-site for the retention window (milestone 12)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=deletion retention::$1"; exit 1; }
+          key=$(sudo sed -n 's/^OBJECT_STORE_ACCESS_KEY_ID=//p' /etc/project-browser/api.env)
+          sec=$(sudo sed -n 's/^OBJECT_STORE_SECRET_ACCESS_KEY=//p' /etc/project-browser/api.env); echo "::add-mask::$sec"
+          r2sec=$(sudo sed -n 's/^R2_SECRET_ACCESS_KEY=//p' /etc/project-browser/backup.env); echo "::add-mask::$r2sec"
+          store() { curl --fail-with-body -sS --aws-sigv4 "aws:amz:us-east-1:s3" --user "$key:$sec" "$@"; }
+          r2keys() { curl --fail-with-body -sS --cacert /etc/pb-r2-standin-ca.pem --aws-sigv4 "aws:amz:auto:s3" --user "r2ci:$r2sec" \
+            "https://127.0.0.1:29443/pb-backups-ci?list-type=2&prefix=$1" | grep -o '<Key>[^<]*</Key>' || true; }
+          probe="orgs/ci-retention-probe-$(date +%s)"
+          printf 'probe' > "$RUNNER_TEMP/probe"
+          store -T "$RUNNER_TEMP/probe" "http://127.0.0.1:8333/pb-snapshots-dev/$probe"
+          sudo systemctl start pb-backup-objects.service
+          r2keys "objects/pb-snapshots-dev/$probe" | grep -q . || fail "a new object was not copied off-site"
+          # Deleted on the server (as the trash purge does): gone from the live copy, kept under objects-deleted/<date>/,
+          # which the R2 lifecycle rule removes after 30 days.
+          store -X DELETE "http://127.0.0.1:8333/pb-snapshots-dev/$probe"
+          sudo systemctl start pb-backup-objects.service
+          [ -z "$(r2keys "objects/pb-snapshots-dev/$probe")" ] || fail "a deleted object is still in the live off-site copy"
+          r2keys "objects-deleted/" | grep -q "/pb-snapshots-dev/$probe</Key>" || fail "a deleted object was not kept under objects-deleted/"
+          echo "::notice title=Deletion retention::a deleted snapshot object left the off-site copy and was kept under objects-deleted/<date>/ for the 30-day window"
+
       - name: Owner signs in again with the new password
         run: |
           PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" PB_EXPECT_PASSWORD_CHANGE=0 \

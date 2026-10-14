@@ -1,7 +1,7 @@
 /**
  * The caller's own devices. Revoking a device ends its sessions at once: its access tokens fail at the next request
  * and its refresh token can no longer be used. Revocation cannot erase anything already copied to a compromised
- * device (see docs/security/authentication-threat-review.md).
+ * device (see docs/identity/authentication-threat-review.md).
  */
 import { ApiError, Device } from '@pb/contracts';
 import Type from 'typebox';
