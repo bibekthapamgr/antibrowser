@@ -163,9 +163,7 @@ jobs:
       - name: Install headless Chromium for UI tests
         working-directory: apps/desktop
         run: |
-          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
-          echo "$out"
-          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+          ../../scripts/ci/headless-shell.sh
       - name: UI tests against the production bundle
         env:
           # Ubuntu 24.04 blocks unprivileged user namespaces; the page under test is our own local bundle.
@@ -195,9 +193,7 @@ jobs:
         shell: bash
         working-directory: apps/desktop
         run: |
-          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
-          echo "$out" | tail -1
-          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+          ../../scripts/ci/headless-shell.sh
           # Ubuntu 24.04 runners block the unprivileged user namespaces the sandbox needs; only these tests' own
           # browser runs without it (the app never disables it).
           echo "PB_CHROME_NO_SANDBOX=1" >> "$GITHUB_ENV"
@@ -251,9 +247,7 @@ jobs:
         shell: bash
         working-directory: apps/desktop
         run: |
-          out=$(pnpm exec browsers install chrome-headless-shell@stable --path "$RUNNER_TEMP/chrome")
-          echo "$out" | tail -1
-          echo "PB_CHROME_PATH=$(echo "$out" | tail -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+          ../../scripts/ci/headless-shell.sh
       - name: Rust tests on target OS
         shell: bash
         run: scripts/ci/annotate.sh "rust tests ${{ matrix.target }}" cargo test --workspace --locked --no-fail-fast
