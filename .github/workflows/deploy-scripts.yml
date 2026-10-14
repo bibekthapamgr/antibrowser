@@ -226,6 +226,34 @@ jobs:
           r2keys "objects-deleted/" | grep -q "/pb-snapshots-dev/$probe</Key>" || fail "a deleted object was not kept under objects-deleted/"
           echo "::notice title=Deletion retention::a deleted snapshot object left the off-site copy and was kept under objects-deleted/<date>/ for the 30-day window"
 
+      - name: Whole-server restore from the off-site copy (milestone 12)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=server restore::$1"; exit 1; }
+          db=$(sudo sed -n 's#^DATABASE_URL=.*/\([a-z_]*\)$#\1#p' /etc/project-browser/api.env)
+          psql_pg() { (cd /tmp && sudo runuser -u postgres -- /usr/lib/postgresql/18/bin/psql -X -q -tA -v ON_ERROR_STOP=1 -d "$db" "$@"); }
+          # The last change before the disaster must come back: restore-server sends the newest log off-site first.
+          note="ci whole-server restore $(date +%s)"
+          psql_pg -c "insert into app.recovery_markers (note) values ('$note')"
+          if sudo bash scripts/deploy/backup-setup.sh restore-server > "$RUNNER_TEMP/unconfirmed.log" 2>&1; then
+            fail "restore-server ran without --yes-replace-this-database"
+          fi
+          grep -q "Run again with --yes-replace-this-database" "$RUNNER_TEMP/unconfirmed.log" || { cat "$RUNNER_TEMP/unconfirmed.log"; fail "unexpected refusal"; }
+          start=$(date +%s)
+          scripts/ci/annotate.sh "restore-server" sudo bash scripts/deploy/backup-setup.sh restore-server --yes-replace-this-database
+          scripts/ci/annotate.sh "vps-setup.sh (after the restore)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
+          scripts/ci/annotate.sh "keycloak-setup.sh (after the restore)" sudo bash scripts/deploy/keycloak-setup.sh
+          took=$(( $(date +%s) - start ))
+          [ "$(psql_pg -c "select count(*) from app.recovery_markers where note = '$note'")" = 1 ] || fail "the last change before the restore is missing"
+          sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && /opt/node/bin/node \
+            --env-file=/etc/project-browser/api.env scripts/snapshot-smoke.ts --check /tmp/pb-smoke-state.json'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/owner.header" http://127.0.0.1:8080/v1/me)
+          [ "$code" = 200 ] || fail "the API session from before the restore stopped working (HTTP $code)"
+          sudo /usr/local/libexec/pb-backup status | tee "$RUNNER_TEMP/after-restore-status.txt"
+          grep -q "full backup" "$RUNNER_TEMP/after-restore-status.txt" || fail "backups did not resume after the restore"
+          sudo bash -c 'ls -d /var/lib/postgresql/18/main.before-restore-*' >/dev/null || fail "the replaced database was not kept aside"
+          echo "::notice title=Server restore::database and snapshot objects restored over the live server from the off-site copy, setup re-run, the last change kept, earlier sessions and snapshots working, backups resumed: ${took} s"
+
       - name: Owner signs in again with the new password
         run: |
           PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" PB_EXPECT_PASSWORD_CHANGE=0 \

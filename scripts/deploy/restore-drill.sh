@@ -104,8 +104,9 @@ cat > "$DRILL/postgresql.conf" <<EOF
 listen_addresses = ''
 port = $DRILL_PORT
 unix_socket_directories = '$DRILL/run'
-unix_socket_group = '$APP_USER'
-unix_socket_permissions = 0770
+# The folder (postgres:$APP_USER 0750) decides who reaches the socket: postgres is not in the $APP_USER group, so the
+# socket itself cannot be given that group.
+unix_socket_permissions = 0777
 hba_file = '$DRILL/pg_hba.conf'
 ident_file = '$DRILL/pg_ident.conf'
 shared_buffers = 32MB

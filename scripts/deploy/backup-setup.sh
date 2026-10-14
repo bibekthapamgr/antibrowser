@@ -19,6 +19,9 @@
 #                                           filled in)
 #   bash backup-setup.sh status             last backups, log archiving, last object copy
 #   bash backup-setup.sh backup-now [full|diff]
+#   bash backup-setup.sh restore-server [--target 'YYYY-MM-DD HH:MM:SS+00'] --yes-replace-this-database
+#                                           replace THIS server's database with the off-site backup and copy the
+#                                           snapshot objects back (a lost or corrupted server; see the runbook)
 # The timers run a root-owned copy of this script (/usr/local/libexec/pb-backup), never the pb user's checkout.
 set -Eeuo pipefail
 trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
@@ -103,6 +106,53 @@ EOF
   chmod 600 "$BACKUP_ENV"
 }
 
+# pgBackRest configuration (root:postgres 0640: PostgreSQL's archive command reads it).
+write_pgbackrest_conf() {
+  PG_DATA=$(psql_su -c 'show data_directory')
+  PG_SOCKET=$(psql_su -c 'show unix_socket_directories' | cut -d, -f1 | xargs)
+  EP=$(endpoint)
+  EP_HOST=${EP%%:*}; EP_PORT=443; [[ $EP == *:* ]] && EP_PORT=${EP##*:}
+  install -d -m 750 -o root -g postgres /etc/pgbackrest
+  install -d -m 750 -o postgres -g postgres /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest \
+    /var/lib/pgbackrest/lock
+  umask 027
+  cat > "$PGBR_CONF" <<EOF
+# Written by backup-setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ) from $BACKUP_ENV (rewritten on every run).
+[global]
+repo1-type=s3
+repo1-s3-endpoint=$EP_HOST
+repo1-storage-port=$EP_PORT
+repo1-s3-bucket=$R2_BUCKET
+repo1-s3-region=auto
+repo1-s3-uri-style=path
+repo1-s3-key=$R2_ACCESS_KEY_ID
+repo1-s3-key-secret=$R2_SECRET_ACCESS_KEY
+repo1-path=/pgbackrest
+repo1-cipher-type=aes-256-cbc
+repo1-cipher-pass=$(cat "$CIPHER_FILE")
+repo1-retention-full=$BACKUP_RETENTION_FULL
+repo1-bundle=y
+repo1-block=y
+$( [[ -n $BACKUP_CA_FILE ]] && echo "repo1-storage-ca-file=$BACKUP_CA_FILE" )
+compress-type=zst
+process-max=1
+start-fast=y
+archive-async=y
+archive-push-queue-max=$ARCHIVE_QUEUE_MAX
+spool-path=/var/spool/pgbackrest
+lock-path=/var/lib/pgbackrest/lock
+log-path=/var/log/pgbackrest
+log-level-console=info
+log-level-file=info
+
+[$STANZA]
+pg1-path=$PG_DATA
+pg1-socket-path=$PG_SOCKET
+EOF
+  umask 022
+  chown root:postgres "$PGBR_CONF"; chmod 640 "$PGBR_CONF"
+}
+
 # ----------------------------------------------------------------------------- subcommands used by the timers
 db_backup() {  # runs as postgres
   local type=${1:-auto}
@@ -138,6 +188,159 @@ objects_copy() {  # runs as pb-backup (reads only its own files: rclone.conf and
   printf '{"at":"%s","copy":%s}\n' "$(date -u +%FT%TZ)" "$count" > "$STATE_DIR/objects.json"
 }
 
+# Packages (pgBackRest from the distribution) and rclone (pinned, SHA-256 verified).
+install_tools() {
+  if [[ $(family) == rhel ]]; then
+    rpm -q pgbackrest >/dev/null 2>&1 || dnf install -y -q pgbackrest >/dev/null
+    rpm -q unzip >/dev/null 2>&1 || dnf install -y -q unzip >/dev/null
+  else
+    dpkg -s pgbackrest >/dev/null 2>&1 || apt-get install -y -qq pgbackrest >/dev/null
+    dpkg -s unzip >/dev/null 2>&1 || apt-get install -y -qq unzip >/dev/null
+  fi
+  ok "$(pgbackrest version)"
+
+  case "$(uname -m)" in
+    x86_64) RC_ASSET=rclone-$RCLONE_VERSION-linux-amd64; RC_SHA256=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702 ;;
+    aarch64) RC_ASSET=rclone-$RCLONE_VERSION-linux-arm64; RC_SHA256=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10 ;;
+    *) die "unsupported CPU architecture" ;;
+  esac
+  if [[ ! -x /opt/rclone/$RCLONE_VERSION/rclone ]]; then
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 "https://github.com/rclone/rclone/releases/download/$RCLONE_VERSION/$RC_ASSET.zip" -o "$tmp/rc.zip"
+    echo "$RC_SHA256  $tmp/rc.zip" | sha256sum -c --quiet - || die "the rclone download does not match its pinned SHA-256"
+    unzip -q "$tmp/rc.zip" "$RC_ASSET/rclone" -d "$tmp"
+    install -d -m 755 "/opt/rclone/$RCLONE_VERSION"
+    install -m 755 "$tmp/$RC_ASSET/rclone" "/opt/rclone/$RCLONE_VERSION/rclone"
+    rm -rf "$tmp"
+  fi
+  ln -sfn "/opt/rclone/$RCLONE_VERSION" /opt/rclone/current
+  ok "rclone $RCLONE_VERSION (SHA-256 verified)"
+}
+
+# The database system the bucket's backups belong to: "" (none yet), or its system identifier. Fails when the
+# backups cannot be read (wrong passphrase or token).
+repo_system_id() {
+  local json
+  json=$(as_pg pgbackrest --stanza=$STANZA --output=json --log-level-console=off info) || return 1
+  printf '%s' "$json" | /opt/node/bin/node -e '
+    let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
+      const s = (JSON.parse(d || "[]")[0]) || {};
+      const db = (s.db || []).at(-1);
+      console.log(s.status && s.status.code === 0 && db ? String(db["system-id"]) : "");
+    });'
+}
+local_system_id() { psql_su -c 'select system_identifier from pg_control_system()'; }
+last_archived() { psql_su -c "select coalesce(last_archived_wal, '') from pg_stat_archiver"; }
+
+# ----------------------------------------------------------------------------- restore this server from R2
+# Replaces THIS server's database with the off-site backup (the newest point, or --target in UTC) and copies every
+# snapshot object back into the storage. For a lost or corrupted server; docs/security/dr-runbook.md has the order
+# of steps (offline root key and passphrase first; afterwards vps-setup.sh twice and keycloak-setup.sh).
+restore_server() {
+  [[ $EUID -eq 0 ]] || die "run as root"
+  local target="" confirm=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --target) target=${2:-}; shift 2 ;;
+      --yes-replace-this-database) confirm=1; shift ;;
+      *) die "unknown option $1 (restore-server [--target 'YYYY-MM-DD HH:MM:SS+00'] --yes-replace-this-database)" ;;
+    esac
+  done
+  if [[ -n $target && ! $target =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}(:[0-9]{2})?\+00$ ]]; then
+    die "--target must be a UTC time like '2026-10-14 08:30:00+00'"
+  fi
+  load_backup_env
+  configured || die "fill in $BACKUP_ENV with the R2 bucket and a token for it first"
+  [[ -s $CIPHER_FILE ]] || die "$CIPHER_FILE is missing: copy the backup passphrase from your offline copy (root, mode 600)"
+  [[ -s $ENV_DIR/kms-root.json ]] || die "$ENV_DIR/kms-root.json is missing: copy the root key from your offline copy first"
+  [[ -s $ENV_DIR/api.env ]] || die "run vps-setup.sh first: it installs PostgreSQL, the storage and the app"
+  install_tools
+  chown root:root "$CIPHER_FILE"; chmod 600 "$CIPHER_FILE"
+  write_pgbackrest_conf
+  local repo_id here_id
+  repo_id=$(repo_system_id) \
+    || die "the backups in r2:$R2_BUCKET cannot be read: check the token in $BACKUP_ENV and that $CIPHER_FILE is the passphrase they were made with"
+  [[ -n $repo_id ]] || die "r2:$R2_BUCKET holds no database backups"
+  here_id=$(local_system_id)
+  echo "    backups of database system $repo_id; this server's database: $here_id"
+  as_pg pgbackrest --stanza=$STANZA info | sed 's/^/    /'
+  (( confirm )) || die "this REPLACES this server's database with the backup above. Run again with --yes-replace-this-database"
+
+  step "Restoring the database from r2:$R2_BUCKET${target:+ to $target}"
+  if [[ $repo_id == "$here_id" && $(psql_su -c 'show archive_mode') == on ]]; then
+    # The same database (corruption, a mistake): its newest changes go off-site first, so nothing is lost.
+    local wal
+    wal=$(psql_su -c 'select pg_walfile_name(pg_switch_wal())')
+    for _ in $(seq 1 60); do
+      [[ ! "$(last_archived)" < "$wal" ]] && break
+      sleep 2
+    done
+  fi
+  local unit
+  for unit in pb-backup-db.timer pb-backup-objects.timer pb-worker pb-api keycloak; do
+    systemctl stop "$unit" 2>/dev/null || true
+  done
+  local data aside
+  data=$(psql_su -c 'show data_directory')
+  systemctl stop "$(pg_service)"
+  aside="$data.before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+  mv "$data" "$aside"
+  install -d -m 700 -o postgres -g postgres "$data"
+  local args=(--stanza=$STANZA --archive-mode=off --log-level-console=warn)
+  [[ -n $target ]] && args+=(--type=time "--target=$target" --target-action=promote)
+  if ! as_pg pgbackrest "${args[@]}" restore; then
+    rm -rf "$data"; mv "$aside" "$data"; systemctl start "$(pg_service)" || true
+    die "the restore failed; the previous database was put back"
+  fi
+  systemctl start "$(pg_service)"
+  for _ in $(seq 1 1800); do
+    [[ $(psql_su -c 'select pg_is_in_recovery()' 2>/dev/null) == f ]] && break
+    sleep 2
+  done
+  [[ $(psql_su -c 'select pg_is_in_recovery()') == f ]] || die "the restored database did not finish recovery (journalctl -u $(pg_service))"
+  ok "database restored (the previous one is kept in $aside until you delete it)"
+
+  step "Copying the snapshot objects back from r2:$R2_BUCKET"
+  local tmp key sec store_ep load_ca=()
+  tmp=$(mktemp -d); chmod 700 "$tmp"
+  key=$(sed -n 's/^OBJECT_STORE_ACCESS_KEY_ID=//p' "$ENV_DIR/api.env")
+  sec=$(sed -n 's/^OBJECT_STORE_SECRET_ACCESS_KEY=//p' "$ENV_DIR/api.env")
+  store_ep=$(sed -n 's/^OBJECT_STORE_ENDPOINT=//p' "$ENV_DIR/api.env")
+  [[ -n $BACKUP_CA_FILE ]] && load_ca=(--ca-cert "$BACKUP_CA_FILE")
+  umask 077
+  cat > "$tmp/rclone.conf" <<RCLONE
+[store]
+type = s3
+provider = SeaweedFS
+access_key_id = $key
+secret_access_key = $sec
+endpoint = $store_ep
+force_path_style = true
+
+[r2]
+type = s3
+provider = Cloudflare
+access_key_id = $R2_ACCESS_KEY_ID
+secret_access_key = $R2_SECRET_ACCESS_KEY
+endpoint = https://$(endpoint)
+region = auto
+no_check_bucket = true
+RCLONE
+  umask 022
+  if ! /opt/rclone/current/rclone --config "$tmp/rclone.conf" "${load_ca[@]}" copy "r2:$R2_BUCKET/objects/$OBJECT_BUCKET" \
+      "store:$OBJECT_BUCKET" --size-only --transfers 2 --checkers 4 --retries 3 --stats-one-line -v > "$tmp/copy.log" 2>&1; then
+    tail -5 "$tmp/copy.log" >&2; rm -rf "$tmp"
+    die "copying the objects back failed; run restore-server again (the database step is repeated)"
+  fi
+  tail -2 "$tmp/copy.log" | sed 's/^/    /'
+  rm -rf "$tmp"
+  ok "snapshot objects copied back into $OBJECT_BUCKET (objects newer than the restored database are removed later by the worker's orphan sweep)"
+  # Keycloak keeps its data in the restored cluster; on a new server keycloak-setup.sh gives its role the right password.
+  systemctl list-unit-files keycloak.service >/dev/null 2>&1 && { systemctl start keycloak 2>/dev/null || true; }
+  printf '\n    Next: run vps-setup.sh twice (new database passwords for the restored roles, log archiving back on, services\n'
+  printf '    started), then keycloak-setup.sh. Check with: bash %s status, and run restore-drill.sh.\n' "$LIBEXEC"
+}
+
 status() {
   load_backup_env
   if ! configured; then echo "Off-site backups: not set up yet (fill in $BACKUP_ENV, then run vps-setup.sh)."; return 0; fi
@@ -159,8 +362,9 @@ case "${1:-setup}" in
     load_backup_env; configured || die "off-site backups are not set up (fill in $BACKUP_ENV)"
     as_pg pgbackrest --stanza=$STANZA --type="${2:-full}" backup; ok "database backup done"
     systemctl start pb-backup-objects.service; ok "object copy done"; exit 0 ;;
+  restore-server) shift; restore_server "$@"; exit 0 ;;
   setup) ;;
-  *) die "usage: backup-setup.sh [setup|status|backup-now [full|diff]]" ;;
+  *) die "usage: backup-setup.sh [setup|status|backup-now [full|diff]|restore-server [--target …] --yes-replace-this-database]" ;;
 esac
 
 # ----------------------------------------------------------------------------- setup
@@ -179,32 +383,7 @@ fi
 # A custom endpoint is for test stand-ins on this machine only.
 [[ -z $R2_ENDPOINT || $R2_ENDPOINT =~ ^127\.0\.0\.1:[0-9]+$ ]] || die "R2_ENDPOINT may only point at 127.0.0.1 (tests)"
 
-# Packages.
-if [[ $(family) == rhel ]]; then
-  rpm -q pgbackrest >/dev/null 2>&1 || dnf install -y -q pgbackrest >/dev/null
-  rpm -q unzip >/dev/null 2>&1 || dnf install -y -q unzip >/dev/null
-else
-  dpkg -s pgbackrest >/dev/null 2>&1 || apt-get install -y -qq pgbackrest >/dev/null
-  dpkg -s unzip >/dev/null 2>&1 || apt-get install -y -qq unzip >/dev/null
-fi
-ok "$(pgbackrest version)"
-
-case "$(uname -m)" in
-  x86_64) RC_ASSET=rclone-$RCLONE_VERSION-linux-amd64; RC_SHA256=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702 ;;
-  aarch64) RC_ASSET=rclone-$RCLONE_VERSION-linux-arm64; RC_SHA256=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10 ;;
-  *) die "unsupported CPU architecture" ;;
-esac
-if [[ ! -x /opt/rclone/$RCLONE_VERSION/rclone ]]; then
-  tmp=$(mktemp -d)
-  curl -fsSL --retry 3 "https://github.com/rclone/rclone/releases/download/$RCLONE_VERSION/$RC_ASSET.zip" -o "$tmp/rc.zip"
-  echo "$RC_SHA256  $tmp/rc.zip" | sha256sum -c --quiet - || die "the rclone download does not match its pinned SHA-256"
-  unzip -q "$tmp/rc.zip" "$RC_ASSET/rclone" -d "$tmp"
-  install -d -m 755 "/opt/rclone/$RCLONE_VERSION"
-  install -m 755 "$tmp/$RC_ASSET/rclone" "/opt/rclone/$RCLONE_VERSION/rclone"
-  rm -rf "$tmp"
-fi
-ln -sfn "/opt/rclone/$RCLONE_VERSION" /opt/rclone/current
-ok "rclone $RCLONE_VERSION (SHA-256 verified)"
+install_tools
 
 id "$BACKUP_USER" >/dev/null 2>&1 \
   || useradd --system --home-dir "$STATE_DIR" --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$BACKUP_USER"
@@ -221,50 +400,7 @@ if [[ ! -s $CIPHER_FILE ]]; then
 fi
 chown root:root "$CIPHER_FILE"; chmod 600 "$CIPHER_FILE"
 
-# pgBackRest configuration (root:postgres 0640: PostgreSQL's archive command reads it).
-PG_DATA=$(psql_su -c 'show data_directory')
-PG_SOCKET=$(psql_su -c 'show unix_socket_directories' | cut -d, -f1 | xargs)
-EP=$(endpoint)
-EP_HOST=${EP%%:*}; EP_PORT=443; [[ $EP == *:* ]] && EP_PORT=${EP##*:}
-install -d -m 750 -o root -g postgres /etc/pgbackrest
-install -d -m 750 -o postgres -g postgres /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest \
-  /var/lib/pgbackrest/lock
-umask 027
-cat > "$PGBR_CONF" <<EOF
-# Written by backup-setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ) from $BACKUP_ENV (rewritten on every run).
-[global]
-repo1-type=s3
-repo1-s3-endpoint=$EP_HOST
-repo1-storage-port=$EP_PORT
-repo1-s3-bucket=$R2_BUCKET
-repo1-s3-region=auto
-repo1-s3-uri-style=path
-repo1-s3-key=$R2_ACCESS_KEY_ID
-repo1-s3-key-secret=$R2_SECRET_ACCESS_KEY
-repo1-path=/pgbackrest
-repo1-cipher-type=aes-256-cbc
-repo1-cipher-pass=$(cat "$CIPHER_FILE")
-repo1-retention-full=$BACKUP_RETENTION_FULL
-repo1-bundle=y
-repo1-block=y
-$( [[ -n $BACKUP_CA_FILE ]] && echo "repo1-storage-ca-file=$BACKUP_CA_FILE" )
-compress-type=zst
-process-max=1
-start-fast=y
-archive-async=y
-archive-push-queue-max=$ARCHIVE_QUEUE_MAX
-spool-path=/var/spool/pgbackrest
-lock-path=/var/lib/pgbackrest/lock
-log-path=/var/log/pgbackrest
-log-level-console=info
-log-level-file=info
-
-[$STANZA]
-pg1-path=$PG_DATA
-pg1-socket-path=$PG_SOCKET
-EOF
-umask 022
-chown root:postgres "$PGBR_CONF"; chmod 640 "$PGBR_CONF"
+write_pgbackrest_conf
 ok "pgBackRest writes to r2:$R2_BUCKET/pgbackrest (encrypted here; configuration root:postgres 0640)"
 
 # Log archiving: at most 60 s of the newest changes can be missing from the off-site copy (plus upload time).
@@ -278,6 +414,12 @@ if [[ $before != on ]]; then
   ok "PostgreSQL restarted with log archiving on"
 else
   psql_su -c 'select pg_reload_conf()' >/dev/null
+fi
+# A bucket that holds another database's backups is never taken over (a new server must restore them instead).
+repo_id=$(repo_system_id) \
+  || die "the backups already in r2:$R2_BUCKET cannot be read with this token and $CIPHER_FILE (restore the passphrase from your offline copy, or use a new, empty bucket)"
+if [[ -n $repo_id && $repo_id != "$(local_system_id)" ]]; then
+  die "r2:$R2_BUCKET holds backups of another database (system $repo_id). To restore them onto this server: bash $0 restore-server (docs/security/dr-runbook.md). To start fresh: use a new, empty bucket."
 fi
 as_pg pgbackrest --stanza=$STANZA --log-level-console=warn stanza-create
 as_pg pgbackrest --stanza=$STANZA --log-level-console=warn check || die "pgBackRest cannot write to R2 (check $BACKUP_ENV)"
