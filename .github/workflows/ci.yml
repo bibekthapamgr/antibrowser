@@ -94,9 +94,10 @@ jobs:
       - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
       - name: stripe-mock tests ran
         run: |
-          cd services/api && npx vitest run test/stripe-mock.test.ts --reporter=verbose 2>&1 | tee "$RUNNER_TEMP/stripe-mock.out" | tail -5
-          grep -qE "Tests +[0-9]+ passed" "$RUNNER_TEMP/stripe-mock.out" && ! grep -q "skipped" "$RUNNER_TEMP/stripe-mock.out" \
+          cd services/api && npx vitest run test/stripe-mock.test.ts --reporter=json --outputFile="$RUNNER_TEMP/stripe-mock.json" > /dev/null
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numPendingTests == 0' "$RUNNER_TEMP/stripe-mock.json" > /dev/null \
             || { echo "::error title=stripe-mock::the Stripe request-shape tests did not all run"; exit 1; }
+          echo "::notice title=stripe-mock::$(jq -r '"\(.numPassedTests) request-shape tests passed against Stripe'"'"'s OpenAPI (stripe-mock v0.206.0)"' "$RUNNER_TEMP/stripe-mock.json")"
       # Stripe test mode with test clocks (services/api/test/stripe-sandbox.test.ts), only when the owner has added the
       # repository secret STRIPE_TEST_SECRET_KEY (a TEST key). Pull requests never get it.
       - name: Stripe test mode (sandbox)
