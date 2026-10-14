@@ -68,6 +68,10 @@ Owner decisions (14 October 2026):
 - CI per commit includes a CycloneDX SBOM: 614 Rust crates and 255 npm packages.
 - Full CI on Windows x64, macOS arm64 and Linux green at `d7a2187`
   ([ci 38544680575](https://github.com/bibekthapamgr/antibrowser/actions/runs/38544680575)).
+- **Owner's server (AlmaLinux 8.10, 1 CPU, 1.7 GB RAM), 14 October 2026:** off-site backups to Cloudflare R2 set
+  up (first full backup, log archiving, object copies); restore drill passed with recovery point **3 s** and
+  recovery time **560 s** (report `/var/lib/pb-backup/drills/20261014T124604Z.json`); the offline kit was copied into
+  an encrypted disk image on the owner's computer.
 - Installers for 0.12.0 at `ad2f007`
   ([desktop internal build 38541968148](https://github.com/bibekthapamgr/antibrowser/actions/runs/38541968148)).
 
