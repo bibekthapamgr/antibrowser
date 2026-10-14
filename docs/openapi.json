@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Project Browser control-plane API",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "description": "Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation jobs. Authentication: OIDC sign-in in the system browser (Authorization Code + PKCE), then API session tokens (ADR-0013); or an API token (`Authorization: Bearer pbt_…`, ADR-0017) on the routes marked \"API tokens: yes\", acting as its owner within its scopes and restrictions. Authorization: organization role combined with client/profile grants, deny by default; identifiers outside the caller’s reach answer 404 exactly like nonexistent ones."
   },
   "components": {
