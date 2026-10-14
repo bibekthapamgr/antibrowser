@@ -13,6 +13,9 @@ on:
       - 'scripts/ci/keycloak-sign-in-check.ts'
       - 'services/api/scripts/snapshot-smoke.ts'
       - 'services/api/scripts/storage-check.ts'
+      - 'services/api/scripts/restore-drill.ts'
+      - 'services/api/src/backup/restore-check.ts'
+      - 'infra/db/migrations/**'
       - '.github/workflows/deploy-scripts.yml'
   workflow_dispatch:
 
@@ -125,6 +128,35 @@ jobs:
           fi
           echo "::notice title=Support console::served at /console/ with its CSP; Keycloak console client (PKCE, CORS for the console origin only); non-staff refused; staff session after staff.ts add"
 
+      # Milestone 12: a stand-in for Cloudflare R2 (the pinned SeaweedFS the setup installed, on its own ports, over
+      # TLS with a throwaway CA), so the update run below sets up pgBackRest and the object copy for real.
+      - name: Off-site backup target (R2 stand-in over TLS)
+        run: |
+          set -euo pipefail
+          d=$RUNNER_TEMP/r2; mkdir -p "$d/data"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1" \
+            -keyout "$d/key.pem" -out "$d/cert.pem" 2>/dev/null
+          sudo install -m 644 "$d/cert.pem" /etc/pb-r2-standin-ca.pem
+          secret=$(openssl rand -hex 24); echo "::add-mask::$secret"
+          printf '{"identities":[{"name":"r2","credentials":[{"accessKey":"r2ci","secretKey":"%s"}],"actions":["Admin","Read","List","Write","Tagging"]}]}' "$secret" > "$d/s3.json"
+          sudo bash -c "nohup /opt/seaweedfs/current/weed server -dir='$d/data' -ip=127.0.0.1 -ip.bind=127.0.0.1 \
+            -master.port=29333 -volume.port=28090 -filer.port=28888 -s3 -s3.port=29443 -s3.config='$d/s3.json' \
+            -s3.cert.file='$d/cert.pem' -s3.key.file='$d/key.pem' > '$d/weed.log' 2>&1 &"
+          for _ in $(seq 1 60); do curl -s -o /dev/null --cacert "$d/cert.pem" https://127.0.0.1:29443/ && break; sleep 1; done
+          curl --fail-with-body -sS --cacert "$d/cert.pem" --aws-sigv4 "aws:amz:auto:s3" --user "r2ci:$secret" \
+            -X PUT https://127.0.0.1:29443/pb-backups-ci
+          sudo test -f /etc/project-browser/backup.env
+          grep -q "off-site backups not set up yet" "$RUNNER_TEMP/vps-setup.log" \
+            || { echo "::error title=backups::vps-setup.sh did not report off-site backups as not set up"; exit 1; }
+          sudo bash -c "umask 077; cat > /etc/project-browser/backup.env" <<EOF
+          R2_ENDPOINT=127.0.0.1:29443
+          R2_BUCKET=pb-backups-ci
+          R2_ACCESS_KEY_ID=r2ci
+          R2_SECRET_ACCESS_KEY=$secret
+          BACKUP_CA_FILE=/etc/pb-r2-standin-ca.pem
+          BACKUP_RETENTION_FULL=2
+          EOF
+
       - name: Update path - vps-setup.sh and keycloak-setup.sh again
         run: |
           scripts/ci/annotate.sh "vps-setup.sh (update)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests
@@ -138,6 +170,35 @@ jobs:
           # The session from before the updates still works: same signing key, sign-in settings kept by vps-setup.sh.
           code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/owner.header" http://127.0.0.1:8080/v1/me)
           [ "$code" = 200 ] || { echo "::error title=update::the earlier API session stopped working (HTTP $code)"; exit 1; }
+
+      - name: Off-site backups and restore drill (milestone 12)
+        run: |
+          set -euo pipefail
+          perm() { [ "$(sudo stat -c '%a %U:%G' "$1")" = "$2" ] || { echo "::error title=backups::$1 is $(sudo stat -c '%a %U:%G' "$1"), expected $2"; exit 1; }; }
+          perm /etc/project-browser/backup.env "600 root:root"
+          perm /etc/project-browser/backup-cipher-pass "600 root:root"
+          perm /etc/pgbackrest/pgbackrest.conf "640 root:postgres"
+          perm /etc/pb-backup/rclone.conf "640 root:pb-backup"
+          perm /usr/local/libexec/pb-backup "755 root:root"
+          # Separate permissions: the app user reaches no backup credential, the backup user no database one.
+          for f in /etc/pgbackrest/pgbackrest.conf /etc/pb-backup/rclone.conf /etc/project-browser/backup.env; do
+            if sudo runuser -u pb -- cat "$f" >/dev/null 2>&1; then echo "::error title=backups::user pb can read $f"; exit 1; fi
+          done
+          for f in /etc/pgbackrest/pgbackrest.conf /etc/project-browser/api.env /etc/project-browser/backup.env; do
+            if sudo runuser -u pb-backup -- cat "$f" >/dev/null 2>&1; then echo "::error title=backups::user pb-backup can read $f"; exit 1; fi
+          done
+          systemctl is-enabled --quiet pb-backup-db.timer && systemctl is-enabled --quiet pb-backup-objects.timer
+          sudo /usr/local/libexec/pb-backup status | tee "$RUNNER_TEMP/backup-status.txt"
+          grep -q "full backup" "$RUNNER_TEMP/backup-status.txt"
+          sudo systemctl start pb-backup-db.service
+          scripts/ci/annotate.sh "restore drill" sudo bash scripts/deploy/restore-drill.sh | tee "$RUNNER_TEMP/drill.log"
+          report=$(sudo ls -t /var/lib/pb-backup/drills/ | head -1)
+          sudo cat "/var/lib/pb-backup/drills/$report" | tee "$RUNNER_TEMP/drill.json" > /dev/null
+          jq -e '.result == "pass" and .recovery_point_seconds < 900 and .checks.ok and .checks.marker_found and ([.checks.isolation[].ok] | all) and (.checks.tenants | length == 2)' "$RUNNER_TEMP/drill.json" > /dev/null \
+            || { cat "$RUNNER_TEMP/drill.json"; echo "::error title=restore drill::the report does not show a passing two-tenant restore"; exit 1; }
+          sudo test ! -e /var/lib/pb-drill || { echo "::error title=restore drill::restored files were left behind"; exit 1; }
+          ss -ltnH | grep -q ':5499 ' && { echo "::error title=restore drill::the drill cluster still listens"; exit 1; }
+          echo "::notice title=Restore drill::$(jq -r '"database and snapshot objects restored from the off-site copy into an isolated cluster; two tenants linked (row, object, key) without cross-access; recovery point \(.recovery_point_seconds) s, recovery time \(.recovery_time_seconds) s"' "$RUNNER_TEMP/drill.json")"
 
       - name: Owner signs in again with the new password
         run: |

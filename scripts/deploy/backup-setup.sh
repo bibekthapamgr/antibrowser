@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+# Project Browser — off-site backups for the test server (milestone 12, ADR-0019; runbook: docs/security/dr-runbook.md).
+#
+#   Database          pgBackRest: point-in-time recovery for PostgreSQL. A full backup weekly, a differential one
+#                     daily, and the write-ahead log pushed at least every 60 seconds, to a Cloudflare R2 bucket.
+#                     Encrypted here (AES-256) before upload with a passphrase that exists only on this server and in
+#                     your offline copy. Retention: 4 weekly full backups with their log (about 4-5 weeks).
+#   Snapshot objects  rclone copies the snapshot storage to the same bucket every 10 minutes with a READ-ONLY storage
+#                     identity. Objects deleted here move to objects-deleted/<date>/ there; an R2 lifecycle rule you
+#                     add deletes them after 30 days. Snapshots are already encrypted with organization keys, and the
+#                     root key that unlocks those is never copied to R2.
+#   Separation        The R2 token (limited to one bucket) and the passphrase are root-only files. The app's database
+#                     roles and storage credentials cannot reach the backups; the backup jobs cannot change app data.
+#                     A full disk is never caused by a broken upload: at most 2 GiB of log waits for R2, after which
+#                     pgBackRest reports the gap instead of filling the disk.
+#
+# Usage (as root):
+#   bash backup-setup.sh                    set up or update (vps-setup.sh runs it; does nothing until backup.env is
+#                                           filled in)
+#   bash backup-setup.sh status             last backups, log archiving, last object copy
+#   bash backup-setup.sh backup-now [full|diff]
+# The timers run a root-owned copy of this script (/usr/local/libexec/pb-backup), never the pb user's checkout.
+set -Eeuo pipefail
+trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
+cd /
+
+ENV_DIR=/etc/project-browser
+BACKUP_ENV=$ENV_DIR/backup.env
+CIPHER_FILE=$ENV_DIR/backup-cipher-pass
+STORE_RO_ENV=$ENV_DIR/store-readonly.env
+RCLONE_DIR=/etc/pb-backup
+RCLONE_CONF=$RCLONE_DIR/rclone.conf
+PGBR_CONF=/etc/pgbackrest/pgbackrest.conf
+STATE_DIR=/var/lib/pb-backup
+LIBEXEC=/usr/local/libexec/pb-backup
+BACKUP_USER=pb-backup
+STANZA=pb
+RCLONE_VERSION=v1.75.2
+OBJECT_BUCKET=pb-snapshots-dev
+ARCHIVE_QUEUE_MAX=2GiB
+
+step() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
+ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
+warn() { printf '    \033[33m!!\033[0m  %s\n' "$*"; }
+die()  { printf '\n\033[1;31mSTOPPED:\033[0m %s\n' "$*" >&2; exit 1; }
+
+family() {
+  . /etc/os-release
+  case "${ID} ${ID_LIKE:-}" in
+    *rhel*|*fedora*|*centos*|*rocky*|*almalinux*) echo rhel ;;
+    *) echo debian ;;
+  esac
+}
+pg_bin() { [[ $(family) == rhel ]] && echo /usr/pgsql-18/bin || echo /usr/lib/postgresql/18/bin; }
+pg_service() { [[ $(family) == rhel ]] && echo postgresql-18 || echo postgresql; }
+psql_su() { (cd /tmp && runuser -u postgres -- "$(pg_bin)/psql" -X -q -tA -v ON_ERROR_STOP=1 "$@"); }
+as_pg() { (cd /tmp && runuser -u postgres -- "$@"); }
+
+# Reads backup.env without executing it (only KEY=value lines; values are never echoed).
+load_backup_env() {
+  R2_ACCOUNT_ID=""; R2_BUCKET=""; R2_ACCESS_KEY_ID=""; R2_SECRET_ACCESS_KEY=""; R2_ENDPOINT=""; BACKUP_CA_FILE=""
+  BACKUP_RETENTION_FULL=4
+  [[ -f $BACKUP_ENV ]] || return 0
+  while IFS='=' read -r key value; do
+    [[ $key =~ ^[A-Z0-9_]+$ ]] || continue
+    value=${value%$'\r'}
+    case "$key" in
+      R2_ACCOUNT_ID|R2_BUCKET|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|R2_ENDPOINT|BACKUP_CA_FILE|BACKUP_RETENTION_FULL)
+        printf -v "$key" '%s' "$value" ;;
+    esac
+  done < <(grep -E '^[A-Z0-9_]+=' "$BACKUP_ENV")
+}
+
+configured() {
+  [[ -n $R2_BUCKET && -n $R2_ACCESS_KEY_ID && -n $R2_SECRET_ACCESS_KEY && ( -n $R2_ACCOUNT_ID || -n $R2_ENDPOINT ) ]]
+}
+
+# host[:port] of the S3 endpoint (R2: <account>.r2.cloudflarestorage.com).
+endpoint() { if [[ -n $R2_ENDPOINT ]]; then echo "$R2_ENDPOINT"; else echo "$R2_ACCOUNT_ID.r2.cloudflarestorage.com"; fi; }
+
+write_template() {
+  [[ -f $BACKUP_ENV ]] && return 0
+  install -d -m 750 -o root -g root "$ENV_DIR" 2>/dev/null || true
+  umask 077
+  cat > "$BACKUP_ENV" <<'EOF'
+# Off-site backups (milestone 12). Written once by vps-setup.sh; from then on this file is YOURS and never overwritten.
+# Fill it in on the server (e.g. with nano), then run vps-setup.sh again. Never paste these values into a chat.
+#
+# 1. Cloudflare dashboard -> R2 -> Create bucket (for example pb-backups-test). Keep the default (no public access).
+# 2. R2 -> Manage API tokens -> Create API token: permission "Object Read & Write", "Apply to specific buckets only"
+#    -> that bucket. Copy the Access Key ID and Secret Access Key (shown once) and your Account ID below.
+# 3. In the bucket's settings add an Object lifecycle rule: prefix "objects-deleted/", delete objects after 30 days.
+#    (Optional, recommended: a bucket lock rule of 7 days on prefix "pgbackrest/" so nothing can delete fresh backups.)
+R2_ACCOUNT_ID=
+R2_BUCKET=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+# Weekly full database backups kept (each with its write-ahead log). 4 = about a month of point-in-time recovery.
+BACKUP_RETENTION_FULL=4
+EOF
+  umask 022
+  chmod 600 "$BACKUP_ENV"
+}
+
+# ----------------------------------------------------------------------------- subcommands used by the timers
+db_backup() {  # runs as postgres
+  local type=${1:-auto}
+  if [[ $type == auto ]]; then
+    # Full on Sundays and whenever the newest full backup is older than 8 days; differential otherwise.
+    local last_full
+    last_full=$(pgbackrest --stanza=$STANZA --output=json info 2>/dev/null | /opt/node/bin/node -e '
+      let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
+        const stops = ((JSON.parse(d || "[]")[0] || {}).backup || []).filter((b) => b.type === "full").map((b) => b.timestamp.stop);
+        console.log(stops.length ? Math.max(...stops) : "");
+      });' || true)
+    if [[ $(date -u +%u) == 7 || -z $last_full ]] || (( $(date +%s) - last_full > 8 * 86400 )); then
+      type="full"
+    else
+      type="diff"
+    fi
+  fi
+  pgbackrest --stanza=$STANZA --type="$type" backup
+}
+
+objects_copy() {  # runs as pb-backup (reads only its own files: rclone.conf and bucket.env)
+  R2_BUCKET=$(sed -n 's/^R2_BUCKET=//p' "$STATE_DIR/bucket.env")
+  [[ -n $R2_BUCKET ]] || { echo "no bucket configured" >&2; return 1; }
+  local load_ca=()
+  [[ -n ${BACKUP_CA_FILE:-} ]] && load_ca=(--ca-cert "$BACKUP_CA_FILE")
+  local day; day=$(date -u +%F)
+  /opt/rclone/current/rclone --config "$RCLONE_CONF" "${load_ca[@]}" sync "store:$OBJECT_BUCKET" \
+    "r2:$R2_BUCKET/objects/$OBJECT_BUCKET" --backup-dir "r2:$R2_BUCKET/objects-deleted/$day/$OBJECT_BUCKET" \
+    --size-only --fast-list --transfers 2 --checkers 4 --retries 3 --low-level-retries 10 --stats-one-line -v 2>&1 \
+    | tail -5
+  local count
+  count=$(/opt/rclone/current/rclone --config "$RCLONE_CONF" "${load_ca[@]}" size --json "r2:$R2_BUCKET/objects/$OBJECT_BUCKET" 2>/dev/null || echo '{}')
+  printf '{"at":"%s","copy":%s}\n' "$(date -u +%FT%TZ)" "$count" > "$STATE_DIR/objects.json"
+}
+
+status() {
+  load_backup_env
+  if ! configured; then echo "Off-site backups: not set up yet (fill in $BACKUP_ENV, then run vps-setup.sh)."; return 0; fi
+  echo "Database (pgBackRest, stanza $STANZA):"
+  as_pg pgbackrest --stanza=$STANZA info | sed 's/^/    /'
+  echo "Log archiving:"
+  psql_su -c "select '    archived ' || archived_count || ', last ' || coalesce(last_archived_wal, '-') || ' at ' || coalesce(last_archived_time::text, '-') || '; failed ' || failed_count || coalesce(', last failure ' || last_failed_time::text, '') from pg_stat_archiver"
+  echo "Snapshot objects:"
+  if [[ -f $STATE_DIR/objects.json ]]; then sed 's/^/    /' "$STATE_DIR/objects.json"; else echo "    not copied yet"; fi
+  echo "Timers:"
+  systemctl list-timers 'pb-backup-*' --no-pager | sed 's/^/    /'
+}
+
+case "${1:-setup}" in
+  db-backup) shift; db_backup "${1:-auto}"; exit 0 ;;
+  objects) objects_copy; exit 0 ;;
+  status) status; exit 0 ;;
+  backup-now)
+    load_backup_env; configured || die "off-site backups are not set up (fill in $BACKUP_ENV)"
+    as_pg pgbackrest --stanza=$STANZA --type="${2:-full}" backup; ok "database backup done"
+    systemctl start pb-backup-objects.service; ok "object copy done"; exit 0 ;;
+  setup) ;;
+  *) die "usage: backup-setup.sh [setup|status|backup-now [full|diff]]" ;;
+esac
+
+# ----------------------------------------------------------------------------- setup
+[[ $EUID -eq 0 ]] || die "run as root"
+step "Off-site backups (pgBackRest + rclone to Cloudflare R2)"
+write_template
+load_backup_env
+if ! configured; then
+  ok "off-site backups not set up yet: fill in $BACKUP_ENV (Cloudflare R2), then run vps-setup.sh again"
+  exit 0
+fi
+[[ $BACKUP_RETENTION_FULL =~ ^[1-9][0-9]?$ ]] || die "BACKUP_RETENTION_FULL must be 1-99"
+[[ $R2_BUCKET =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || die "R2_BUCKET is not a valid bucket name"
+[[ -z $R2_ACCOUNT_ID || $R2_ACCOUNT_ID =~ ^[0-9a-f]{32}$ ]] || die "R2_ACCOUNT_ID should be 32 hexadecimal characters"
+[[ -z $BACKUP_CA_FILE || -r $BACKUP_CA_FILE ]] || die "BACKUP_CA_FILE is not readable"
+# A custom endpoint is for test stand-ins on this machine only.
+[[ -z $R2_ENDPOINT || $R2_ENDPOINT =~ ^127\.0\.0\.1:[0-9]+$ ]] || die "R2_ENDPOINT may only point at 127.0.0.1 (tests)"
+
+# Packages.
+if [[ $(family) == rhel ]]; then
+  rpm -q pgbackrest >/dev/null 2>&1 || dnf install -y -q pgbackrest >/dev/null
+  rpm -q unzip >/dev/null 2>&1 || dnf install -y -q unzip >/dev/null
+else
+  dpkg -s pgbackrest >/dev/null 2>&1 || apt-get install -y -qq pgbackrest >/dev/null
+  dpkg -s unzip >/dev/null 2>&1 || apt-get install -y -qq unzip >/dev/null
+fi
+ok "$(pgbackrest version)"
+
+case "$(uname -m)" in
+  x86_64) RC_ASSET=rclone-$RCLONE_VERSION-linux-amd64; RC_SHA256=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702 ;;
+  aarch64) RC_ASSET=rclone-$RCLONE_VERSION-linux-arm64; RC_SHA256=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10 ;;
+  *) die "unsupported CPU architecture" ;;
+esac
+if [[ ! -x /opt/rclone/$RCLONE_VERSION/rclone ]]; then
+  tmp=$(mktemp -d)
+  curl -fsSL --retry 3 "https://github.com/rclone/rclone/releases/download/$RCLONE_VERSION/$RC_ASSET.zip" -o "$tmp/rc.zip"
+  echo "$RC_SHA256  $tmp/rc.zip" | sha256sum -c --quiet - || die "the rclone download does not match its pinned SHA-256"
+  unzip -q "$tmp/rc.zip" "$RC_ASSET/rclone" -d "$tmp"
+  install -d -m 755 "/opt/rclone/$RCLONE_VERSION"
+  install -m 755 "$tmp/$RC_ASSET/rclone" "/opt/rclone/$RCLONE_VERSION/rclone"
+  rm -rf "$tmp"
+fi
+ln -sfn "/opt/rclone/$RCLONE_VERSION" /opt/rclone/current
+ok "rclone $RCLONE_VERSION (SHA-256 verified)"
+
+id "$BACKUP_USER" >/dev/null 2>&1 \
+  || useradd --system --home-dir "$STATE_DIR" --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$BACKUP_USER"
+install -d -m 750 -o "$BACKUP_USER" -g "$BACKUP_USER" "$STATE_DIR"
+install -d -m 750 -o "$BACKUP_USER" -g "$BACKUP_USER" "$STATE_DIR/drills"
+
+# The passphrase: created once, never replaced (backups made with it cannot be read without it).
+NEW_CIPHER=0
+if [[ ! -s $CIPHER_FILE ]]; then
+  umask 077
+  head -c 48 /dev/urandom | base64 -w0 > "$CIPHER_FILE"
+  umask 022
+  NEW_CIPHER=1
+fi
+chown root:root "$CIPHER_FILE"; chmod 600 "$CIPHER_FILE"
+
+# pgBackRest configuration (root:postgres 0640: PostgreSQL's archive command reads it).
+PG_DATA=$(psql_su -c 'show data_directory')
+PG_SOCKET=$(psql_su -c 'show unix_socket_directories' | cut -d, -f1 | xargs)
+EP=$(endpoint)
+EP_HOST=${EP%%:*}; EP_PORT=443; [[ $EP == *:* ]] && EP_PORT=${EP##*:}
+install -d -m 750 -o root -g postgres /etc/pgbackrest
+install -d -m 750 -o postgres -g postgres /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest \
+  /var/lib/pgbackrest/lock
+umask 027
+cat > "$PGBR_CONF" <<EOF
+# Written by backup-setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ) from $BACKUP_ENV (rewritten on every run).
+[global]
+repo1-type=s3
+repo1-s3-endpoint=$EP_HOST
+repo1-storage-port=$EP_PORT
+repo1-s3-bucket=$R2_BUCKET
+repo1-s3-region=auto
+repo1-s3-uri-style=path
+repo1-s3-key=$R2_ACCESS_KEY_ID
+repo1-s3-key-secret=$R2_SECRET_ACCESS_KEY
+repo1-path=/pgbackrest
+repo1-cipher-type=aes-256-cbc
+repo1-cipher-pass=$(cat "$CIPHER_FILE")
+repo1-retention-full=$BACKUP_RETENTION_FULL
+repo1-bundle=y
+repo1-block=y
+$( [[ -n $BACKUP_CA_FILE ]] && echo "repo1-storage-ca-file=$BACKUP_CA_FILE" )
+compress-type=zst
+process-max=1
+start-fast=y
+archive-async=y
+archive-push-queue-max=$ARCHIVE_QUEUE_MAX
+spool-path=/var/spool/pgbackrest
+lock-path=/var/lib/pgbackrest/lock
+log-path=/var/log/pgbackrest
+log-level-console=info
+log-level-file=info
+
+[$STANZA]
+pg1-path=$PG_DATA
+pg1-socket-path=$PG_SOCKET
+EOF
+umask 022
+chown root:postgres "$PGBR_CONF"; chmod 640 "$PGBR_CONF"
+ok "pgBackRest writes to r2:$R2_BUCKET/pgbackrest (encrypted here; configuration root:postgres 0640)"
+
+# Log archiving: at most 60 s of the newest changes can be missing from the off-site copy (plus upload time).
+before=$(psql_su -c 'show archive_mode')
+psql_su -c "alter system set archive_mode = 'on'" \
+        -c "alter system set archive_command = 'pgbackrest --stanza=$STANZA archive-push %p'" \
+        -c "alter system set archive_timeout = '60s'"
+if [[ $before != on ]]; then
+  systemctl restart "$(pg_service)"
+  for _ in $(seq 1 30); do as_pg "$(pg_bin)/pg_isready" -q -h 127.0.0.1 && break; sleep 1; done
+  ok "PostgreSQL restarted with log archiving on"
+else
+  psql_su -c 'select pg_reload_conf()' >/dev/null
+fi
+as_pg pgbackrest --stanza=$STANZA --log-level-console=warn stanza-create
+as_pg pgbackrest --stanza=$STANZA --log-level-console=warn check || die "pgBackRest cannot write to R2 (check $BACKUP_ENV)"
+ok "log archiving to R2 works (pgbackrest check)"
+
+# rclone: snapshot storage (read-only identity written by vps-setup.sh) -> R2.
+[[ -r $STORE_RO_ENV ]] || die "$STORE_RO_ENV is missing (run vps-setup.sh)"
+STORE_RO_KEY=$(sed -n 's/^STORE_READONLY_ACCESS_KEY_ID=//p' "$STORE_RO_ENV")
+STORE_RO_SECRET=$(sed -n 's/^STORE_READONLY_SECRET_ACCESS_KEY=//p' "$STORE_RO_ENV")
+STORE_ENDPOINT=$(sed -n 's/^STORE_ENDPOINT=//p' "$STORE_RO_ENV")
+R2_URL="https://$EP"
+install -d -m 750 -o root -g "$BACKUP_USER" "$RCLONE_DIR"
+umask 027
+cat > "$RCLONE_CONF" <<EOF
+# Written by backup-setup.sh (rewritten on every run). The store identity can only read and list.
+[store]
+type = s3
+provider = SeaweedFS
+access_key_id = $STORE_RO_KEY
+secret_access_key = $STORE_RO_SECRET
+endpoint = $STORE_ENDPOINT
+force_path_style = true
+
+[r2]
+type = s3
+provider = Cloudflare
+access_key_id = $R2_ACCESS_KEY_ID
+secret_access_key = $R2_SECRET_ACCESS_KEY
+endpoint = $R2_URL
+region = auto
+no_check_bucket = true
+EOF
+umask 022
+chown root:"$BACKUP_USER" "$RCLONE_CONF"; chmod 640 "$RCLONE_CONF"
+
+# The timers run a root-owned copy of this script.
+install -d -m 755 /usr/local/libexec
+install -m 755 -o root -g root "$(readlink -f "$0")" "$LIBEXEC"
+CA_ENV=""; [[ -n $BACKUP_CA_FILE ]] && CA_ENV="Environment=BACKUP_CA_FILE=$BACKUP_CA_FILE"
+cat > /etc/systemd/system/pb-backup-db.service <<UNIT
+[Unit]
+Description=Project Browser database backup to R2 (pgBackRest; full weekly, differential daily)
+After=$(pg_service).service
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=$LIBEXEC db-backup
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest
+UNIT
+cat > /etc/systemd/system/pb-backup-db.timer <<'UNIT'
+[Unit]
+Description=Daily database backup (full on Sundays)
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+cat > /etc/systemd/system/pb-backup-objects.service <<UNIT
+[Unit]
+Description=Project Browser snapshot objects copy to R2 (rclone, read-only source)
+After=pb-storage.service
+[Service]
+Type=oneshot
+User=$BACKUP_USER
+Group=$BACKUP_USER
+$CA_ENV
+ExecStart=$LIBEXEC objects
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$STATE_DIR
+UNIT
+cat > /etc/systemd/system/pb-backup-objects.timer <<'UNIT'
+[Unit]
+Description=Copy of snapshot objects to R2 every 10 minutes
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=60
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q --now pb-backup-db.timer pb-backup-objects.timer
+# The object copy runs as the backup user, which cannot read backup.env: it gets the bucket name from here.
+umask 027
+printf 'R2_BUCKET=%s\n' "$R2_BUCKET" > "$STATE_DIR/bucket.env"
+umask 022
+chown root:"$BACKUP_USER" "$STATE_DIR/bucket.env"; chmod 640 "$STATE_DIR/bucket.env"
+
+# First backups.
+if ! as_pg pgbackrest --stanza=$STANZA --output=json info | grep -q '"type":"full"'; then
+  as_pg pgbackrest --stanza=$STANZA --type=full --log-level-console=warn backup
+  ok "first full database backup made"
+else
+  ok "database backups present ($(as_pg pgbackrest --stanza=$STANZA --output=json info | grep -o '"label":"[^"]*"' | wc -l) kept)"
+fi
+systemctl start pb-backup-objects.service || { journalctl -u pb-backup-objects -n 20 --no-pager; die "the object copy failed"; }
+ok "snapshot objects copied to r2:$R2_BUCKET/objects/$OBJECT_BUCKET"
+ok "timers: database daily 03:17 UTC (full on Sundays), log every 60 s, objects every 10 min  |  status: bash /usr/local/libexec/pb-backup status"
+
+if [[ $NEW_CIPHER == 1 ]]; then
+  printf '\n\033[1;33m    IMPORTANT:\033[0m a new backup passphrase was created. Without it the database backups in R2 can\n'
+  printf '    never be read. Copy it off the server now and keep it offline, next to the root key copy:\n'
+  printf '      scp root@<this-server>:%s ./project-browser-backup-passphrase.txt\n' "$CIPHER_FILE"
+fi

@@ -166,18 +166,29 @@ describe('roles', () => {
     // Milestone 11: platform tables have no organization context (the plan catalog, provider events received
     // before their organization is known, staff, staff sessions, support access requests, alerts and the platform
     // audit). Only the webhook route, the worker and the staff-only support routes use them (ADR-0018).
+    // Milestone 12: break-glass grants (staff), the audit chain head and recovery markers (no application access).
     expect(rows.map((r) => r.relname)).toEqual([
       'billing_alerts',
       'billing_webhook_events',
+      'break_glass_grants',
       'outbox_events',
       'plans',
       'platform_audit',
+      'platform_audit_head',
       'platform_staff',
       'processed_events',
+      'recovery_markers',
       'staff_sessions',
       'support_access_requests',
     ]);
-    for (const table of ['outbox_events', 'processed_events', 'rate_limit_counters', 'used_id_tokens']) {
+    for (const table of [
+      'outbox_events',
+      'processed_events',
+      'rate_limit_counters',
+      'used_id_tokens',
+      'platform_audit_head',
+      'recovery_markers',
+    ]) {
       await expect(asApp({}, (c) => c.query(`select * from ${table}`))).rejects.toThrow(/permission denied/);
     }
   });

@@ -4,7 +4,8 @@
  * and restores it (restore plan, signed download, SHA-256). The uploaded object is a well-formed sealed header with
  * random bytes: the server never decrypts, it checks size, header and digest.
  *
- * Usage: node --env-file=<api.env> scripts/snapshot-smoke.ts [--save <file>] [--check <file>]
+ * Usage: node --env-file=<api.env> scripts/snapshot-smoke.ts [--org acme|beta] [--save <file>] [--check <file>]
+ *   --org   the fixture tenant (default acme; the restore drill backs up both, milestone 12)
  *   --save  remember the snapshot (to check it is still restorable later, e.g. after a root key rotation)
  *   --check restore a remembered snapshot instead of making a new one
  */
@@ -22,8 +23,12 @@ const arg = (name: string) => {
   return i > 0 ? process.argv[i + 1] : undefined;
 };
 const base = `http://127.0.0.1:${config.port}/v1`;
-const org = FIXTURES.orgs.acme.id;
-const token = await devToken(config.devAuth.secret, FIXTURES.users.acmeOwner.id, '15m');
+const tenant = arg('--org') ?? 'acme';
+if (tenant !== 'acme' && tenant !== 'beta') throw new Error('--org acme|beta');
+const org = FIXTURES.orgs[tenant].id;
+const owner = tenant === 'acme' ? FIXTURES.users.acmeOwner : FIXTURES.users.betaOwner;
+const device = tenant === 'acme' ? FIXTURES.devices.acmeOwnerLaptop : FIXTURES.devices.betaOwnerLaptop;
+const token = await devToken(config.devAuth.secret, owner.id, '15m');
 const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
 async function call<T>(method: string, path: string, body?: unknown, idempotent = false): Promise<T> {
@@ -83,7 +88,7 @@ const profile = (
 const lease = await call<{ fencing_token: string }>(
   'POST',
   `/orgs/${org}/profiles/${profile}/lease`,
-  { device_id: FIXTURES.devices.acmeOwnerLaptop.id },
+  { device_id: device.id },
   true,
 );
 const init = await call<{
@@ -139,7 +144,7 @@ await call('POST', `/orgs/${org}/profiles/${profile}/lease/release`, { fencing_t
 if (state !== 'committed') throw new Error(`the worker did not commit the snapshot (state ${state})`);
 const version = await restore(profile, digest);
 const save = arg('--save');
-if (save) writeFileSync(save, JSON.stringify({ profile, snapshot: init.key.snapshot_id, digest }));
+if (save) writeFileSync(save, JSON.stringify({ org, profile, snapshot: init.key.snapshot_id, digest }));
 console.log(
   `snapshot smoke: backed up and restored version ${version} (${object.length} bytes, verified by the worker)`,
 );

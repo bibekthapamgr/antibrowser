@@ -227,11 +227,17 @@ if ! systemctl is-active --quiet pb-storage; then
   done
 fi
 # New random S3 credentials on every run, like the database passwords; storage and API get them together.
+# Milestone 12: a second identity that can only read and list the snapshot bucket, for the off-site copy.
 S3_KEY="pb$(randhex 8)"; S3_SECRET=$(randhex 24)
+S3_RO_KEY="pbro$(randhex 8)"; S3_RO_SECRET=$(randhex 24)
 install -d -m 750 -o root -g "$STORE_USER" "$STORE_CONF_DIR"
 umask 027
-printf '{"identities":[{"name":"project-browser","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}\n' \
-  "$S3_KEY" "$S3_SECRET" > "$STORE_CONF_DIR/s3.json"
+printf '{"identities":[{"name":"project-browser","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]},{"name":"backup-readonly","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Read:pb-snapshots-dev","List:pb-snapshots-dev"]}]}\n' \
+  "$S3_KEY" "$S3_SECRET" "$S3_RO_KEY" "$S3_RO_SECRET" > "$STORE_CONF_DIR/s3.json"
+install -d -m 750 -o root -g "$APP_USER" "$ENV_DIR"
+umask 077
+printf 'STORE_ENDPOINT=http://127.0.0.1:%s\nSTORE_READONLY_ACCESS_KEY_ID=%s\nSTORE_READONLY_SECRET_ACCESS_KEY=%s\n' \
+  "$S3_PORT" "$S3_RO_KEY" "$S3_RO_SECRET" > "$ENV_DIR/store-readonly.env"
 umask 022
 chown root:"$STORE_USER" "$STORE_CONF_DIR/s3.json"; chmod 640 "$STORE_CONF_DIR/s3.json"
 cat > /etc/systemd/system/pb-storage.service <<UNIT
@@ -656,6 +662,11 @@ fi
 pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT|${STORE_PORTS// /|})\$" | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
 [[ -z $pub ]] && ok "PostgreSQL, storage and API listen on localhost only" || die "something listens publicly: $pub"
 
+# ----------------------------------------------------------------------------- off-site backups (milestone 12)
+# Run from a root-owned copy; it installs its own root-owned copy for the timers.
+install -m 700 -o root -g root "$APP_DIR/scripts/deploy/backup-setup.sh" /root/.pb-backup-setup.sh
+bash /root/.pb-backup-setup.sh || die "the off-site backup setup failed (see above)"
+
 # ----------------------------------------------------------------------------- summary
 step "Done"
 TUNNEL_EXTRA=" -L $S3_PORT:127.0.0.1:$S3_PORT"; SIGN_IN_HINT=""
@@ -680,6 +691,8 @@ cat <<EOF
                runuser -u pb -- bash -c "cd $APP_DIR/services/api && /opt/node/bin/node --env-file=$ENV_FILE scripts/staff.ts add you@example.com --roles support_lead,billing_admin")
     Billing:   $BILLING_ENV (yours; Stripe TEST key and prices)  |  forwarder: journalctl -u pb-stripe-listen -f
     Root key:  $KMS_FILE   |  bash $APP_DIR/scripts/deploy/root-key.sh status
+    Off-site:  $ENV_DIR/backup.env (yours; Cloudflare R2)  |  status: bash /usr/local/libexec/pb-backup status
+               restore drill: \\cp -f $APP_DIR/scripts/deploy/restore-drill.sh /root/ && bash /root/restore-drill.sh
 EOF
 if [[ $NEW_ROOT_KEY == 1 ]]; then
   printf '\n\033[1;33m    IMPORTANT:\033[0m a new backup root key was created. Without it no organization backup on this\n'
