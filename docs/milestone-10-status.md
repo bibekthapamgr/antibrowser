@@ -58,10 +58,10 @@ Playwright debugging sessions that need the computer's own consent.
 | Webhook duplicate documented and deduplicable | [webhooks.md](automation/webhooks.md) (at least once, same `webhook-id` on every copy); SDK example deduplicates; worker tests |
 | SSRF fixture destinations blocked | Contract vectors (IPv4/IPv6 ranges, mapped, NAT64, 6to4, local names, credentials, ports); API refuses them at create/update; worker refuses a name resolving to a blocked address and never follows redirects; worker egress firewall on the test server |
 | Agent disconnect resumes only safe steps and reports ambiguous outcomes | Desktop: a lost answer → the computer stops reporting, closes the profile, and resumes the unfinished navigation step under a new lease (open not repeated); API: resume plans, `outcome_unknown` never repeated, `AGENT_LOST` after the resume window |
-| Deliver API docs, SDK examples, threat review, job dashboard, integration tests | Links above; dashboard screenshots in `docs/design/org-automation-*.png`; UI e2e with axe for the new screens in light and dark |
+| Deliver API docs, SDK examples, threat review, job dashboard, integration tests | Links above; dashboard screenshots in `docs/design/org-automation-*.png`; UI e2e with axe for the new screens in light and dark; the desktop's agent client end to end against the real API, PostgreSQL and S3 in CI (claim, lease, reports, screenshot upload, cancel, removal) |
 
-Test counts: Rust 317 across the workspace locally (new: desktop automation 7, real-browser job 1, DevTools crate 9 unit
-+ 3 real-Chromium, launch 1, storage 1, window allowlist 1, agent helpers 2); API 443 (+ 9 gated on Keycloak/S3; new:
+Test counts: Rust 318 across the workspace locally (new: desktop automation 7, real-browser job 1, real-API agent
+client 1, DevTools crate 9 unit + 3 real-Chromium, launch 1, storage 1, window allowlist 1, agent helpers 2); API 443 (+ 9 gated on Keycloak/S3; new:
 30 automation scenarios, 2 SDK-against-API, 8 operations × 5 roles, every new route in the cross-tenant swaps); worker
 18 (11 webhooks); contracts 24 (shared approved-site vectors, SSRF vectors); config 8; SDK 8 + the Playwright
 compatibility test; UI unit 30; UI end-to-end 169 (4 new flows and 4 new screens in light and dark with axe).

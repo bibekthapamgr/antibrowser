@@ -7,6 +7,10 @@
 //! a request, a handoff with a note, a forced takeover with a stale upload kept as a recovery copy, removed access —
 //! and the audit trail of the sequence.
 //!
+//! Milestone 10 (`automation_against_the_real_api`): the desktop agent's client — enroll, poll, claim, the session
+//! lease with the job's key, step reports, a screenshot upload, a cancel reaching the computer, removal — against the
+//! real API, so the JSON shapes both sides use are checked together.
+//!
 //! Runs when `PB_E2E_API` names the file written by `services/api/scripts/e2e-server.ts` (CI job "sync end to
 //! end"); skipped otherwise.
 
@@ -15,6 +19,7 @@ use pb_sync::api::{
     CommitRequest, InitRequest, InitResult, Operation, PartUrl, RestorePlan, SnapshotInfo,
     StoredPart,
 };
+use pb_sync::automation::{AutomationApi, EnrollRequest, JobReport, PollRequest, RunningJob};
 use pb_sync::portability::{self, Here, Portability};
 use pb_sync::rest::{BearerTransport, RestApi, Transport};
 use pb_sync::{
@@ -932,5 +937,307 @@ fn sessions_against_the_real_api() {
 
     for line in &report {
         println!("E2E-SESSIONS: {line}");
+    }
+}
+
+// ------------------------------------------------------------------------------------------------- milestone 10
+
+#[test]
+fn automation_against_the_real_api() {
+    let Ok(path) = std::env::var("PB_E2E_API") else {
+        eprintln!("skipped: PB_E2E_API is not set (see services/api/scripts/e2e-server.ts)");
+        return;
+    };
+    let cfg: Value = serde_json::from_slice(&fs::read(&path).unwrap_or_else(|e| panic!("{e}")))
+        .unwrap_or_default();
+    let org = cfg["org"].as_str().unwrap_or_default().to_owned();
+    let owner = actor(&cfg, "owner");
+    let site = "https://portal.example.com";
+    let call = |method: Method, p: &str, idem: Option<&str>, body: Option<Value>| {
+        owner
+            .api
+            .transport
+            .call(method, &format!("/v1/orgs/{org}{p}"), idem, body.as_ref())
+    };
+    let mut report = vec![];
+
+    // Setup as the organization would: approved sites, a fresh profile, a job with a screenshot.
+    let settings =
+        call(Method::Get, "/automation/settings", None, None).unwrap_or_else(|e| panic!("{e}"));
+    call(
+        Method::Put,
+        "/automation/settings",
+        None,
+        Some(json!({ "expected_version": settings["version"], "allowed_origins": [site] })),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let profile = call(
+        Method::Post,
+        "/profiles",
+        None,
+        Some(json!({ "name": format!("automation {}", key("e2e-")) })),
+    )
+    .unwrap_or_else(|e| panic!("{e}"))["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let job_body = json!({
+        "profile_id": profile,
+        "label": "real API",
+        "steps": [
+            { "action": "open_url", "url": format!("{site}/login") },
+            { "action": "screenshot", "label": "login" }
+        ]
+    });
+    let idem = key("job-");
+    let created = call(
+        Method::Post,
+        "/automation/jobs",
+        Some(&idem),
+        Some(job_body.clone()),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let job_id = created["job"]["id"].as_str().unwrap_or_default().to_owned();
+    let again = call(
+        Method::Post,
+        "/automation/jobs",
+        Some(&idem),
+        Some(job_body),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again["job"]["id"], json!(job_id));
+    report.push("a repeated job request answered the same job".to_owned());
+
+    // This computer enrolls and polls: the job is claimed with its lease key.
+    let agent = owner
+        .api
+        .enroll_agent(
+            &org,
+            &EnrollRequest {
+                device_id: owner.device.clone(),
+                name: Some("e2e computer".into()),
+                accepts: "mine".into(),
+                max_jobs: 2,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    let poll = |running: Vec<RunningJob>| {
+        owner
+            .api
+            .poll_agent(
+                &org,
+                &agent.id,
+                &PollRequest {
+                    running,
+                    capacity: 1,
+                    debug_allowed: false,
+                    browser_version: Some("155.0.8059.39".into()),
+                    platform: Some("linux-x64".into()),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{e}"))
+    };
+    let answer = poll(vec![]);
+    let claimed = answer
+        .assigned
+        .iter()
+        .find(|c| c.job.id == job_id)
+        .cloned()
+        .unwrap_or_else(|| panic!("job not claimed: {answer:?}"));
+    assert_eq!(claimed.allowed_origins, vec![site.to_owned()]);
+    assert_eq!(claimed.resume_from, Some(0));
+    assert!(claimed.lease_key.starts_with(&job_id));
+    let attempt = claimed.job.attempt;
+
+    // The session lease, taken with the job's key (a retry gets the same lease), then reported.
+    let opened = owner
+        .api
+        .open_session(&org, &profile, &claimed.lease_key, &open_request(&owner))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let replay = owner
+        .api
+        .open_session(&org, &profile, &claimed.lease_key, &open_request(&owner))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(replay.lease.id, opened.lease.id);
+    let send = |r: JobReport| {
+        owner
+            .api
+            .report_job(&org, &job_id, &r)
+            .unwrap_or_else(|e| panic!("{r:?}: {e}"))
+    };
+    assert_eq!(
+        send(JobReport::Started {
+            attempt,
+            lease_id: opened.lease.id.clone(),
+            fencing_token: opened.lease.fencing_token.clone(),
+        })
+        .state,
+        "RUNNING"
+    );
+    for step in &claimed.steps {
+        send(JobReport::StepStarted {
+            attempt,
+            seq: step.seq,
+        });
+        let output = match step.action.as_str() {
+            "open_profile" => {
+                json!({ "restored": false, "browser_version": "155.0.8059.39", "elapsed_ms": 900 })
+            }
+            "open_url" => json!({ "final_origin": site, "http_status": 200, "elapsed_ms": 640 }),
+            "screenshot" => {
+                let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe0];
+                jpeg.resize(2048, 0x11);
+                let art = owner
+                    .api
+                    .upload_artifact(&org, &job_id, step.seq, attempt, 1280, 720, &jpeg)
+                    .unwrap_or_else(|e| panic!("{e}"));
+                json!({ "artifact_id": art, "width": 1280, "height": 720, "elapsed_ms": 300 })
+            }
+            "close_profile" => {
+                owner
+                    .api
+                    .release_session(
+                        &org,
+                        &profile,
+                        &opened.lease.id,
+                        &opened.lease.fencing_token,
+                        SessionOutcome::Closed,
+                        None,
+                    )
+                    .unwrap_or_else(|e| panic!("{e}"));
+                json!({ "backup": "not_needed", "elapsed_ms": 200 })
+            }
+            other => panic!("unexpected step {other}"),
+        };
+        send(JobReport::StepFinished {
+            attempt,
+            seq: step.seq,
+            state: "succeeded".into(),
+            error_code: None,
+            output: Some(output),
+        });
+    }
+    let done = send(JobReport::Finished {
+        attempt,
+        state: "SUCCEEDED".into(),
+        error_code: None,
+    });
+    assert_eq!(done.state, "SUCCEEDED");
+    let detail = call(
+        Method::Get,
+        &format!("/automation/jobs/{job_id}"),
+        None,
+        None,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(detail["artifacts"].as_array().map(Vec::len), Some(1));
+    report.push(format!(
+        "job claimed, run under lease {} and finished SUCCEEDED with {} steps and a screenshot",
+        opened.lease.id,
+        claimed.steps.len()
+    ));
+
+    // A cancel reaches the computer with its next report; the profile is given back and the job ends CANCELED.
+    let second = call(
+        Method::Post,
+        "/automation/jobs",
+        Some(&key("job-")),
+        Some(json!({ "profile_id": profile, "steps": [{ "action": "open_url", "url": format!("{site}/") }] })),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let second_id = second["job"]["id"].as_str().unwrap_or_default().to_owned();
+    let c2 = poll(vec![])
+        .assigned
+        .into_iter()
+        .find(|c| c.job.id == second_id)
+        .unwrap_or_else(|| panic!("second job not claimed"));
+    let lease2 = owner
+        .api
+        .open_session(&org, &profile, &c2.lease_key, &open_request(&owner))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let report2 = |r: JobReport| {
+        owner
+            .api
+            .report_job(&org, &second_id, &r)
+            .unwrap_or_else(|e| panic!("{r:?}: {e}"))
+    };
+    report2(JobReport::Started {
+        attempt: c2.job.attempt,
+        lease_id: lease2.lease.id.clone(),
+        fencing_token: lease2.lease.fencing_token.clone(),
+    });
+    call(
+        Method::Post,
+        &format!("/automation/jobs/{second_id}/cancel"),
+        None,
+        Some(json!({ "reason": "e2e" })),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let beat = poll(vec![RunningJob {
+        job_id: second_id.clone(),
+        attempt: c2.job.attempt,
+    }]);
+    assert!(beat.cancel.contains(&second_id), "{beat:?}");
+    let close_seq = c2
+        .steps
+        .iter()
+        .find(|s| s.action == "close_profile")
+        .map(|s| s.seq)
+        .unwrap_or_default();
+    report2(JobReport::StepStarted {
+        attempt: c2.job.attempt,
+        seq: close_seq,
+    });
+    owner
+        .api
+        .release_session(
+            &org,
+            &profile,
+            &lease2.lease.id,
+            &lease2.lease.fencing_token,
+            SessionOutcome::Closed,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    report2(JobReport::StepFinished {
+        attempt: c2.job.attempt,
+        seq: close_seq,
+        state: "succeeded".into(),
+        error_code: None,
+        output: Some(json!({ "backup": "not_needed", "elapsed_ms": 10 })),
+    });
+    let ended = report2(JobReport::Finished {
+        attempt: c2.job.attempt,
+        state: "CANCELED".into(),
+        error_code: Some("CANCELED".into()),
+    });
+    assert_eq!(ended.state, "CANCELED");
+    report.push(
+        "a cancel reached the computer with its next poll; closed and reported CANCELED".to_owned(),
+    );
+
+    // Removed: the computer can no longer poll.
+    owner
+        .api
+        .remove_agent(&org, &agent.id)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let gone = owner.api.poll_agent(
+        &org,
+        &agent.id,
+        &PollRequest {
+            running: vec![],
+            capacity: 1,
+            debug_allowed: false,
+            browser_version: None,
+            platform: None,
+        },
+    );
+    assert!(
+        matches!(&gone, Err(e) if e.is_code("NOT_FOUND")),
+        "{gone:?}"
+    );
+    report.push("a removed computer gets NOT_FOUND when it polls".to_owned());
+    for line in &report {
+        println!("E2E-AUTOMATION: {line}");
     }
 }

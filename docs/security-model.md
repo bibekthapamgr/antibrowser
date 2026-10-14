@@ -155,6 +155,10 @@ This document states what the product protects, what it does not, and the disclo
   late first connection, a second client, the app's id range), no debugging port switch, `navigator.webdriver` true in
   real Chromium. Window allowlist: enrolling, polling, reports, uploads, screenshots and job creation are refused to the
   window.
+- Real API (`crates/sync/tests/real_api.rs`, CI): the desktop's agent client against the real API, PostgreSQL and S3 —
+  a repeated job request answers the same job, the claim carries the approved sites and the lease key (a retried open
+  gets the same lease), steps reported under the lease with a screenshot upload, a cancel reaching the computer with
+  its next poll, a removed computer refused when it polls.
 
 ## Known gaps after milestone 10
 - A job or Playwright session acts inside a signed-in profile; approved sites and typed steps limit jobs, but a debugging
