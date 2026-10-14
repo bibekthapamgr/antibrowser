@@ -54,13 +54,13 @@ in the linked documents; this page is the entry point.
 | Failed migration | `security.test.ts` "a failing migration changes nothing…"; `crates/storage` `failed_migration_keeps_the_previous_database_and_can_recover` |
 
 ## Restore evidence
-From CI (`deploy-scripts.yml`, a fresh Ubuntu 24.04 VM with the server scripts, a TLS R2 stand-in and two fixture
-tenants):
+From CI ([deploy scripts run 38540671668](https://github.com/bibekthapamgr/antibrowser/actions/runs/38540671668) at
+commit `22d095f`: a fresh Ubuntu 24.04 VM with the server scripts, a TLS R2 stand-in and two fixture tenants):
 
 | Exercise | Result |
 |---|---|
-| Restore drill into an isolated cluster | RESTORE_DRILL_RESULT |
-| Whole-server restore over the live server (`restore-server`), setup re-run | SERVER_RESTORE_RESULT |
+| Restore drill into an isolated cluster | **Passed.** Two tenants linked (row ↔ object ↔ key) with no cross-access; marker found. Recovery point **1 s** (target ≤ 15 min), recovery time **11 s** (target ≤ 4 h). |
+| Whole-server restore over the live server (`restore-server`), setup re-run | **Passed in 80 s**, including `vps-setup.sh` and `keycloak-setup.sh`. The last change before the restore was kept, an API session from before still worked, earlier snapshots restored and backups resumed. The later CI steps (sign-ins, user management, root-key rotation with re-wrapping) then ran against the restored server. |
 | Deleted snapshot object kept off-site | Gone from the live off-site copy, kept under `objects-deleted/<date>/` |
 
 The CI times are for a small database. On the owner's server, run the drill after setting up R2 (DR runbook) and
@@ -73,7 +73,7 @@ keep the report from `/var/lib/pb-backup/drills/`.
 | Locked dependencies (`Cargo.lock`, `pnpm-lock.yaml`, `--frozen-lockfile`, `--locked`) | All CI jobs |
 | Third-party actions pinned by commit in release and attestation steps; actionlint in CI | `desktop-release.yml`, `desktop-internal-build.yml`, `ci.yml` |
 | Secret scanning (gitleaks with project rules, including Tauri signing keys) | `ci.yml`, `.gitleaks.toml` |
-| SBOM: CycloneDX per commit (CI artifact, 90 days) and per release (published and attested) | `ci.yml` job `licenses`; `desktop-release.yml` |
+| SBOM: CycloneDX per commit (CI artifact, 90 days; at `22d095f`, 614 Rust crates and 255 npm packages) and per release (published and attested) | `ci.yml` job `licenses`; `desktop-release.yml` |
 | Build provenance attestations | `desktop-release.yml`, `desktop-internal-build.yml` |
 | No secrets in build jobs; the key job installs with `--ignore-scripts` | `desktop-release.yml` |
 | License inventory | `docs/licenses/` |

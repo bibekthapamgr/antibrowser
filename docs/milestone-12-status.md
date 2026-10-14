@@ -59,11 +59,12 @@ Owner decisions (14 October 2026):
 - Release tooling: 9.
 - Desktop UI end to end: 180.
 - Console end to end: 8.
-- `deploy-scripts.yml` on a fresh VM:
+- `deploy-scripts.yml` on a fresh VM ([run 38540671668](https://github.com/bibekthapamgr/antibrowser/actions/runs/38540671668)):
   - backups to a TLS R2 stand-in;
-  - the restore drill;
+  - the restore drill: recovery point 1 s, recovery time 11 s;
   - deleted-object retention;
-  - a whole-server restore, then the remaining server checks against the restored server.
+  - a whole-server restore in 80 s, then the remaining server checks against the restored server.
+- CI per commit includes a CycloneDX SBOM: 614 Rust crates and 255 npm packages.
 
 ## Owner steps (in this order)
 1. **Update the server:** run `\cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh`
