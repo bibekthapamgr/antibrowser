@@ -94,7 +94,7 @@ write_template() {
 # 2. R2 -> Manage API tokens -> Create API token: permission "Object Read & Write", "Apply to specific buckets only"
 #    -> that bucket. Copy the Access Key ID and Secret Access Key (shown once) and your Account ID below.
 # 3. In the bucket's settings add an Object lifecycle rule: prefix "objects-deleted/", delete objects after 30 days.
-#    (Optional, recommended: a bucket lock rule of 7 days on prefix "pgbackrest/" so nothing can delete fresh backups.)
+#    Do NOT add a bucket lock rule: pgBackRest rewrites its own index files in place, and a lock refuses that.
 R2_ACCOUNT_ID=
 R2_BUCKET=
 R2_ACCESS_KEY_ID=
@@ -568,7 +568,17 @@ chown root:"$BACKUP_USER" "$STATE_DIR/bucket.env"; chmod 640 "$STATE_DIR/bucket.
 
 # First backups.
 if ! as_pg pgbackrest --stanza=$STANZA --output=json info | grep -q '"type":"full"'; then
-  as_pg pgbackrest --stanza=$STANZA --type=full --log-level-console=warn backup
+  bk_log=$(mktemp)
+  if ! as_pg pgbackrest --stanza=$STANZA --type=full --log-level-console=warn backup > "$bk_log" 2>&1; then
+    tail -25 "$bk_log"
+    if grep -q 'ObjectLockedByBucketPolicy' "$bk_log"; then
+      rm -f "$bk_log"
+      die "the bucket r2:$R2_BUCKET has a bucket lock rule, which refuses pgBackRest's rewritten index files. Cloudflare → R2 → $R2_BUCKET → Settings → Bucket lock rules → delete the rule, then run vps-setup.sh again"
+    fi
+    rm -f "$bk_log"
+    die "the first full database backup failed (see above)"
+  fi
+  rm -f "$bk_log"
   ok "first full database backup made"
 else
   ok "database backups present ($(as_pg pgbackrest --stanza=$STANZA --output=json info | grep -o '"label":"[^"]*"' | wc -l) kept)"

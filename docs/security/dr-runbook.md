@@ -49,7 +49,10 @@ previous copy for 6 weeks**. A database restored from a backup made before the r
    buckets only* → that bucket. Note the Access Key ID, the Secret Access Key (shown once) and your Account ID.
 3. **Add lifecycle rules.** In the bucket's settings:
    - a lifecycle rule: prefix `objects-deleted/`, delete after **30 days**;
-   - recommended: a bucket lock rule, prefix `pgbackrest/`, **7 days**, so nobody can delete fresh backups.
+   - **no bucket lock rule.** A lock refuses overwrites, and pgBackRest rewrites its own index and manifest files,
+     so backups would fail (`ObjectLockedByBucketPolicy`; setup says so). Deleting backups therefore needs only the
+     token. That is why the token is limited to this one bucket, stays root-only on the server, and is replaced at
+     once if the server is compromised (incident response).
 4. **Fill in the backup settings** on the server: `nano /etc/project-browser/backup.env`. vps-setup.sh wrote the
    template. Fill in `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Never paste these
    values into a chat.

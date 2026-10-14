@@ -85,8 +85,8 @@ Found and fixed during verification:
 1. **Update the server:** run `\cp -f /home/pb/antibrowser/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh`
    **twice**. This applies migrations 0010–0011 and turns off SeaweedFS's unused catalog ports. Backups report
    "not set up yet" until step 3.
-2. **Create the R2 bucket and token**, and add the lifecycle rule (`objects-deleted/`, 30 days) and the optional
-   bucket lock on `pgbackrest/`. See [DR runbook → setting up](security/dr-runbook.md#setting-up-off-site-backups-owner-once).
+2. **Create the R2 bucket and token**, and add the lifecycle rule (`objects-deleted/`, 30 days). Do not add a
+   bucket lock rule: pgBackRest rewrites its index files, and a lock refuses that. See [DR runbook → setting up](security/dr-runbook.md#setting-up-off-site-backups-owner-once).
 3. **Fill in the backup settings:** `nano /etc/project-browser/backup.env` on the server (never in chat), then run
    vps-setup.sh **twice** again.
 4. **Build the offline kit:** copy `kms-root.json`, `backup-cipher-pass` and `keycloak-admin` from the server to two

@@ -147,6 +147,11 @@ are created with `--otp`, so Keycloak asks for a one-time code.
 | Key service outage | Only key-dependent operations fail, retryably. | `security.test.ts` |
 | Failed migration | One transaction, checksums, previous state kept. | `security.test.ts`, `crates/storage` `failed_migration_keeps_the_previous_database_and_can_recover` |
 
+Residual: whoever holds the R2 token (root on the server) can delete the off-site backups. R2 bucket locks cannot
+be used, because pgBackRest rewrites its index files in place. The token is limited to one bucket, and it is the
+first thing replaced after a server compromise. Later option: a second, write-once copy made with credentials that
+never reach the server.
+
 ## Cross-cutting scenarios
 
 ### Session theft

@@ -162,7 +162,8 @@ release:
 - **R2 token:**
   1. Create a new token, put it into `backup.env`, and run vps-setup.sh twice.
   2. Delete the old token.
-  3. The bucket lock rule protects fresh backups from deletion.
+  3. Check that the backups are still complete (`bash /usr/local/libexec/pb-backup status`). If any are missing,
+     run `backup-now full` at once.
 - **Passphrase alone:** it only matters together with R2 access. Revoke the R2 token, and check the bucket's
   access logs.
 - **Both together:** someone may have copied the database backups. Treat it as a database exposure (SEV-1). Note
