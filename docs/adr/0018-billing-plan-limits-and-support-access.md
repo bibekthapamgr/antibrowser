@@ -150,8 +150,9 @@ worksheet and future metered units.
   now reads plan features.
 - Every new organization starts a 14-day trial; organizations created before this milestone are on `beta` (no end)
   until the owner moves them. Fixture organizations are `internal`.
-- The test server can run with Stripe in test mode once the owner adds test keys and the webhook endpoint (setup
-  script); without keys, billing routes answer `BILLING_UNAVAILABLE` and everything else works.
+- The test server can run with Stripe in test mode once the owner adds a test key and prices (`stripe-setup.ts`); as
+  it is reachable only through the SSH tunnel, the setup runs the Stripe CLI as a forwarder of test-mode events (no
+  public webhook address). Without a key, billing routes answer `BILLING_UNAVAILABLE` and everything else works.
 - The owner must decide prices, final limits, the retention policy and tax registrations before charging anyone.
 
 ## Evidence / verification

@@ -109,4 +109,8 @@ grants carry none. Permanent deletion, export and sharing (grants) are never gra
   computers and sessions need an interactive sign-in. `tokens.create`: one's own tokens; `tokens.manage`: see and
   revoke everyone's. A member who leaves loses their tokens and computers.
 - `webhooks.manage`: webhook endpoints, their secrets and deliveries (owners and admins).
-- `billing.*` are reserved for milestone 11; no endpoint uses them yet.
+- `billing.read`: the subscription, plans, usage, invoices and receipts (owners and the billing role).
+  `billing.manage`: checkout and the payment provider's customer portal — plan changes, payment methods,
+  cancellation (owners only). A billing state never widens a role: restricted and canceled organizations refuse the
+  creating and opening actions listed in ADR-0018 to every role, and keep reading, closing, backing up, exporting,
+  deleting and billing. Support staff are not an organization role (ADR-0018).

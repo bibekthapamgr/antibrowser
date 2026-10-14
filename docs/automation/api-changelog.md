@@ -5,6 +5,28 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.11.0 — 2026-10-14 (milestone 11: billing, plan limits and administration)
+Added
+- **Billing** (interactive sign-in; `billing.read` / `billing.manage`): `GET /orgs/{org}/billing/subscription`,
+  `…/billing/plans`, `…/billing/usage`, `…/billing/invoices`, `…/billing/invoices/{in}/links`;
+  `POST /orgs/{org}/billing/checkout-session` and `…/billing/portal-session` (Stripe-hosted pages; owners only);
+  `GET /billing/return` (informational page after checkout; never proof of payment).
+- `GET /orgs/{org}` returns a `billing` summary (plan, state, reason, until) for every member.
+- `POST /webhooks/billing`: Stripe events, authenticated by the `Stripe-Signature` header (not for clients).
+- **Support console API** `/support/*` (staff tokens only; organization sessions and API tokens are refused there):
+  sign-in (`/support/auth/config`, `/support/sessions`, `/support/sign-out`), organization search and overview,
+  access requests and decisions, members and activity with approved access, overrides, resync, alerts, platform audit.
+- New errors: `PLAN_LIMIT_REACHED` (409, with `limit`, `used`, `allowed`), `SUBSCRIPTION_RESTRICTED` (403, with the
+  state and reason), `BILLING_UNAVAILABLE` (503, retryable), `ALREADY_SUBSCRIBED` (409), `PLAN_NOT_AVAILABLE` (422).
+- Rate limits: billing webhooks 1,200/min per address, checkout/portal sessions 30 per 10 min per organization, staff
+  sign-in 20 per 10 min per address.
+
+Changed (additive for well-behaved clients, but visible)
+- Creating profiles, clients, invitations, API tokens, webhook endpoints and jobs, opening profiles, claiming jobs,
+  imports and restores from the trash can now be refused with `PLAN_LIMIT_REACHED` or `SUBSCRIPTION_RESTRICTED`.
+  API-token callers should treat both as non-retryable and show the message.
+- Job claims are limited by the plan's automation concurrency as well as the organization's running limit.
+
 ## 0.10.0 — 2026-10-14 (milestone 10: developer API and automation)
 Added
 - **API tokens** (`pbt_…`): `GET/POST /orgs/{org}/api-tokens`, `POST …/{tok}/rotate`, `DELETE …/{tok}`,

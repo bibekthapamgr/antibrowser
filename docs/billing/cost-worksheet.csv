@@ -1,0 +1,37 @@
+Project Browser cost worksheet (milestone 11). Fill in the empty inputs; nothing is assumed. Amounts in USD.,,,,
+,,,,
+Shared inputs,Value,,,Unit / where to find it
+Object storage price,,,,USD per GB-month (your storage provider's price list)
+Storage download (egress) price,,,,USD per GB downloaded
+Card processing percentage,,,,"fraction of each charge, e.g. 0.029 for 2.9% (your Stripe pricing page)"
+Card processing fixed fee,,,,USD per charge (your Stripe pricing page)
+Stripe Billing fee,,,,"fraction of recurring revenue, if your Stripe plan charges it (else 0)"
+Stripe Tax fee per charge,,,,USD per taxed charge if Stripe Tax is on (else 0)
+Hosting per month,,,,"USD: servers, managed PostgreSQL, backups, storage minimums"
+Identity provider per month,,,,USD (self-hosted Keycloak: its share of a server)
+Other fixed costs per month,,,,"USD: monitoring, e-mail, domains, code signing (yearly / 12)"
+Paying organizations (planning),,,,count used to share the fixed costs
+Support cost per hour,,,,USD
+,,,,
+Per plan,Starter,Team,Agency,Notes
+Price per month,,,,your decision: the amount you enter in stripe-setup.ts
+Backup storage allowance (GB),10,50,200,plan catalog (provisional limits)
+Seats,1,5,20,plan catalog (provisional)
+Profiles,100,500,2000,plan catalog (provisional)
+Automation jobs at a time,1,5,20,plan catalog (provisional)
+Storage used (fraction of allowance),,,,"pilot data from the usage ledger, e.g. 0.4"
+Backup downloads (GB per month),,,,restores and new computers; pilot data
+Support minutes per organization per month,,,,pilot data
+,,,,
+Monthly cost per organization,,,,
+Storage,=B18*B22*$B$4,=C18*C22*$B$4,=D18*D22*$B$4,allowance x used x storage price
+Downloads,=B23*$B$5,=C23*$B$5,=D23*$B$5,GB x egress price
+Payment processing,=B17*($B$6+$B$8)+$B$7+$B$9,=C17*($B$6+$B$8)+$B$7+$B$9,=D17*($B$6+$B$8)+$B$7+$B$9,one charge a month
+Support,=B24/60*$B$14,=C24/60*$B$14,=D24/60*$B$14,
+Share of fixed costs,"=IF($B$13>0,($B$10+$B$11+$B$12)/$B$13,0)","=IF($B$13>0,($B$10+$B$11+$B$12)/$B$13,0)","=IF($B$13>0,($B$10+$B$11+$B$12)/$B$13,0)",
+Total cost,=SUM(B27:B31),=SUM(C27:C31),=SUM(D27:D31),
+Margin per month,=B17-B32,=C17-C32,=D17-D32,
+Margin (fraction of price),"=IF(B17>0,B33/B17,"""")","=IF(C17>0,C33/C17,"""")","=IF(D17>0,D33/D17,"""")",
+Break-even price,=(B27+B28+B30+B31+$B$7+$B$9)/(1-$B$6-$B$8),=(C27+C28+C30+C31+$B$7+$B$9)/(1-$B$6-$B$8),=(D27+D28+D30+D31+$B$7+$B$9)/(1-$B$6-$B$8),price at which the margin is zero
+,,,,
+Not in this sheet: browser CPU and memory run on the customer's own computers (no provider cost). Remote browsers would need their own per-minute pricing (not offered).,,,,

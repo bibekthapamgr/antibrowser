@@ -78,7 +78,38 @@ jobs:
       # services/api/test/sync-s3.test.ts must run here (it fails in CI when the storage is missing).
       - name: Start SeaweedFS
         run: scripts/ci/annotate.sh "seaweedfs" scripts/ci/seaweedfs.sh
+      # Milestone 11: the Stripe client's requests are validated against Stripe's own OpenAPI description by
+      # stripe-mock (services/api/test/stripe-mock.test.ts). Pinned release, SHA-256 verified.
+      - name: Start stripe-mock
+        run: |
+          mkdir -p "$RUNNER_TEMP/stripe-mock" && cd "$RUNNER_TEMP/stripe-mock"
+          curl -fsSL --retry 3 -o sm.tgz \
+            https://github.com/stripe/stripe-mock/releases/download/v0.206.0/stripe-mock_0.206.0_linux_amd64.tar.gz
+          echo "b6fe5a8f02aaeb5a5001710b304fc93a222f1983a9a6050a38f55cfdc48b8d19  sm.tgz" | sha256sum -c --quiet -
+          tar -xzf sm.tgz stripe-mock
+          nohup ./stripe-mock -http-port 12111 > stripe-mock.log 2>&1 &
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:12111/ && break; sleep 1; done
+          curl -s -o /dev/null http://127.0.0.1:12111/ || { cat stripe-mock.log; exit 1; }
+          echo "STRIPE_MOCK_URL=http://127.0.0.1:12111" >> "$GITHUB_ENV"
       - run: scripts/ci/annotate.sh "typescript tests" pnpm run test
+      - name: stripe-mock tests ran
+        run: |
+          cd services/api && npx vitest run test/stripe-mock.test.ts --reporter=verbose 2>&1 | tee "$RUNNER_TEMP/stripe-mock.out" | tail -5
+          grep -qE "Tests +[0-9]+ passed" "$RUNNER_TEMP/stripe-mock.out" && ! grep -q "skipped" "$RUNNER_TEMP/stripe-mock.out" \
+            || { echo "::error title=stripe-mock::the Stripe request-shape tests did not all run"; exit 1; }
+      # Stripe test mode with test clocks (services/api/test/stripe-sandbox.test.ts), only when the owner has added the
+      # repository secret STRIPE_TEST_SECRET_KEY (a TEST key). Pull requests never get it.
+      - name: Stripe test mode (sandbox)
+        if: github.event_name != 'pull_request'
+        env:
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+        run: |
+          if [ -z "$STRIPE_TEST_SECRET_KEY" ]; then
+            echo "::notice title=Stripe sandbox::skipped: no STRIPE_TEST_SECRET_KEY repository secret"; exit 0
+          fi
+          case "$STRIPE_TEST_SECRET_KEY" in sk_test_*|rk_test_*) ;; *) echo "::error title=Stripe sandbox::the secret is not a test key"; exit 1 ;; esac
+          cd services/api && ../../scripts/ci/annotate.sh "stripe sandbox" npx vitest run test/stripe-sandbox.test.ts
+          echo "::notice title=Stripe sandbox::checkout-equivalent subscription, declined renewal (test clock) and cancellation applied from Stripe's own events"
       - name: Keycloak sign-in evidence
         run: |
           [ -s "$PB_KEYCLOAK_RESULT" ] || { echo "::error title=Keycloak sign-in::the Keycloak test did not run"; exit 1; }

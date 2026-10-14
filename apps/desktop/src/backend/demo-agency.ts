@@ -506,7 +506,7 @@ export function demoAgency(ctx: DemoAgencyContext): AgencyRepository {
     },
     async previewDiagnostics() {
       const report = {
-        app: { version: '0.10.0-demo', platform: 'demo', arch: 'demo' },
+        app: { version: '0.11.0-demo', platform: 'demo', arch: 'demo' },
         generated_at: now(),
         data_directory: '~/Library/Application Support/Project Browser',
         store: { status: 'ready', schema_version: 9, journal_mode: 'wal', integrity_ok: true },

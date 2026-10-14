@@ -61,6 +61,6 @@ flowchart LR
 | `crates/update` | pinned runtime manifest and artifact hash verification |
 | `crates/import` | profile configuration import/export: CSV/JSON/bundle parsing, row validation, archive safety, notes hygiene (milestone 04) |
 | `apps/desktop` | Tauri shell + React manager UI |
-| `apps/web-admin` | admin console shell |
+| `apps/web-admin` | internal support console (milestone 11), served by the API at `/console/` |
 | `infra` | migrations, local bootstrap, env examples, docker-compose |
 | `spikes` | step 4 and step 6 feasibility harnesses |

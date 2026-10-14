@@ -3076,7 +3076,7 @@ dependencies = [
 
 [[package]]
 name = "pb-desktop"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",

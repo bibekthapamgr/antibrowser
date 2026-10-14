@@ -5,7 +5,8 @@
  * declines, cancels, and feeds Stripe's own events (fetched from /v1/events, so their real shapes) through the API's
  * webhook route and the worker's processing, which fetches the current objects from Stripe itself. Webhooks cannot
  * reach a CI runner, so the events are signed locally with a test secret; signature checking is covered in
- * billing.test.ts. Everything created is deleted at the end (the test clock removes its customer).
+ * billing.test.ts. The customer lives on a test clock, which is deleted at the end with everything on it; the product
+ * and its test-only price are reused by every run (fixed id and lookup key), so runs do not pile up objects.
  */
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -22,7 +23,7 @@ const key = process.env.STRIPE_TEST_SECRET_KEY ?? '';
 const enabled = /^(sk|rk)_test_/.test(key);
 const API = 'https://api.stripe.com';
 
-async function stripe(method: string, path: string, params?: Record<string, unknown>) {
+async function call(method: string, path: string, params?: Record<string, unknown>, allow404 = false) {
   const body = params && method !== 'GET' ? formEncode(params as never) : undefined;
   const q = params && method === 'GET' ? `?${formEncode(params as never)}` : '';
   const res = await fetch(`${API}${path}${q}`, {
@@ -35,12 +36,18 @@ async function stripe(method: string, path: string, params?: Record<string, unkn
     ...(body ? { body } : {}),
   });
   const json = (await res.json()) as Record<string, unknown>;
+  if (allow404 && res.status === 404) return null;
   if (!res.ok)
     throw new Error(
       `${method} ${path}: ${res.status} ${JSON.stringify((json.error as { type?: string })?.type)}`,
     );
   return json;
 }
+async function stripe(method: string, path: string, params?: Record<string, unknown>) {
+  return (await call(method, path, params)) as Record<string, unknown>;
+}
+/** The object, or null when Stripe answers 404. */
+const stripeOrNull = (method: string, path: string) => call(method, path, undefined, true);
 
 describe.runIf(enabled)('billing against Stripe test mode (sandbox)', () => {
   let h: Harness;
@@ -57,18 +64,24 @@ describe.runIf(enabled)('billing against Stripe test mode (sandbox)', () => {
   const delivered = new Set<string>();
 
   beforeAll(async () => {
-    product = (
-      await stripe('POST', '/v1/products', { name: `Project Browser CI ${randomBytes(3).toString('hex')}` })
-    ).id as string;
+    product = 'pb_ci_sandbox';
+    if (!(await stripeOrNull('GET', `/v1/products/${product}`))) {
+      await stripe('POST', '/v1/products', { id: product, name: 'Project Browser CI sandbox (tests only)' });
+    }
     // A test-only amount (not a pricing decision): the sandbox needs some price to charge.
-    price = (
-      await stripe('POST', '/v1/prices', {
-        product,
-        unit_amount: 1000,
-        currency: 'usd',
-        recurring: { interval: 'month' },
-      })
-    ).id as string;
+    const lookup = 'pb_ci_sandbox_usd_month_1000';
+    const found = await stripe('GET', '/v1/prices', { lookup_keys: [lookup], active: true, limit: 1 });
+    price =
+      (found.data as { id: string }[])[0]?.id ??
+      ((
+        await stripe('POST', '/v1/prices', {
+          product,
+          unit_amount: 1000,
+          currency: 'usd',
+          recurring: { interval: 'month' },
+          lookup_key: lookup,
+        })
+      ).id as string);
     h = await harness({
       env: {
         STRIPE_SECRET_KEY: key,
@@ -113,8 +126,6 @@ describe.runIf(enabled)('billing against Stripe test mode (sandbox)', () => {
 
   afterAll(async () => {
     if (clock) await stripe('DELETE', `/v1/test_helpers/test_clocks/${clock}`).catch(() => undefined);
-    if (price) await stripe('POST', `/v1/prices/${price}`, { active: false }).catch(() => undefined);
-    if (product) await stripe('POST', `/v1/products/${product}`, { active: false }).catch(() => undefined);
     await h?.close();
   });
 
