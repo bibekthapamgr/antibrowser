@@ -436,6 +436,7 @@ export const ConsoleConfig = Type.Object(
   },
   { additionalProperties: false },
 );
+export type ConsoleConfig = Static<typeof ConsoleConfig>;
 
 export const SupportSearchQuery = Type.Object(
   {
@@ -451,6 +452,7 @@ export const SupportOrgHit = Type.Object(
   { id: Id('org'), name: Type.String(), created_at: Timestamp, state: Type.Enum(BILLING_STATES) },
   { additionalProperties: false },
 );
+export type SupportOrgHit = Static<typeof SupportOrgHit>;
 export const SupportSearchResult = Type.Object(
   {
     items: Type.Array(SupportOrgHit),
@@ -458,6 +460,7 @@ export const SupportSearchResult = Type.Object(
   },
   { additionalProperties: false },
 );
+export type SupportSearchResult = Static<typeof SupportSearchResult>;
 
 export const BILLING_ALERT_KINDS = [
   'webhook_backlog',
@@ -507,6 +510,7 @@ export const BillingEventSummary = Type.Object(
   },
   { additionalProperties: false },
 );
+export type BillingEventSummary = Static<typeof BillingEventSummary>;
 
 export const SupportOrgOverview = Type.Object(
   {
@@ -566,6 +570,7 @@ export const AccessRequestCreate = Type.Object(
   },
   { additionalProperties: false },
 );
+export type AccessRequestCreate = Static<typeof AccessRequestCreate>;
 export const AccessDecision = Type.Object(
   { decision: Type.Union([Type.Literal('approve'), Type.Literal('deny')]) },
   { additionalProperties: false },
@@ -581,6 +586,7 @@ export const SupportMember = Type.Object(
   },
   { additionalProperties: false },
 );
+export type SupportMember = Static<typeof SupportMember>;
 export const SupportActivityEntry = Type.Object(
   {
     at: Timestamp,
@@ -591,6 +597,7 @@ export const SupportActivityEntry = Type.Object(
   },
   { additionalProperties: false },
 );
+export type SupportActivityEntry = Static<typeof SupportActivityEntry>;
 
 export const Override = Type.Object(
   {
@@ -616,6 +623,7 @@ export const OverrideCreate = Type.Object(
   },
   { additionalProperties: false },
 );
+export type OverrideCreate = Static<typeof OverrideCreate>;
 
 export const PlatformAuditEntry = Type.Object(
   {
@@ -629,3 +637,30 @@ export const PlatformAuditEntry = Type.Object(
   },
   { additionalProperties: false },
 );
+export type PlatformAuditEntry = Static<typeof PlatformAuditEntry>;
+
+// ================================================================ Support console page
+/** Where the API serves the support console (same origin as the API, so its requests need no CORS). */
+export const CONSOLE_PATH = '/console/';
+
+/**
+ * Content-Security-Policy of the support console. Scripts and styles only from the console itself; the only other
+ * origin it may contact is the identity provider (the PKCE code exchange at its token endpoint). No frames, no forms
+ * posting elsewhere, no plugins, no base-URI changes.
+ */
+export function consoleCsp(issuerOrigin: string | null): string {
+  const connect = ["'self'", ...(issuerOrigin ? [issuerOrigin] : [])].join(' ');
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    `connect-src ${connect}`,
+    "manifest-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+  ].join('; ');
+}

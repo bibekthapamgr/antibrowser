@@ -1,25 +1,32 @@
 {
   "name": "@pb/web-admin",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
-  "description": "Web administration console. Milestone 01: shell sharing the design system; features arrive in 06 and 11.",
+  "description": "Internal support console (milestone 11): staff sign-in, organization billing overview, time-bound sensitive access with approval, entitlement overrides, reconciliation alerts, platform audit. Served by the API at /console/.",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --mode demo",
     "build": "vite build",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "echo 'web-admin: no logic yet in milestone 01'"
+    "build:demo": "vite build --mode demo",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config e2e/vitest.config.ts"
   },
   "dependencies": {
+    "@pb/contracts": "workspace:*",
     "@pb/ui": "workspace:*",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "axe-core": "4.14.0",
+    "puppeteer-core": "25.13.0",
     "typescript": "7.0.2",
-    "vite": "8.3.4"
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
   }
 }

@@ -24,7 +24,8 @@
     "spike:snapshot": "pnpm --filter @pb/spikes run snapshot",
     "docs:permissions": "node scripts/permission-matrix.ts",
     "docs:ipc": "node scripts/ipc-schema.ts",
-    "test:e2e": "pnpm --filter @pb/desktop build && pnpm --filter @pb/desktop test:e2e"
+    "test:e2e": "pnpm --filter @pb/desktop build && pnpm --filter @pb/desktop test:e2e && pnpm --filter @pb/web-admin build:demo && pnpm --filter @pb/web-admin test:e2e",
+    "dev:console": "pnpm --filter @pb/web-admin run dev"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

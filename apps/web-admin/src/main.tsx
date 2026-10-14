@@ -1,28 +1,29 @@
 import '@pb/ui/tokens.css';
-import { ClientBadge } from '@pb/ui';
+import './console.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { App } from './App.tsx';
+import { type ConsoleApi, httpApi } from './api.ts';
 
-function AdminShell() {
-  return (
-    <main style={{ maxWidth: 720, margin: '48px auto', padding: '0 16px' }}>
-      <h1>Admin console</h1>
-      <p style={{ color: 'var(--pb-text-muted)' }}>
-        Placeholder shell. Organization, member and billing administration arrive in milestones 06 and 11 and
-        use the same /v1 API and design tokens as the desktop manager.
-      </p>
-      <p>
-        Client marker example: <ClientBadge label="Client North" />
-      </p>
-    </main>
-  );
+// Demo builds (`vite build --mode demo`, UI tests only) use an in-memory stand-in; the code is left out of the real
+// build entirely, which talks to /v1/support on its own origin.
+async function pickApi(): Promise<ConsoleApi> {
+  if (import.meta.env.MODE === 'demo') {
+    const { demoApi } = await import('./demo.ts');
+    const api = demoApi(new URLSearchParams(window.location.search).get('as') ?? 'all');
+    (window as unknown as { __pbConsoleDemo: unknown }).__pbConsoleDemo = api.controls;
+    return api;
+  }
+  return httpApi();
 }
 
 const root = document.getElementById('root');
 if (root) {
-  createRoot(root).render(
-    <StrictMode>
-      <AdminShell />
-    </StrictMode>,
+  void pickApi().then((api) =>
+    createRoot(root).render(
+      <StrictMode>
+        <App api={api} />
+      </StrictMode>,
+    ),
   );
 }

@@ -3,6 +3,10 @@
  * test performs what the desktop does — Authorization Code + PKCE with state and nonce, the login form, the redirect
  * to `projectbrowser://auth/callback`, the code exchange — and then signs in to the API with the ID token.
  *
+ * Milestone 11: the support console's own public client the same way, as the console page does it in the browser
+ * (redirect to /console/, the code exchange from the console's origin, which Keycloak must allow by CORS), then the
+ * staff session exchange.
+ *
  * Runs only when PB_KEYCLOAK_URL and PB_KEYCLOAK_ADMIN_PASSWORD are set (the CI job starts Keycloak and generates the
  * admin password). The realm, client and users are created here with random passwords: nothing secret is in the
  * repository.
@@ -13,6 +17,7 @@ import { loadConfig } from '@pb/config/env';
 import type { Session } from '@pb/contracts';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { addStaff, removeStaff } from '../scripts/staff.ts';
 import { type App, buildApp } from '../src/app.ts';
 import { createPool } from '../src/db.ts';
 
@@ -20,6 +25,9 @@ const KC = process.env.PB_KEYCLOAK_URL ?? '';
 const ADMIN_PASSWORD = process.env.PB_KEYCLOAK_ADMIN_PASSWORD ?? '';
 const REDIRECT = 'projectbrowser://auth/callback';
 const CLIENT = 'pb-desktop';
+const CONSOLE_CLIENT = 'pb-console';
+const CONSOLE_ORIGIN = 'http://127.0.0.1:8080';
+const CONSOLE_REDIRECT = `${CONSOLE_ORIGIN}/console/`;
 const b64url = (b: Buffer) => b.toString('base64url');
 const random = (n = 32) => b64url(randomBytes(n));
 
@@ -69,6 +77,17 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
             webOrigins: [],
             attributes: { 'pkce.code.challenge.method': 'S256' },
           },
+          {
+            clientId: CONSOLE_CLIENT,
+            protocol: 'openid-connect',
+            publicClient: true,
+            standardFlowEnabled: true,
+            implicitFlowEnabled: false,
+            directAccessGrantsEnabled: false,
+            redirectUris: [CONSOLE_REDIRECT],
+            webOrigins: [CONSOLE_ORIGIN],
+            attributes: { 'pkce.code.challenge.method': 'S256' },
+          },
         ],
         users: Object.values(people).map((p) => ({
           username: p.username,
@@ -87,14 +106,19 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     });
     version = ((await info.json()) as { systemInfo?: { version?: string } }).systemInfo?.version ?? 'unknown';
 
-    const config = loadConfig({ ...process.env, OIDC_ISSUER: issuer, OIDC_CLIENT_ID: CLIENT });
+    const config = loadConfig({
+      ...process.env,
+      OIDC_ISSUER: issuer,
+      OIDC_CLIENT_ID: CLIENT,
+      OIDC_CONSOLE_CLIENT_ID: CONSOLE_CLIENT,
+    });
     pool = createPool(config.databaseUrl, 5);
     owner = new pg.Pool({
       connectionString: process.env.MIGRATION_DATABASE_URL,
       options: '-c search_path=app -c TimeZone=UTC',
       max: 1,
     });
-    await owner.query("delete from rate_limit_counters where bucket = 'signin.ip'");
+    await owner.query("delete from rate_limit_counters where bucket in ('signin.ip', 'staff.signin.ip')");
     app = await buildApp(config, pool, { logger: false });
     await app.ready();
   }, 60_000);
@@ -108,7 +132,7 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     if (process.env.PB_KEYCLOAK_RESULT) {
       writeFileSync(
         process.env.PB_KEYCLOAK_RESULT,
-        `Keycloak ${version}: ${passed} of 5 sign-in checks passed (PKCE, state, iss, nonce, one-time ID token, unverified e-mail, re-authentication)`,
+        `Keycloak ${version}: ${passed} of 6 sign-in checks passed (PKCE, state, iss, nonce, one-time ID token, unverified e-mail, re-authentication, support console client with CORS and staff session)`,
       );
     }
     await app?.close();
@@ -119,22 +143,31 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
   /** The desktop's half of a sign-in, with a scripted browser filling in the provider's login form. */
   async function browserSignIn(
     person: (typeof people)['alice'],
-    opts: { prompt?: string; cookies?: Map<string, string> } = {},
+    opts: {
+      prompt?: string;
+      cookies?: Map<string, string>;
+      client?: string;
+      redirect?: string;
+      maxAge?: string;
+    } = {},
   ) {
+    const client = opts.client ?? CLIENT;
+    const redirect = opts.redirect ?? REDIRECT;
     const state = random();
     const nonce = random(24);
     const verifier = random();
     const auth = new URL(`${issuer}/protocol/openid-connect/auth`);
     auth.search = new URLSearchParams({
       response_type: 'code',
-      client_id: CLIENT,
-      redirect_uri: REDIRECT,
+      client_id: client,
+      redirect_uri: redirect,
       scope: 'openid email profile',
       state,
       nonce,
       code_challenge: b64url(createHash('sha256').update(verifier).digest()),
       code_challenge_method: 'S256',
       ...(opts.prompt ? { prompt: opts.prompt, max_age: '0' } : {}),
+      ...(opts.maxAge ? { max_age: opts.maxAge } : {}),
     }).toString();
     const cookies = opts.cookies ?? new Map<string, string>();
     const page = await fetch(auth, { redirect: 'manual', headers: { cookie: cookieHeader(cookies) } });
@@ -152,7 +185,7 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     keepCookies(login, cookies);
     expect(login.status).toBe(302);
     const callback = new URL(login.headers.get('location') ?? '');
-    expect(`${callback.protocol}//${callback.host}${callback.pathname}`).toBe(REDIRECT);
+    expect(`${callback.protocol}//${callback.host}${callback.pathname}`).toBe(redirect);
     // What the desktop checks before using the code: its own state, and the provider naming itself (RFC 9207).
     expect(callback.searchParams.get('state')).toBe(state);
     expect(callback.searchParams.get('iss')).toBe(issuer);
@@ -285,6 +318,86 @@ describe.skipIf(!KC || !ADMIN_PASSWORD)('Keycloak sign-in (reference identity pr
     const session = res.json() as Session;
     expect(session.device.id).toBe(enrolled.device.id);
     expect(Date.parse(session.auth_time)).toBeGreaterThanOrEqual(Date.parse(enrolled.auth_time));
+  });
+
+  it('the support console client: PKCE from the console page, CORS for its origin only, staff session', async () => {
+    const cfg = await app.inject({ method: 'GET', url: '/v1/support/auth/config' });
+    expect(cfg.statusCode, cfg.body).toBe(200);
+    const c = cfg.json() as { client_id: string; authorization_endpoint: string; token_endpoint: string };
+    expect(c.client_id).toBe(CONSOLE_CLIENT);
+    expect(c.token_endpoint).toBe(`${issuer}/protocol/openid-connect/token`);
+
+    const consoleToken = async (origin: string) => {
+      const s = await browserSignIn(people.alice, {
+        client: CONSOLE_CLIENT,
+        redirect: CONSOLE_REDIRECT,
+        maxAge: '600',
+      });
+      const res = await fetch(c.token_endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', origin },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: s.code,
+          redirect_uri: CONSOLE_REDIRECT,
+          client_id: CONSOLE_CLIENT,
+          code_verifier: s.verifier,
+        }),
+      });
+      return { res, nonce: s.nonce };
+    };
+    // The console page calls the token endpoint from its own origin: Keycloak must allow exactly that origin.
+    const ok = await consoleToken(CONSOLE_ORIGIN);
+    expect(ok.res.status).toBe(200);
+    expect(ok.res.headers.get('access-control-allow-origin')).toBe(CONSOLE_ORIGIN);
+    const idToken = ((await ok.res.json()) as { id_token: string }).id_token;
+    const other = await consoleToken('https://evil.example.test');
+    expect(other.res.headers.get('access-control-allow-origin')).not.toBe('https://evil.example.test');
+
+    // Signed in, but not staff: refused (and the account now exists for the server command).
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/v1/support/sessions',
+      payload: { id_token: idToken, nonce: ok.nonce },
+    });
+    expect(refused.statusCode).toBe(401);
+    expect(refused.json().safe_details.reason).toBe('not_staff');
+    const { rows } = await owner.query<{ id: string }>(
+      'select id from users where oidc_issuer = $1 and email = $2',
+      [issuer, people.alice.email],
+    );
+    const userId = rows[0]?.id ?? '';
+    await addStaff(owner as unknown as pg.ClientBase, userId, ['support'], 'keycloak test');
+    try {
+      const fresh = await consoleToken(CONSOLE_ORIGIN);
+      const freshId = ((await fresh.res.json()) as { id_token: string }).id_token;
+      const staff = await app.inject({
+        method: 'POST',
+        url: '/v1/support/sessions',
+        payload: { id_token: freshId, nonce: fresh.nonce },
+      });
+      expect(staff.statusCode, staff.body).toBe(201);
+      expect(staff.json().staff).toMatchObject({ user_id: userId, roles: ['support'] });
+      const headers = { authorization: `Bearer ${staff.json().access_token}` };
+      const search = await app.inject({
+        method: 'GET',
+        url: `/v1/support/orgs?q=${encodeURIComponent(people.alice.email)}`,
+        headers,
+      });
+      expect(search.statusCode).toBe(200);
+      // A staff token is not an organization session.
+      expect((await app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(401);
+      // The desktop client's ID token is not accepted by the console exchange (wrong audience).
+      const desktop = await idTokenFor(people.alice);
+      const wrong = await app.inject({
+        method: 'POST',
+        url: '/v1/support/sessions',
+        payload: { id_token: desktop.idToken, nonce: desktop.nonce },
+      });
+      expect(wrong.statusCode).toBe(401);
+    } finally {
+      await removeStaff(owner as unknown as pg.ClientBase, userId);
+    }
   });
 });
 

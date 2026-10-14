@@ -27,6 +27,7 @@ import { automationRoutes } from './routes/automation.ts';
 import { backupRoutes } from './routes/backups.ts';
 import { billingRoutes } from './routes/billing.ts';
 import { clientRoutes } from './routes/clients.ts';
+import { consoleRoutes } from './routes/console.ts';
 import { deviceRoutes } from './routes/devices.ts';
 import { grantRoutes } from './routes/grants.ts';
 import { healthRoutes } from './routes/health.ts';
@@ -98,9 +99,17 @@ declare module 'fastify' {
 /** Header names never written to logs. */
 const REDACT = ['req.headers.authorization', 'req.headers.cookie', 'req.headers["idempotency-key"]'];
 
-/** Invitation tokens travel in URL paths (links); they are masked before a URL is logged. */
+/**
+ * Invitation tokens travel in URL paths (links), and the support console receives the identity provider's one-time
+ * code in its address; both are masked before a URL is logged.
+ */
 export function redactUrl(url: string): string {
-  return url.replace(/\/invitations\/[A-Za-z0-9_-]{20,}/g, '/invitations/[redacted]');
+  return url
+    .replace(/\/invitations\/[A-Za-z0-9_-]{20,}/g, '/invitations/[redacted]')
+    .replace(
+      /([?&](?:code|state|session_state|id_token|access_token|refresh_token)=)[^&#]*/g,
+      '$1[redacted]',
+    );
 }
 
 export interface BuildOptions {
@@ -352,6 +361,9 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     };
     return reply.status(404).send(body);
   });
+
+  // Milestone 11: the support console's static page at /console/ (outside /v1; only when CONSOLE_DIR is set).
+  consoleRoutes(app as unknown as App, deps);
 
   await app.register(
     async (v1) => {

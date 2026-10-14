@@ -4,6 +4,7 @@
     "includes": [
       "**",
       "!**/dist",
+      "!**/dist-demo",
       "!**/target",
       "!**/node_modules",
       "!**/gen",

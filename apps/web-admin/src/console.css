@@ -1,0 +1,349 @@
+/* Support console (milestone 11). Uses the shared design tokens; no inline styles (the CSP allows only this file). */
+
+.skip {
+  position: absolute;
+  left: -999px;
+  top: 8px;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  background: var(--pb-surface);
+  color: var(--pb-text);
+  border-radius: var(--pb-radius);
+  z-index: 10;
+}
+.skip:focus {
+  left: 8px;
+}
+
+a {
+  color: var(--pb-accent);
+}
+
+.mono {
+  font-family: var(--pb-font-mono);
+  font-size: var(--pb-text-sm);
+  overflow-wrap: anywhere;
+}
+.muted {
+  color: var(--pb-text-muted);
+}
+.small {
+  font-size: var(--pb-text-sm);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--pb-text);
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border-strong);
+  border-radius: var(--pb-radius);
+  padding: 6px var(--pb-space-2);
+  min-height: 32px;
+}
+input:disabled {
+  opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------- sign-in */
+.signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--pb-space-4);
+}
+.signin-card {
+  max-width: 34rem;
+  width: 100%;
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  padding: var(--pb-space-6);
+  display: grid;
+  gap: var(--pb-space-3);
+}
+.signin-card h1 {
+  margin: 0;
+  font-size: 24px;
+}
+.signin-card p {
+  margin: 0;
+}
+.signin-card .pb-button {
+  justify-self: start;
+}
+.brand {
+  margin: 0;
+  font-weight: 600;
+  color: var(--pb-text-muted);
+}
+
+.demo-note {
+  border: 1px dashed var(--pb-border-strong);
+  border-radius: var(--pb-radius);
+  padding: var(--pb-space-2) var(--pb-space-3);
+}
+
+/* ---------------------------------------------------------------- frame */
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-3);
+  padding: var(--pb-space-3) var(--pb-space-6);
+  background: var(--pb-sidebar);
+  color: var(--pb-sidebar-text);
+}
+.topbar .brand {
+  color: var(--pb-sidebar-text);
+}
+.topbar .brand span {
+  font-weight: 400;
+  margin-left: var(--pb-space-2);
+}
+.topbar .brand .demo-tag {
+  border: 1px solid var(--pb-sidebar-text);
+  border-radius: 999px;
+  padding: 0 var(--pb-space-2);
+  font-size: var(--pb-text-sm);
+}
+.who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-3);
+}
+.session {
+  font-size: var(--pb-text-sm);
+}
+.session--ending {
+  font-weight: 600;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-1);
+  padding: 0 var(--pb-space-6);
+  border-bottom: 1px solid var(--pb-border);
+  background: var(--pb-surface);
+}
+.tabs a {
+  padding: var(--pb-space-3) var(--pb-space-3);
+  color: var(--pb-text);
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+}
+.tabs a[aria-current="page"] {
+  border-bottom-color: var(--pb-accent);
+  font-weight: 600;
+}
+.tabs a:hover {
+  background: var(--pb-surface-muted);
+}
+
+.content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--pb-space-6);
+}
+
+.page-title {
+  margin: 0;
+  font-size: 22px;
+}
+.page-title:focus {
+  /* Focus moves here on navigation for screen readers; a heading is not a control, so no ring. */
+  outline: none;
+}
+
+.stack {
+  display: grid;
+  gap: var(--pb-space-4);
+}
+.stack > * {
+  margin: 0;
+}
+section > h2 {
+  font-size: var(--pb-text-lg);
+  margin: var(--pb-space-4) 0 var(--pb-space-2);
+}
+h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.org-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-3);
+}
+
+/* ---------------------------------------------------------------- state badges and messages */
+.state {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--pb-border-strong);
+  font-size: var(--pb-text-sm);
+  font-weight: 600;
+}
+.state[data-state="active"],
+.state[data-state="trial"] {
+  border-color: var(--pb-success);
+  color: var(--pb-success);
+}
+.state[data-state="past_due"],
+.state[data-state="grace"] {
+  border-color: var(--pb-warn);
+  color: var(--pb-warn);
+}
+.state[data-state="restricted"],
+.state[data-state="canceled"] {
+  border-color: var(--pb-danger);
+  color: var(--pb-danger);
+}
+
+.problem,
+.ok,
+.warn {
+  margin: 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border-radius: var(--pb-radius);
+  border: 1px solid var(--pb-border);
+  border-left-width: 4px;
+  background: var(--pb-surface);
+}
+.problem {
+  border-left-color: var(--pb-danger);
+}
+.ok {
+  border-left-color: var(--pb-success);
+}
+.warn {
+  border-left-color: var(--pb-warn);
+}
+.over {
+  color: var(--pb-danger);
+}
+
+/* ---------------------------------------------------------------- tables and facts */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+}
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border-bottom: 1px solid var(--pb-border);
+}
+thead th {
+  font-size: var(--pb-text-sm);
+  color: var(--pb-text-muted);
+  font-weight: 600;
+}
+tbody th {
+  font-weight: 500;
+}
+tr[data-over="true"] td,
+tr[data-open="true"] td:first-child {
+  font-weight: 600;
+}
+td.details {
+  max-width: 28rem;
+}
+.row-actions {
+  white-space: nowrap;
+}
+.row-actions .pb-button + .pb-button {
+  margin-left: var(--pb-space-2);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--pb-space-2) var(--pb-space-4);
+  margin: 0;
+  padding: var(--pb-space-3) var(--pb-space-4);
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+}
+.facts dt {
+  font-size: var(--pb-text-sm);
+  color: var(--pb-text-muted);
+}
+.facts dd {
+  margin: 0;
+}
+
+ul.plain {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: var(--pb-space-1);
+}
+
+/* ---------------------------------------------------------------- forms */
+.search {
+  display: grid;
+  gap: var(--pb-space-2);
+  max-width: 44rem;
+}
+.search p {
+  margin: 0;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-2);
+}
+.row input {
+  flex: 1 1 16rem;
+}
+
+.form {
+  display: grid;
+  gap: var(--pb-space-2);
+  max-width: 40rem;
+  margin-top: var(--pb-space-4);
+  padding: var(--pb-space-4);
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+}
+.form > p {
+  margin: 0;
+}
+.form fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--pb-space-1);
+}
+.form legend {
+  padding: 0;
+  margin-bottom: var(--pb-space-1);
+}
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-1);
+}
+.actions {
+  display: flex;
+  gap: var(--pb-space-2);
+  margin-top: var(--pb-space-2);
+}
+
+.sensitive .granted p {
+  margin: 0 0 var(--pb-space-2);
+}
