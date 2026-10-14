@@ -110,6 +110,8 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    // R2: the server a build is made for (option_env! in lib.rs); a cached build must not keep an older value.
+    println!("cargo:rerun-if-env-changed=PB_DEFAULT_SERVER");
     let attributes = tauri_build::Attributes::new()
         .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS));
     if let Err(e) = tauri_build::try_build(attributes) {

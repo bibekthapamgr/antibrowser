@@ -14,6 +14,13 @@ name: desktop internal build
 # pushed tag `desktop-v*`, not on every push.
 on:
   workflow_dispatch:
+    inputs:
+      default_server:
+        description: >-
+          Server the app starts with (R2 PB_DEFAULT_SERVER). The test server through the SSH tunnel is
+          http://127.0.0.1:8080; leave empty for none.
+        required: false
+        default: "http://127.0.0.1:8080"
   push:
     tags: ["desktop-v*"]
 
@@ -83,6 +90,7 @@ jobs:
         working-directory: apps/desktop
         env:
           CI: "true"
+          PB_DEFAULT_SERVER: ${{ inputs.default_server || '' }}
           # Only used when present; an empty identity means an unsigned build.
           APPLE_CERTIFICATE: ${{ steps.signing.outputs.mode == 'signed' && secrets.APPLE_CERTIFICATE || '' }}
           APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing.outputs.mode == 'signed' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
