@@ -46,7 +46,7 @@ export async function enqueueEmail(
   const id = newId('emailTask');
   await c.query(
     `insert into email_tasks (id, org_id, kind, to_email, payload_enc, dedupe_key)
-     values ($1, $2, $3, $4, $5, $6) on conflict (dedupe_key) do nothing`,
+     values ($1, $2, $3, $4, $5, $6) on conflict do nothing`,
     [
       id,
       task.orgId,

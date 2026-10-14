@@ -3,7 +3,7 @@
  * memory and, when a directory is given, as `<n>.eml` files. Recipients containing "reject" are refused with 550, so
  * permanent failures can be tested. Never for production.
  *
- *   node scripts/ci/smtp-sink.ts --port 2525 --dir /tmp/mail     (CI: Keycloak and the worker send here)
+ *   node services/worker/test/smtp-sink.ts --port 2525 --dir /tmp/mail   (CI: Keycloak and the worker send here)
  *   import { startSmtpSink } from '.../smtp-sink.ts'             (tests)
  */
 import { mkdirSync, writeFileSync } from 'node:fs';

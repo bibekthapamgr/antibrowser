@@ -12,7 +12,7 @@ on:
       - 'scripts/deploy/**'
       - 'scripts/ci/keycloak-sign-in-check.ts'
       - 'scripts/ci/signup-check.ts'
-      - 'scripts/ci/smtp-sink.ts'
+      - 'services/worker/test/smtp-sink.ts'
       - 'scripts/ci/totp.ts'
       - 'apps/web-portal/**'
       - 'services/api/scripts/snapshot-smoke.ts'
@@ -101,7 +101,7 @@ jobs:
         run: |
           # Keycloak (verification, password reset) and the worker (invitations, welcome) send here; nothing leaves.
           mkdir -p "$PB_MAIL_DIR" "$PB_TOTP_DIR"
-          nohup /opt/node/bin/node scripts/ci/smtp-sink.ts --port 2525 --dir "$PB_MAIL_DIR" > "$RUNNER_TEMP/smtp-sink.log" 2>&1 &
+          nohup /opt/node/bin/node services/worker/test/smtp-sink.ts --port 2525 --dir "$PB_MAIL_DIR" > "$RUNNER_TEMP/smtp-sink.log" 2>&1 &
           for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/2525) 2>/dev/null && break; sleep 0.5; done
           printf '%s\n' 'SMTP_HOST=127.0.0.1' 'SMTP_PORT=2525' 'SMTP_SECURITY=none' 'SMTP_FROM=no-reply@example.test' \
             'SMTP_FROM_NAME=Project Browser' | sudo tee /etc/project-browser/smtp.env > /dev/null

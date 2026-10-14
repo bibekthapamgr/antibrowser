@@ -106,5 +106,5 @@ set `Auto-Submitted: auto-generated`. Brand: `EMAIL_BRAND` (= `SMTP_FROM_NAME`).
 | customer cannot access staff routes | `onboarding.test.ts` "customers cannot reach staff routes…", `web.test.ts` "only routes meant for the portal…" |
 | BFF: PKCE/state/nonce, cookie flags, CSRF + Origin, rotation, logout, revoke-all, no open redirect | `web.test.ts` |
 | e-mail queue: sealed, sent, refused, retried, skipped, no double send | `services/worker/test/email.test.ts` |
-| real provider end to end (register → verify by e-mail → portal → workspace; invite e-mailed → teammate joins; staff one-time code) | `.github/workflows/deploy-scripts.yml` "Self-service signup…" with `scripts/ci/signup-check.ts`, `smtp-sink.ts`, `totp.ts` |
+| real provider end to end (register → verify by e-mail → portal → workspace; invite e-mailed → teammate joins; staff one-time code) | `.github/workflows/deploy-scripts.yml` "Self-service signup…" with `scripts/ci/signup-check.ts`, `scripts/ci/totp.ts`, `services/worker/test/smtp-sink.ts` |
 | desktop: Create account, terms once, Profiles after sign-in | `apps/desktop/e2e/manager.e2e.test.ts` "R2: Create account…"; `src-tauri/tests/account.rs` (registration URL, default server) |

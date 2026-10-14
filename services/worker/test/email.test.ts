@@ -10,8 +10,8 @@ import { newId } from '@pb/contracts';
 import nodemailer from 'nodemailer';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type SmtpSink, startSmtpSink } from '../../../scripts/ci/smtp-sink.ts';
 import { type EmailDeps, processEmailTasks } from '../src/email.ts';
+import { type SmtpSink, startSmtpSink } from './smtp-sink.ts';
 
 const key = randomBytes(32);
 let worker: pg.Pool;

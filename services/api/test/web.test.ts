@@ -103,6 +103,8 @@ beforeAll(async () => {
       WEB_ORIGIN: ORIGIN,
       TERMS_VERSION: TERMS,
       WEB_DIR: new URL('../../../apps/web-portal/public', import.meta.url).pathname,
+      // R2: e-mail is set up, so invitations and welcomes are queued (as the application role).
+      EMAIL_TASK_KEY: randomBytes(32).toString('base64'),
     },
     idTokens: createIdTokenVerifier({ issuer, clientId: DESKTOP_CLIENT, allowLoopbackHttp: true, keys }),
     webIdTokens: createIdTokenVerifier({ issuer, clientId: WEB_CLIENT, allowLoopbackHttp: true, keys }),
@@ -409,5 +411,48 @@ describe('the portal page', () => {
       download_url: null,
       sign_in: true,
     });
+  });
+});
+
+describe('e-mail tasks queued by the application role', () => {
+  it('a new workspace queues its welcome, an invitation its link (sealed, once)', async () => {
+    const p = person();
+    const { cookie } = await webSignIn(p);
+    const csrf = (await session(cookie.value)).json().csrf_token;
+    const created = await h.app.inject({
+      method: 'POST',
+      url: '/v1/onboarding/complete',
+      headers: withCookie(cookie.value, { 'x-csrf-token': csrf, origin: ORIGIN }),
+      payload: { accept_terms_version: TERMS },
+    });
+    expect(created.json().outcome).toBe('created');
+    const orgId = created.json().status.default_org_id as string;
+    expect(created.json().status.pending_tasks).toEqual([{ kind: 'welcome', state: 'pending' }]);
+    // The owner invites someone from the desktop: the link is queued for e-mail as well as shown once.
+    const nonce = randomBytes(24).toString('base64url');
+    const idToken = await sign({ sub: p.sub, email: p.email, email_verified: true, nonce }, DESKTOP_CLIENT);
+    const dev = await h.app.inject({
+      method: 'POST',
+      url: '/v1/devices',
+      payload: { id_token: idToken, nonce, name: 'Laptop', platform: 'linux-x64' },
+    });
+    const inv = await h.app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/invitations`,
+      headers: { authorization: `Bearer ${dev.json().access_token}` },
+      payload: { email: 'mate@web.test', role: 'operator' },
+    });
+    expect(inv.statusCode, inv.body).toBe(201);
+    expect(inv.json().email_delivery).toBe('queued');
+    const tasks = await h.owner.query(
+      'select kind, to_email, state, payload_enc from email_tasks where org_id = $1 order by created_at',
+      [orgId],
+    );
+    expect(tasks.rows.map((t) => [t.kind, t.state])).toEqual([
+      ['welcome', 'pending'],
+      ['invitation', 'pending'],
+    ]);
+    // The link is sealed: the token is not readable in the database.
+    expect(Buffer.from(tasks.rows[1]?.payload_enc).toString('latin1')).not.toContain(inv.json().token);
   });
 });
