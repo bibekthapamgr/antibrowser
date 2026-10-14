@@ -58,6 +58,23 @@ jobs:
             exit 1
           fi
 
+      - name: Egress rules for the app user (milestone 10)
+        run: |
+          grep -q "worker egress: private" "$RUNNER_TEMP/vps-setup.log" \
+            || { echo "::error title=egress::the setup did not prove the egress rules"; exit 1; }
+          grep -qx "Requires=pb-egress.service" /etc/systemd/system/pb-worker.service \
+            || { echo "::error title=egress::the worker does not require its egress rules"; exit 1; }
+          # User pb is refused private and metadata addresses at once; loopback (the API) still works for it.
+          for dest in 10.255.255.1/9 192.168.255.1/9 169.254.169.254/80; do
+            if sudo runuser -u pb -- timeout 5 bash -c "exec 3<>/dev/tcp/$dest" 2>"$RUNNER_TEMP/egress.err"; then
+              echo "::error title=egress::user pb reached $dest"; exit 1
+            fi
+            grep -q "No route to host" "$RUNNER_TEMP/egress.err" \
+              || { echo "::error title=egress::$dest was not refused: $(tr '\n' ' ' < "$RUNNER_TEMP/egress.err")"; exit 1; }
+          done
+          sudo runuser -u pb -- curl -fsS -o /dev/null http://127.0.0.1:8080/v1/health
+          echo "::notice title=Egress rules::user pb refused 10.255.255.1, 192.168.255.1 and 169.254.169.254 (No route to host); the API on loopback reachable"
+
       - name: Snapshot storage and root key
         run: |
           systemctl is-active --quiet pb-storage || { echo "::error title=storage::pb-storage is not running"; exit 1; }

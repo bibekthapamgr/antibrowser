@@ -59,9 +59,11 @@ attempt:
 
 At delivery the worker resolves the name, refuses if **any** answer is blocked (`blocked_destination`), connects to the
 address it checked (the TLS server name stays the host name, so certificates are verified normally), and never follows
-redirects. On the server the worker's systemd unit also denies outbound connections to private and loopback ranges
-except the DNS resolvers (`IPAddressDeny`/`IPAddressAllow`), so a name that resolves differently after the check still
-cannot reach an internal address. Development and test servers can allow private destinations
+redirects. On the test server the app's own processes (API and worker, user `pb`) are also refused private,
+link-local (including cloud metadata), carrier-grade NAT and local IPv6 destinations by an nftables table of their own
+(only the server's DNS resolvers are allowed there), so a name that resolves differently after the check still cannot
+reach an internal network. The setup script proves the rules with a refused test connection each time it runs, and the
+worker does not start without them. Development and test servers can allow private destinations
 (`WEBHOOK_ALLOW_PRIVATE_DESTINATIONS=true`); with any other `APP_ENV` the API and worker refuse to start with it.
 
 ## Inspecting deliveries

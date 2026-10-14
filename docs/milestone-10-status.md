@@ -28,7 +28,7 @@ Playwright debugging sessions that need the computer's own consent.
 | 4. Outbound authenticated connection/polling; no public localhost control port; any local bridge loopback, authenticated, Origin-validated, short-lived capability, off by default | Computers poll every 5 s with their interactive device session; nothing listens for jobs; the only local listener is the Playwright broker: off by default per computer, 127.0.0.1, capability bearer (SHA-256 known to the server, secret only to the requester), refuses any `Origin` and non-loopback `Host`, 5-minute connect window, one client, ends with the job |
 | 5. Playwright adapter after compatibility tests; protected pipe or authenticated broker rather than debugging endpoints; debugging admin-controlled and audited | DevTools over a protected pipe (`--remote-debugging-pipe` / `--remote-debugging-io-pipes`), never a port; broker relays to the pipe; `playwright-core` 1.63 `connectOverCDP` compatibility test in CI; `automation.debug` (owners/admins) + the `automation:debug` scope + the computer's audited consent; sessions audited with port, connections and command count |
 | 6. Narrow actions: open approved URL, explicit diagnostic screenshot, wait for owned/test page condition, return result; preview/approval and idempotency before website-changing actions | `open_url`, `wait_for` (selector/text/title/address prefix as JSON literals in an isolated world), `screenshot` (≤ 1.5 MiB, 7 days); results as typed outputs only; no website-changing step exists (the effect class and reconciliation path are ready; ADR-0017 requires preview/approval first) |
-| 7. Webhooks: signed payloads, timestamp, event id, retries/backoff, dead-letter inspection; SSRF via destination validation, DNS/redirect checks, egress policy | Standard Webhooks signatures (secret KMS-wrapped, shown once, dual signatures during rotation); 7 retries over ~21 h, dead letters kept 30 days and redeliverable; endpoint off after 20 dead in a row; destination checks at create/update and every delivery (all DNS answers, connect to the checked address, no redirects); systemd `IPAddressDeny` on the worker |
+| 7. Webhooks: signed payloads, timestamp, event id, retries/backoff, dead-letter inspection; SSRF via destination validation, DNS/redirect checks, egress policy | Standard Webhooks signatures (secret KMS-wrapped, shown once, dual signatures during rotation); 7 retries over ~21 h, dead letters kept 30 days and redeliverable; endpoint off after 20 dead in a row; destination checks at create/update and every delivery (all DNS answers, connect to the checked address, no redirects); on the test server the app user is refused private, link-local and CGNAT networks by nftables rules, proven at every setup run |
 | 8. Rate-limit by org and token; fair queue; cancellation propagates, closes or releases safely, preserves pending snapshot | Token and organization limits, job creation limit, queue limits; claims fair by requester; organization running limit and computer capacity; cancel: queued → canceled at once, running → stops before the next step, closes the profile and its closing backup uploads (a backup that cannot upload stays pending on the computer and the profile stays held) |
 
 ## Data / API
@@ -56,7 +56,7 @@ Playwright debugging sessions that need the computer's own consent.
 | Two jobs cannot write the same shared profile | API: second job waits; database refuses a second active job; a profile open interactively is not claimed; after a takeover the next step is refused. Desktop: jobs open under the session lease and release it after the closing backup |
 | Duplicate request yields one job | API: concurrent and sequential replays with one `Idempotency-Key` answer the same job; SDK retries with the same key |
 | Webhook duplicate documented and deduplicable | [webhooks.md](automation/webhooks.md) (at least once, same `webhook-id` on every copy); SDK example deduplicates; worker tests |
-| SSRF fixture destinations blocked | Contract vectors (IPv4/IPv6 ranges, mapped, NAT64, 6to4, local names, credentials, ports); API refuses them at create/update; worker refuses a name resolving to a blocked address and never follows redirects; worker egress firewall on the test server |
+| SSRF fixture destinations blocked | Contract vectors (IPv4/IPv6 ranges, mapped, NAT64, 6to4, local names, credentials, ports); API refuses them at create/update; worker refuses a name resolving to a blocked address and never follows redirects; on the test server the app user is refused private and metadata addresses (setup proof, deploy-scripts CI) |
 | Agent disconnect resumes only safe steps and reports ambiguous outcomes | Desktop: a lost answer → the computer stops reporting, closes the profile, and resumes the unfinished navigation step under a new lease (open not repeated); API: resume plans, `outcome_unknown` never repeated, `AGENT_LOST` after the resume window |
 | Deliver API docs, SDK examples, threat review, job dashboard, integration tests | Links above; dashboard screenshots in `docs/design/org-automation-*.png`; UI e2e with axe for the new screens in light and dark; the desktop's agent client end to end against the real API, PostgreSQL and S3 in CI (claim, lease, reports, screenshot upload, cancel, removal) |
 
@@ -80,9 +80,12 @@ step but the screenshot, see limitations; cross-OS restore matrix green). Instal
 [deploy scripts 38496718767](https://github.com/bibekthapamgr/antibrowser/actions/runs/38496718767).
 
 ## Test server
-`vps-setup.sh` changed (the worker's egress firewall), so the update runs **twice**: the first run copies the new
-script, the second applies it — migration `0007_automation.sql`, the worker unit with `IPAddressDeny`/`IPAddressAllow`
-(checked with `systemctl show`), and the API tests including the automation suite. Automation works through the same
+`vps-setup.sh` changed, so the update runs **twice**: the first run copies the new script, the second applies it —
+migration `0007_automation.sql`, the API tests including the automation suite, and the egress rules: a `pb-egress`
+service loads an nftables table that refuses private, link-local (cloud metadata), carrier-grade NAT and local IPv6
+destinations to the `pb` user's processes (API, worker; DNS resolvers allowed, loopback untouched, other users and
+firewall rules untouched). The script proves the rules with a connection that must be refused and counted ("worker
+egress: … test connection refused"), and only then makes the worker require them. Automation works through the same
 SSH tunnel; a computer enrolled from the desktop polls the API through it.
 
 ## Found and fixed during verification
@@ -102,6 +105,10 @@ SSH tunnel; a computer enrolled from the desktop polls the API through it.
   (Windows); it now checks that the browser requested the page.
 - A failed download of the headless shell failed the macOS job before its tests ran; the three CI jobs that need it now
   share a script that retries.
+- The worker's egress firewall first used systemd's `IPAddressDeny`. On the AlmaLinux 8 test server the setup reported
+  that it was not applied: RHEL 8's default cgroup v1 accepts the setting but cannot enforce it (CI's Ubuntu VM could).
+  It is now an nftables table for the app user, and the setup checks enforcement (a refused connection) instead of
+  reading the configuration back.
 
 ## Known limitations
 - No website-changing step (by design for v1); the reconciliation path is built but not exercised by a real step.

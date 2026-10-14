@@ -114,7 +114,7 @@ See [docs/spikes/README.md](spikes/README.md). Run as a **non-root** user so the
 
 ## Test server (Linux VPS)
 
-`scripts/deploy/vps-setup.sh` sets up a shared test server (RHEL-family or Debian/Ubuntu): Node 24 in `/opt/node`, PostgreSQL 18, a `pb` user with a read-only GitHub deploy key, random database passwords in `/etc/project-browser/api.env`, migrations, fixture tenants, the test suite, and `pb-api` / `pb-worker` systemd services bound to `127.0.0.1`. It does not change firewall or SSH settings.
+`scripts/deploy/vps-setup.sh` sets up a shared test server (RHEL-family or Debian/Ubuntu): Node 24 in `/opt/node`, PostgreSQL 18, a `pb` user with a read-only GitHub deploy key, random database passwords in `/etc/project-browser/api.env`, migrations, fixture tenants, the test suite, and `pb-api` / `pb-worker` systemd services bound to `127.0.0.1`. It does not open ports or change SSH settings; its only firewall change is outbound and limited to the `pb` user (`pb-egress`: no connections to private, link-local or CGNAT networks, so webhook deliveries cannot reach internal addresses).
 
 Since milestone 07 it also installs **snapshot storage** (SeaweedFS 4.48, checksum-pinned, service `pb-storage`, user
 `pbstore`, data in `/var/lib/pb-seaweedfs`, S3 on `127.0.0.1:8333` with credentials regenerated on every run) and

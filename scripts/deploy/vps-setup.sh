@@ -12,9 +12,11 @@
 #      pb user only; never regenerated: see root-key.sh and docs/sync/key-recovery-runbook.md).
 #   5. Runs the API, the worker and the storage as hardened systemd services bound to 127.0.0.1 only, then proves a
 #      snapshot round trip (upload, verification by the worker, restore).
+#   6. Keeps the pb user's processes (API, worker) away from private networks with an nftables table of its own
+#      (outbound only; proven with a refused test connection), so webhook deliveries cannot reach internal addresses.
 #
-# It never opens firewall ports, never changes SSH settings and never exposes PostgreSQL, the storage or the API
-# publicly. Access them through an SSH tunnel (printed at the end).
+# It never opens firewall ports, never changes SSH settings, never touches other firewall rules and never exposes
+# PostgreSQL, the storage or the API publicly. Access them through an SSH tunnel (printed at the end).
 #
 # Usage (as root):  bash vps-setup.sh [--skip-tests]
 # Env overrides:    PB_REPO (default git@github.com:bibekthapamgr/antibrowser.git), PB_BRANCH (main), PB_API_PORT (8080)
@@ -336,13 +338,14 @@ step "Services (systemd)"
 if ! systemctl is-active --quiet pb-api && port_in_use "$API_PORT"; then
   die "port $API_PORT is already in use on this server. Re-run with PB_API_PORT=<free port> bash $SELF"
 fi
-unit() {  # name, description, workdir, entry, [extra [Service] lines]
+unit() {  # name, description, workdir, entry, [extra [Service] lines], [extra [Unit] lines]
   cat > "/etc/systemd/system/$1.service" <<EOF
 [Unit]
 Description=$2
 After=network-online.target $PG_SERVICE.service pb-storage.service
 Wants=network-online.target pb-storage.service
 Requires=$PG_SERVICE.service
+${6:-}
 
 [Service]
 Type=simple
@@ -372,22 +375,95 @@ ${5:-}
 WantedBy=multi-user.target
 EOF
 }
-unit pb-api "Project Browser API (test server)" "$APP_DIR/services/api" "src/server.ts"
 # Milestone 10: the worker delivers webhooks to addresses customers choose. Besides its own checks (public addresses
-# only, pinned DNS, no redirects), it may not reach private, link-local (cloud metadata) or carrier-grade NAT networks
-# at all. Loopback stays reachable (PostgreSQL, storage); this server's DNS resolvers stay reachable.
-RESOLVERS=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
-WORKER_EGRESS="IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 0.0.0.0/8 fc00::/7 fe80::/10"
-[[ -n ${RESOLVERS// /} ]] && WORKER_EGRESS="$WORKER_EGRESS"$'\n'"IPAddressAllow=$RESOLVERS"
-unit pb-worker "Project Browser outbox worker (test server)" "$APP_DIR/services/worker" "src/main.ts" "$WORKER_EGRESS"
+# only, every DNS answer checked, connect to the checked address, no redirects), processes of the pb user (API,
+# worker) may not reach private, link-local (cloud metadata), carrier-grade NAT or local IPv6 networks at all: an
+# nftables table of their own rejects those destinations for that user only. Loopback (PostgreSQL, storage, Keycloak)
+# and this server's DNS resolvers stay reachable; other users and existing firewall rules are untouched. (systemd's
+# IPAddressDeny was used first; RHEL 8's default cgroup v1 accepts it but does not enforce it.)
+EGRESS_FILE=$ENV_DIR/egress.nft
+EGRESS_OK=0
+if ! command -v nft >/dev/null 2>&1; then
+  if [[ $FAMILY == rhel ]]; then
+    dnf install -y -q nftables >/dev/null 2>&1 || true
+  else
+    apt-get install -y -qq nftables >/dev/null 2>&1 || true
+  fi
+fi
+NFT=$(command -v nft || true)
+egress_blocked() { "$NFT" list counter inet pb_egress blocked 2>/dev/null | awk '/packets/ {print $2; exit}'; }
+if [[ -n $NFT ]]; then
+  app_uid=$(id -u "$APP_USER")
+  res4=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ {print $2}' /etc/resolv.conf 2>/dev/null | paste -sd, - || true)
+  res6=$(awk '$1 == "nameserver" && $2 ~ /:/ {sub(/%.*/, "", $2); print $2}' /etc/resolv.conf 2>/dev/null \
+    | paste -sd, - || true)
+  dns4="" dns6=""
+  if [[ -n $res4 ]]; then
+    dns4="    ip daddr { $res4 } udp dport 53 accept"$'\n'"    ip daddr { $res4 } tcp dport 53 accept"
+  fi
+  if [[ -n $res6 ]]; then
+    dns6="    ip6 daddr { $res6 } udp dport 53 accept"$'\n'"    ip6 daddr { $res6 } tcp dport 53 accept"
+  fi
+  cat > "$EGRESS_FILE.new" <<NFT_RULES
+# Written by vps-setup.sh (re-written on every run): processes of user $APP_USER (uid $app_uid) may not open
+# connections to private, link-local, carrier-grade NAT or local IPv6 networks. Loaded by pb-egress.service.
+table inet pb_egress
+delete table inet pb_egress
+table inet pb_egress {
+  counter blocked {
+  }
+  chain output {
+    type filter hook output priority 0; policy accept;
+    meta skuid != $app_uid accept
+$dns4
+$dns6
+    ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } counter name "blocked" reject with icmpx type admin-prohibited
+    ip6 daddr { fc00::/7, fe80::/10 } counter name "blocked" reject with icmpx type admin-prohibited
+  }
+}
+NFT_RULES
+  chmod 0644 "$EGRESS_FILE.new"
+  mv -f "$EGRESS_FILE.new" "$EGRESS_FILE"
+  cat > /etc/systemd/system/pb-egress.service <<EGRESS_UNIT
+[Unit]
+Description=Project Browser egress policy (no private networks for user $APP_USER)
+After=firewalld.service nftables.service
+Before=pb-api.service pb-worker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$NFT -f $EGRESS_FILE
+ExecStop=$NFT delete table inet pb_egress
+
+[Install]
+WantedBy=multi-user.target
+EGRESS_UNIT
+  systemctl daemon-reload
+  systemctl enable -q pb-egress
+  if systemctl restart pb-egress 2>/dev/null; then
+    # Proof, not configuration: a connection by the pb user to a private address must be refused and counted.
+    before=$(egress_blocked)
+    runuser -u "$APP_USER" -- timeout 5 bash -c 'exec 3<>/dev/tcp/10.255.255.1/9' >/dev/null 2>&1 || true
+    after=$(egress_blocked)
+    if (( ${after:-0} > ${before:-0} )); then EGRESS_OK=1; fi
+  fi
+fi
+# With the rules proven, the worker does not start without them (after a reboot as well).
+WORKER_UNIT_EXTRA="Wants=pb-egress.service"$'\n'"After=pb-egress.service"
+if (( EGRESS_OK )); then WORKER_UNIT_EXTRA="Requires=pb-egress.service"$'\n'"After=pb-egress.service"; fi
+unit pb-api "Project Browser API (test server)" "$APP_DIR/services/api" "src/server.ts" "" \
+  "Wants=pb-egress.service"$'\n'"After=pb-egress.service"
+unit pb-worker "Project Browser outbox worker (test server)" "$APP_DIR/services/worker" "src/main.ts" "" \
+  "$WORKER_UNIT_EXTRA"
 systemctl daemon-reload
 systemctl enable -q pb-api pb-worker
 systemctl restart pb-api pb-worker
 ok "pb-api and pb-worker enabled and restarted"
-if systemctl show pb-worker -p IPAddressDeny 2>/dev/null | grep -q '169.254'; then
-  ok "worker egress: private and link-local networks blocked for webhook deliveries (systemd IPAddressDeny)"
+if (( EGRESS_OK )); then
+  ok "worker egress: private, link-local and CGNAT networks refused to user $APP_USER (nftables; test connection refused)"
 else
-  warn "this systemd does not apply IPAddressDeny; webhook deliveries rely on the worker's own address checks"
+  warn "could not apply the egress rules (nftables); webhook deliveries rely on the worker's own address checks"
 fi
 
 # ----------------------------------------------------------------------------- smoke test

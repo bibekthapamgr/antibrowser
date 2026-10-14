@@ -96,8 +96,9 @@ reach internal networks (SSRF); and nothing on a web page may change what a job 
   IP literals in private, loopback, link-local, CGNAT, multicast, documentation, metadata, NAT64/6to4/mapped ranges,
   no `localhost`/`.local`/`.internal` names — checked at create/update; the worker resolves **every** address and
   refuses if any is blocked, connects to the checked address (TLS server name kept), never follows redirects, reads at
-  most 4 KiB, 10 s timeout; on the server, the worker's service has an `IPAddressDeny` egress policy for private
-  ranges (systemd), so a DNS answer that changes after the check still cannot reach them.
+  most 4 KiB, 10 s timeout; on the server, the app user's processes (API, worker) are refused private, link-local,
+  CGNAT and local IPv6 destinations by host rules (nftables; amended below), so a DNS answer that changes after the
+  check still cannot reach them.
 
 ### Desktop UI
 Organization → Automation (jobs with steps and screenshots — downloaded by the shell —, cancel naming the profile and
@@ -126,6 +127,16 @@ routes; enrolling, polling, reports, uploads and job creation stay with the shel
 - [Threat review](../automation/threat-review.md), [API](../automation/api.md), [webhooks](../automation/webhooks.md),
   [Playwright](../automation/playwright.md).
 
+## Amendment (2026-10-14, after the first test-server deployment)
+The egress policy was first a systemd `IPAddressDeny` list on the worker's unit. On the AlmaLinux 8 test server it was
+accepted but not enforced (RHEL 8's default cgroup v1 has no BPF cgroup firewalling); CI's Ubuntu VM had hidden this,
+and the setup only read the configuration back. Decision: an nftables table of its own (`inet pb_egress`, loaded by
+`pb-egress.service`) matching the app user's uid — outbound only, other users and existing firewall rules untouched,
+DNS resolvers allowed. The setup proves enforcement with a connection that must be refused and counted, and only then
+makes the worker require the rules (fail closed after reboots); where they cannot be applied it says so and the
+worker's own checks remain the control. Trade-off: the rules cover every process of the `pb` user (the API and tools
+too), not only the worker, since the worker needs the same files (root key) as the API.
+
 ## Revisit when
 A website-changing step is proposed; customers need push (WebSocket) instead of polling for agents; a managed egress
-proxy replaces the host firewall for webhooks; remote browser hosting (a separate tier) is planned.
+proxy replaces the host egress rules for webhooks; remote browser hosting (a separate tier) is planned.
