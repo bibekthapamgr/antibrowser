@@ -9,6 +9,7 @@
 import type {
   AccountView,
   AppView,
+  AutomationStatus,
   BulkAction,
   BulkResult,
   Client,
@@ -56,6 +57,8 @@ import type {
 export type {
   AccountView,
   AppView,
+  AutomationRun,
+  AutomationStatus,
   BulkAction,
   BulkResult,
   Client,
@@ -339,9 +342,25 @@ export interface AgencyRepository {
   exportDiagnostics(previewId: string): Promise<{ path: string | null }>;
 }
 
+/**
+ * Automation on this computer (milestone 10): which organizations it runs jobs for, "Allow Playwright connections",
+ * and the jobs it ran. The organization's job dashboard, computers, API tokens and webhooks go through
+ * `account.request` (allow-listed API paths); screenshots are downloaded by the shell.
+ */
+export interface AutomationRepository {
+  status(): Promise<AutomationStatus>;
+  enroll(orgId: string, accepts: 'mine' | 'org', maxJobs: number): Promise<AutomationStatus>;
+  unenroll(orgId: string): Promise<AutomationStatus>;
+  stopJob(jobId: string): Promise<AutomationStatus>;
+  setDebugging(allow: boolean): Promise<AutomationStatus>;
+  /** A `data:` URL of a job's screenshot. */
+  screenshot(orgId: string, jobId: string, artifactId: string): Promise<string>;
+}
+
 export interface Backend {
   kind: 'tauri' | 'demo';
   agency: AgencyRepository;
+  automation: AutomationRepository;
   account: AccountRepository;
   sync: SyncRepository;
   team: TeamRepository;

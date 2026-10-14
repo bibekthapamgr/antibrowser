@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { ThisComputerAutomation } from './automation.tsx';
 import type { AppView, Backend, RuntimeStatus, SettingValue } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { Dialog, formatBytes } from './components.tsx';
@@ -111,6 +112,8 @@ export function SettingsScreen(props: {
   refreshKey: number;
   onChanged: () => void;
   notify: Notify;
+  /** Signed in to an organization server (milestone 10: automation on this computer). */
+  signedIn?: boolean;
 }) {
   const { backend, app, notify } = props;
   const [confirming, setConfirming] = useState(false);
@@ -273,6 +276,8 @@ export function SettingsScreen(props: {
           your network. Link-local and cloud metadata addresses (such as 169.254.169.254) are never allowed.
         </p>
       </fieldset>
+
+      <ThisComputerAutomation backend={backend} notify={notify} signedIn={!!props.signedIn} />
 
       <h2 className="section-title">Clients, tags and templates</h2>
       <LibraryManager backend={backend} notify={notify} refreshKey={props.refreshKey} />

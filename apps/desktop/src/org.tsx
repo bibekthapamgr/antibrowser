@@ -18,6 +18,7 @@ import {
   type Role,
 } from '@pb/contracts/resources';
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { OrgAutomationSection } from './automation.tsx';
 import type { AccountView, AppView, Backend, OrgImportView } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { OrgBackupsSection } from './backups.tsx';
@@ -36,6 +37,7 @@ type Section =
   | 'access'
   | 'backups'
   | 'extensions'
+  | 'automation'
   | 'activity'
   | 'settings';
 interface Page<T> {
@@ -109,6 +111,7 @@ export function OrganizationScreen(props: {
     ['access', 'Access', can(role, 'grants.manage')],
     ['backups', 'Backups', can(role, 'backups.manage')],
     ['extensions', 'Extensions', can(role, 'org.read') && role !== 'billing'],
+    ['automation', 'Automation', can(role, 'automation.read')],
     ['activity', 'Activity', can(role, 'audit.read')],
     ['settings', 'Settings', true],
   ];
@@ -149,6 +152,7 @@ export function OrganizationScreen(props: {
       {current === 'access' && <AccessSection {...common} />}
       {current === 'backups' && <OrgBackupsSection {...common} />}
       {current === 'extensions' && <OrgExtensionsSection {...common} />}
+      {current === 'automation' && <OrgAutomationSection {...common} />}
       {current === 'activity' && <ActivitySection {...common} />}
       {current === 'settings' && (
         <SettingsSection

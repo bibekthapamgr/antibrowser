@@ -17274,6 +17274,34 @@
           }
         }
       }
+    },
+    "automation_screenshot": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId",
+          "jobId",
+          "artifactId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "jobId": {
+            "type": "string",
+            "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "artifactId": {
+            "type": "string",
+            "pattern": "^art_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "string",
+        "pattern": "^data:image/(jpeg|png|svg\\+xml);base64,"
+      }
     }
   },
   "events": {

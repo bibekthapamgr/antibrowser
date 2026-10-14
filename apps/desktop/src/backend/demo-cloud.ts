@@ -17,6 +17,7 @@ import {
   isSensitivePermission,
   validVersionRange,
 } from '@pb/contracts/agency';
+import type { EventPayload } from '@pb/contracts/ipc';
 import {
   type ASSIGNABLE_ROLES,
   defaultCapabilities,
@@ -28,7 +29,15 @@ import {
   type Role,
 } from '@pb/contracts/resources';
 import { secretHint } from '../notes.ts';
-import type { AccountRepository, AccountView, CloudRequest, CloudResponse, OrgImportView } from './types.ts';
+import { demoAutomation } from './demo-automation.ts';
+import type {
+  AccountRepository,
+  AccountView,
+  AutomationRepository,
+  CloudRequest,
+  CloudResponse,
+  OrgImportView,
+} from './types.ts';
 
 const CROCK = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const rid = (prefix: string) =>
@@ -307,7 +316,9 @@ export function demoCloud(opts: {
     message?: string;
   }) => void;
   localProfiles: (workspaceId: string) => LocalProfile[];
-}): AccountRepository & { sync: DemoCloudSync; team: DemoCloudTeam } {
+  /** Milestone 10: `automation` events (this computer's jobs). */
+  emitAutomation?: (payload: EventPayload<'automation'>) => void;
+}): AccountRepository & { sync: DemoCloudSync; team: DemoCloudTeam; automation: AutomationRepository } {
   const me = {
     id: rid('usr'),
     display_name: 'Demo Person',
@@ -717,6 +728,25 @@ export function demoCloud(opts: {
   };
 
   /** The API itself. Returns `{status, body}`; paths are already allow-listed by the caller. */
+  // Milestone 10: automation settings, jobs, computers, API tokens and webhooks (demo-automation.ts).
+  const automation = demoAutomation({
+    me,
+    deviceId,
+    personName: (id) => people.get(id)?.display_name ?? 'Someone',
+    err,
+    audit: (o, action, target) => {
+      const rec = orgs.get(o.id);
+      if (rec) audit(rec, action, target);
+    },
+    visibleProfile: (o, id) => {
+      const rec = orgs.get(o.id);
+      const p = rec?.profiles.find((x) => x.id === id);
+      return !!rec && !!p && visibleProfile(rec, p);
+    },
+    orgs: () => [...orgs.values()].filter((o) => role(o)),
+    emit: (payload) => opts.emitAutomation?.(payload),
+  });
+
   const route = (req: CloudRequest): { status: number; body: unknown } => {
     const q = new Map(req.query ?? []);
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -847,6 +877,8 @@ export function demoCloud(opts: {
     const need = (p: Permission) =>
       allows(r, p) ? null : err(403, 'FORBIDDEN', 'Your role does not allow this action', { permission: p });
     const t = now();
+    const automated = automation.route(org, req, parts, version);
+    if (automated) return automated;
 
     if (!c) {
       if (req.method === 'GET')
@@ -1914,6 +1946,7 @@ export function demoCloud(opts: {
   return {
     sync,
     team,
+    automation: automation.computer,
     async get() {
       return view();
     },

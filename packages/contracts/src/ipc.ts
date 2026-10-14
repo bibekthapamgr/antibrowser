@@ -1545,6 +1545,15 @@ export const COMMANDS = {
   },
   /** "Allow Playwright connections" on this computer (audited; turning it off ends open debugging sessions). */
   automation_set_debugging: { args: Type.Object({ allow: Type.Boolean() }), result: AutomationStatus },
+  /** A job's screenshot as a `data:` URL (downloaded by the shell; the window never fetches from the server). */
+  automation_screenshot: {
+    args: Type.Object({
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      jobId: Type.String({ pattern: JobIdPattern }),
+      artifactId: Type.String({ pattern: '^art_[0-9A-HJKMNP-TV-Z]{26}$' }),
+    }),
+    result: Type.String({ pattern: '^data:image/(jpeg|png|svg\\+xml);base64,' }),
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;

@@ -19,6 +19,9 @@
  *   close anything, close and hand off with a note (never a password), a forced takeover with a reason and warning,
  *   a session taken over here (closed, copy kept aside, recovery copy), offline shared opens refused, and what an
  *   operator's access allows
+ * - milestone 10: the job dashboard (steps, screenshots, a stop that names the profile), API tokens and webhook
+ *   secrets shown once, webhook destinations that are refused, dead letters sent again, and this computer enrolled
+ *   to run jobs with Playwright connections off until confirmed
  */
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -429,6 +432,48 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
   },
   { name: 'org-client-dashboard', demo: 'signedin', prepare: (p) => openDashboard(p) },
   { name: 'org-extensions', demo: 'signedin', prepare: (p) => openOrg(p, 'Extensions') },
+  // Milestone 10: automation.
+  {
+    name: 'org-automation-jobs',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Automation');
+      await p.waitForFunction(() =>
+        document.querySelector('main')?.textContent?.includes('Morning login check'),
+      );
+      await clickButton(p, 'main table', 'Steps');
+      await p.waitForFunction(() => document.querySelector('.job-steps'));
+    },
+  },
+  {
+    name: 'org-automation-token',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Automation');
+      await clickButton(p, 'main nav[aria-label="Automation sections"]', 'API tokens');
+      await clickButton(p, 'main', 'New token…');
+      await p.waitForSelector('[role=dialog] form');
+    },
+  },
+  {
+    name: 'org-automation-webhooks',
+    demo: 'signedin',
+    prepare: async (p) => {
+      await openOrg(p, 'Automation');
+      await clickButton(p, 'main nav[aria-label="Automation sections"]', 'Webhooks');
+      await clickInRow(p, 'hooks.example.com', 'Deliveries');
+      await p.waitForSelector('main ul.deliveries');
+    },
+  },
+  {
+    name: 'settings-automation',
+    demo: 'signedin',
+    nav: 'Settings',
+    prepare: async (p) => {
+      await p.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Run jobs here'));
+      await p.$eval('.automation-here', (el) => el.scrollIntoView());
+    },
+  },
   { name: 'proxies', demo: '', nav: 'Proxies' },
   {
     name: 'proxy-add',
@@ -583,6 +628,26 @@ async function clickButton(page: Page, scope: string, label: string) {
   );
   const el = handle.asElement();
   if (!el) throw new Error(`no button ${label} in ${scope}`);
+  await (el as unknown as { click(): Promise<void> }).click();
+}
+
+/** Clicks a button in the table row that mentions `rowText`. */
+async function clickInRow(page: Page, rowText: string, label: string) {
+  const handle = await page.waitForFunction(
+    (t, l) => {
+      const row = [...document.querySelectorAll('main table tbody tr')].find((r) =>
+        r.querySelector('th')?.textContent?.includes(t),
+      );
+      return [...(row?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (b) => b.textContent?.trim() === l && !b.disabled,
+      );
+    },
+    { timeout: 10_000 },
+    rowText,
+    label,
+  );
+  const el = handle.asElement();
+  if (!el) throw new Error(`no button ${label} in the row of ${rowText}`);
   await (el as unknown as { click(): Promise<void> }).click();
 }
 
@@ -1095,7 +1160,8 @@ describe('account and organizations (milestone 06)', () => {
     expect(rows).toContain('North shop admin');
     expect(rows).not.toContain('South support desk');
     const buttons = await member.$$eval('.org-nav button', (bs) => bs.map((b) => b.textContent?.trim()));
-    expect(buttons).toEqual(['Profiles', 'Clients', 'Extensions', 'Settings']);
+    // Milestone 10: operators see automation jobs on what was shared with them (and may run them).
+    expect(buttons).toEqual(['Profiles', 'Clients', 'Extensions', 'Automation', 'Settings']);
     expect(await member.$$eval('#main button', (bs) => bs.map((b) => b.textContent?.trim()))).not.toContain(
       'Add profile',
     );
@@ -1598,6 +1664,151 @@ describe('agency workspace and technical health (milestone 09)', () => {
     await page.waitForFunction(() =>
       document.querySelector('main')?.textContent?.includes('Blocked by your organization'),
     );
+    await page.close();
+  });
+});
+
+describe('developer API and automation (milestone 10)', () => {
+  const automationTab = (page: Page, tab: string) =>
+    clickButton(page, 'main nav[aria-label="Automation sections"]', tab);
+
+  it('the job dashboard shows steps and screenshots, and a stop names the profile first', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Automation');
+    await page.waitForFunction(() =>
+      document.querySelector('main')?.textContent?.includes('Morning login check'),
+    );
+    const main = await text(page, 'main');
+    expect(main).toContain('The page went to a site that is not approved; the job stopped there.');
+    expect(main).toContain('Holding open');
+    expect(main).toContain('token “Nightly checks”');
+    // Steps of the succeeded job, then its screenshot (downloaded by the shell, shown as an image).
+    await clickInRow(page, 'Morning login check', 'Steps');
+    await page.waitForFunction(() =>
+      document.querySelector('.job-steps')?.textContent?.includes('Wait for the text'),
+    );
+    expect(await text(page, '.job-steps')).toContain('closing backup saved');
+    await clickButton(page, '.job-steps', 'Show screenshot “login”');
+    await page.waitForSelector('img.job-shot');
+    const alt = await page.$eval('img.job-shot', (i) => (i as HTMLImageElement).alt);
+    expect(alt).toMatch(/^Screenshot “login” of /);
+    // Stopping a profile held open: the confirmation names the profile; the job then ends as succeeded.
+    await clickInRow(page, 'Keep open for review', 'Stop');
+    await page.waitForSelector('[role=alertdialog]');
+    expect(await text(page, '[role=alertdialog] h2')).toMatch(/^Stop holding .+ open\?$/);
+    expect(await text(page, '[role=alertdialog]')).toContain('closing backup still uploads');
+    await clickButton(page, '[role=alertdialog]', 'Stop and close the profile');
+    await toastContains(page, 'Stopping');
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('main table tbody tr')]
+          .find((r) => r.textContent?.includes('Keep open for review'))
+          ?.textContent?.includes('Succeeded'),
+      { timeout: 15_000 },
+    );
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+    await page.close();
+  });
+
+  it('an API token is limited to what its creator can do and its secret is shown once', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Automation');
+    await automationTab(page, 'API tokens');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Nightly checks'));
+    await clickButton(page, 'main', 'New token…');
+    await page.waitForSelector('[role=dialog] form');
+    await page.type('[role=dialog] input', 'CI smoke tests');
+    await page.evaluate(() => {
+      const box = [...document.querySelectorAll<HTMLLabelElement>('[role=dialog] label.choice')].find((l) =>
+        l.textContent?.includes('Run automation jobs'),
+      );
+      box?.querySelector('input')?.click();
+    });
+    await clickButton(page, '[role=dialog]', 'Create token');
+    await page.waitForSelector('[role=alertdialog] input.mono');
+    const secret = await page.$eval('[role=alertdialog] input.mono', (i) => (i as HTMLInputElement).value);
+    expect(secret).toMatch(/^pbt_tok_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{43}$/);
+    expect(await text(page, '[role=alertdialog]')).toContain('shown only this once');
+    await clickButton(page, '[role=alertdialog]', 'I copied it');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('CI smoke tests'));
+    // The list never shows a secret again.
+    expect(await text(page, 'main')).not.toContain(secret);
+    await page.close();
+  });
+
+  it('webhooks refuse internal destinations, show the signing secret once and send dead letters again', async () => {
+    const page = await open('signedin');
+    await openOrg(page, 'Automation');
+    await automationTab(page, 'Webhooks');
+    await page.waitForFunction(() =>
+      document.querySelector('main')?.textContent?.includes('hooks.example.com'),
+    );
+    await clickButton(page, 'main', 'New endpoint…');
+    await page.waitForSelector('[role=dialog] form');
+    const url = '[role=dialog] input.mono';
+    await page.$eval(url, (i) => {
+      (i as HTMLInputElement).select();
+    });
+    await page.type(url, 'https://169.254.169.254/latest');
+    await page.waitForFunction(() =>
+      document
+        .querySelector('[role=dialog]')
+        ?.textContent?.includes('cloud-metadata addresses cannot receive webhooks'),
+    );
+    await page.$eval(url, (i) => {
+      (i as HTMLInputElement).select();
+    });
+    await page.type(url, 'https://hooks.example.org/pb');
+    await clickButton(page, '[role=dialog]', 'Create endpoint');
+    await page.waitForSelector('[role=alertdialog] input.mono');
+    const secret = await page.$eval('[role=alertdialog] input.mono', (i) => (i as HTMLInputElement).value);
+    expect(secret).toMatch(/^whsec_[A-Za-z0-9+/]{43}=$/);
+    await clickButton(page, '[role=alertdialog]', 'I copied it');
+    // The seeded endpoint has a dead letter: sent again, it is delivered.
+    const rows = await page.$$('main table tbody tr');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    await clickInRow(page, 'hooks.example.com/project-browser', 'Deliveries');
+    await page.waitForFunction(() =>
+      document.querySelector('main ul.deliveries')?.textContent?.includes('server error (5xx)'),
+    );
+    await clickButton(page, 'main ul.deliveries', 'Send again');
+    await toastContains(page, 'Sending it again.');
+    await page.close();
+  });
+
+  it('this computer runs its organization’s jobs once enrolled; Playwright connections need confirming', async () => {
+    const page = await open('signedin');
+    await goTo(page, 'Settings');
+    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Run jobs here'));
+    expect(await text(page, '.automation-here')).toContain('it never opens a port for them');
+    await clickButton(page, '.automation-here', 'Run jobs here');
+    await toastContains(page, 'now runs');
+    // The queued job of this person is taken by this computer and runs to the end.
+    await page.waitForFunction(
+      () => document.querySelector('.automation-here ul.runs')?.textContent?.includes('Succeeded'),
+      { timeout: 20_000 },
+    );
+    expect(await text(page, '.automation-here ul.runs')).toContain('Weekly invoice screenshot');
+    // Playwright connections stay off until the warning is confirmed.
+    await page.evaluate(() => {
+      const box = [...document.querySelectorAll<HTMLLabelElement>('.automation-here label.choice')].find(
+        (l) => l.textContent?.includes('Allow Playwright connections'),
+      );
+      box?.querySelector('input')?.click();
+    });
+    await page.waitForSelector('[role=alertdialog]');
+    expect(await text(page, '[role=alertdialog]')).toContain('including its sign-ins');
+    await clickButton(page, '[role=alertdialog]', 'Keep it off');
+    const checked = await page.evaluate(
+      () =>
+        [...document.querySelectorAll<HTMLLabelElement>('.automation-here label.choice')]
+          .find((l) => l.textContent?.includes('Allow Playwright connections'))
+          ?.querySelector('input')?.checked,
+    );
+    expect(checked).toBe(false);
+    const violations = await axeSerious(page);
+    expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     await page.close();
   });
 });

@@ -6,11 +6,14 @@
 //! opening, heartbeats and release stay with the shell (it holds the session's lease and fencing token).
 //! Milestone 09 adds client dashboards, tasks, shared bookmarks, the extension policy and the extension inventory; the
 //! shell itself reports each profile's installed extensions.
+//! Milestone 10 adds automation settings, the job dashboard (list, detail, cancel), enrolled computers, API tokens and
+//! webhook endpoints. Enrolling, polling, job reports and screenshot uploads stay with the shell (they act for this
+//! computer), screenshots are downloaded by the shell, and jobs are created through the API (tokens or the SDK).
 
 use crate::http::Method;
 
 /// One allowed request shape. Path templates use `{org}`, `{usr}`, `{dev}`, `{inv}`, `{cli}`, `{grt}`, `{prf}`, `{hrq}`,
-/// `{tsk}`, `{bkm}` for opaque ids and `{token}` for an invitation token.
+/// `{tsk}`, `{bkm}`, `{job}`, `{agt}`, `{tok}`, `{whk}`, `{dlv}` for opaque ids and `{token}` for an invitation token.
 struct Rule {
     method: Method,
     template: &'static str,
@@ -120,6 +123,38 @@ const RULES: &[Rule] = &[
     rule(Method::Get, "/v1/orgs/{org}/extension-policy"),
     rule(Method::Put, "/v1/orgs/{org}/extension-policy"),
     rule(Method::Get, "/v1/orgs/{org}/extension-inventory"),
+    // Milestone 10: automation settings, jobs (live state), computers, API tokens (the secret is in a POST answer
+    // only, never cached) and webhook endpoints (likewise).
+    rule(Method::Get, "/v1/orgs/{org}/automation/settings"),
+    rule(Method::Put, "/v1/orgs/{org}/automation/settings"),
+    live(Method::Get, "/v1/orgs/{org}/automation/jobs"),
+    live(Method::Get, "/v1/orgs/{org}/automation/jobs/{job}"),
+    rule(Method::Post, "/v1/orgs/{org}/automation/jobs/{job}/cancel"),
+    live(Method::Get, "/v1/orgs/{org}/automation/agents"),
+    rule(Method::Patch, "/v1/orgs/{org}/automation/agents/{agt}"),
+    rule(Method::Delete, "/v1/orgs/{org}/automation/agents/{agt}"),
+    rule(Method::Get, "/v1/orgs/{org}/api-tokens"),
+    rule(Method::Post, "/v1/orgs/{org}/api-tokens"),
+    rule(Method::Post, "/v1/orgs/{org}/api-tokens/{tok}/rotate"),
+    rule(Method::Delete, "/v1/orgs/{org}/api-tokens/{tok}"),
+    rule(Method::Get, "/v1/orgs/{org}/webhook-endpoints"),
+    rule(Method::Post, "/v1/orgs/{org}/webhook-endpoints"),
+    rule(Method::Get, "/v1/orgs/{org}/webhook-endpoints/{whk}"),
+    rule(Method::Patch, "/v1/orgs/{org}/webhook-endpoints/{whk}"),
+    rule(Method::Delete, "/v1/orgs/{org}/webhook-endpoints/{whk}"),
+    rule(
+        Method::Post,
+        "/v1/orgs/{org}/webhook-endpoints/{whk}/rotate-secret",
+    ),
+    rule(Method::Post, "/v1/orgs/{org}/webhook-endpoints/{whk}/test"),
+    live(
+        Method::Get,
+        "/v1/orgs/{org}/webhook-endpoints/{whk}/deliveries",
+    ),
+    rule(
+        Method::Post,
+        "/v1/orgs/{org}/webhook-endpoints/{whk}/deliveries/{dlv}/redeliver",
+    ),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -151,6 +186,11 @@ fn segment_matches(template: &str, segment: &str) -> bool {
         "{hrq}" => is_id("hrq", segment),
         "{tsk}" => is_id("tsk", segment),
         "{bkm}" => is_id("bkm", segment),
+        "{job}" => is_id("job", segment),
+        "{agt}" => is_id("agt", segment),
+        "{tok}" => is_id("tok", segment),
+        "{whk}" => is_id("whk", segment),
+        "{dlv}" => is_id("dlv", segment),
         "{token}" => is_token(segment),
         literal => literal == segment,
     }
@@ -211,6 +251,25 @@ pub fn check(
             "user_id" => is_id("usr", v),
             "mine" => v == "true" || v == "false",
             "status" => matches!(v.as_str(), "open" | "done" | "all"),
+            // Milestone 10: job, token and delivery filters.
+            "state" => matches!(
+                v.as_str(),
+                "QUEUED"
+                    | "CLAIMED"
+                    | "RUNNING"
+                    | "SUCCEEDED"
+                    | "FAILED"
+                    | "CANCELED"
+                    | "active"
+                    | "finished"
+                    | "all"
+                    | "pending"
+                    | "delivered"
+                    | "dead"
+            ),
+            "profile_id" => is_id("prf", v),
+            "agent_id" => is_id("agt", v),
+            "all" => v == "true" || v == "false",
             _ => false,
         };
         if !ok || method != Method::Get || pairs.iter().any(|(pk, _): &(&str, &str)| *pk == k) {
@@ -472,5 +531,107 @@ mod tests {
             check("GET", "/v1/invitations/short", &[], None).err(),
             Some(Refused::NotAllowed)
         );
+    }
+
+    #[test]
+    fn automation_routes_for_the_window_and_the_ones_kept_by_the_shell() {
+        const JOB: &str = "job_01J9ZSEED0A010000000000000";
+        const AGT: &str = "agt_01J9ZSEED0A010000000000000";
+        const TOK: &str = "tok_01J9ZSEED0A010000000000000";
+        const WHK: &str = "whk_01J9ZSEED0A010000000000000";
+        const DLV: &str = "dlv_01J9ZSEED0A010000000000000";
+        const ART: &str = "art_01J9ZSEED0A010000000000000";
+        for (method, path) in [
+            ("GET", format!("/v1/orgs/{ORG}/automation/settings")),
+            ("PUT", format!("/v1/orgs/{ORG}/automation/settings")),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/automation/jobs/{JOB}/cancel"),
+            ),
+            ("PATCH", format!("/v1/orgs/{ORG}/automation/agents/{AGT}")),
+            ("DELETE", format!("/v1/orgs/{ORG}/automation/agents/{AGT}")),
+            ("POST", format!("/v1/orgs/{ORG}/api-tokens")),
+            ("POST", format!("/v1/orgs/{ORG}/api-tokens/{TOK}/rotate")),
+            ("DELETE", format!("/v1/orgs/{ORG}/api-tokens/{TOK}")),
+            ("POST", format!("/v1/orgs/{ORG}/webhook-endpoints")),
+            ("PATCH", format!("/v1/orgs/{ORG}/webhook-endpoints/{WHK}")),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/webhook-endpoints/{WHK}/rotate-secret"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/webhook-endpoints/{WHK}/test"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/webhook-endpoints/{WHK}/deliveries/{DLV}/redeliver"),
+            ),
+        ] {
+            assert!(check(method, &path, &[], None).is_ok(), "{method} {path}");
+        }
+        // Job states change while they run: never shown from the offline cache.
+        let jobs = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/automation/jobs"),
+            &q(&[("state", "active"), ("profile_id", PRF), ("mine", "true")]),
+            None,
+        );
+        assert_eq!(jobs.map(|a| a.cache_key), Ok(None));
+        let tokens = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/api-tokens"),
+            &q(&[("all", "true"), ("state", "all")]),
+            None,
+        );
+        assert!(tokens.is_ok_and(|a| a.cache_key.is_some()));
+        let dead = check(
+            "GET",
+            &format!("/v1/orgs/{ORG}/webhook-endpoints/{WHK}/deliveries"),
+            &q(&[("state", "dead")]),
+            None,
+        );
+        assert!(dead.is_ok());
+        // What acts for this computer, creates jobs or carries a token secret stays with the shell or the API.
+        for (method, path) in [
+            ("POST", format!("/v1/orgs/{ORG}/automation/jobs")),
+            ("POST", format!("/v1/orgs/{ORG}/automation/agents")),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/automation/agents/{AGT}/poll"),
+            ),
+            (
+                "POST",
+                format!("/v1/orgs/{ORG}/automation/jobs/{JOB}/report"),
+            ),
+            (
+                "PUT",
+                format!("/v1/orgs/{ORG}/automation/jobs/{JOB}/steps/1/artifact"),
+            ),
+            (
+                "GET",
+                format!("/v1/orgs/{ORG}/automation/jobs/{JOB}/artifacts/{ART}"),
+            ),
+            ("GET", format!("/v1/orgs/{ORG}/api-tokens/current")),
+            ("GET", format!("/v1/orgs/{ORG}/automation/jobs/{AGT}")),
+        ] {
+            assert_eq!(
+                check(method, &path, &[], None),
+                Err(Refused::NotAllowed),
+                "{method} {path}"
+            );
+        }
+        for bad in [("state", "RUNNING;"), ("agent_id", "agt_x"), ("all", "yes")] {
+            assert_eq!(
+                check(
+                    "GET",
+                    &format!("/v1/orgs/{ORG}/automation/jobs"),
+                    &q(&[bad]),
+                    None
+                ),
+                Err(Refused::BadParameter),
+                "{bad:?}"
+            );
+        }
     }
 }

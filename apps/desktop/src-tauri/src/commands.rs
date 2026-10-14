@@ -1296,3 +1296,21 @@ pub fn automation_set_debugging<Rt: Runtime>(
     caller(&webview)?;
     state.automation_set_debugging(allow)
 }
+
+/// A job's screenshot (a `data:` URL), downloaded by the shell.
+#[tauri::command]
+pub async fn automation_screenshot<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+    job_id: String,
+    artifact_id: String,
+) -> R<String> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        state.automation_screenshot(&org_id, &job_id, &artifact_id)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}

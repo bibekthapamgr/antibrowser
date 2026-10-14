@@ -1278,6 +1278,7 @@ export function demoBackend(mode = ''): Backend {
   const cloud = demoCloud({
     mode,
     emit: (e) => emit('account', e),
+    emitAutomation: (p) => emit('automation', p),
     localProfiles: (workspaceId) =>
       recs
         .filter((r) => r.workspace_id === workspaceId && !r.trashed_at && !r.archived_at)
@@ -1369,6 +1370,7 @@ export function demoBackend(mode = ''): Backend {
   const backend = {
     kind: 'demo',
     agency,
+    automation: cloud.automation,
     account: cloud,
     sync,
     team,

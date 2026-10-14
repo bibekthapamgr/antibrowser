@@ -429,6 +429,10 @@ pub const AUTOMATION_BUSY: IpcError = IpcError::new(
     "AUTOMATION_BUSY",
     "Jobs of that organization are running on this computer. Stop them first.",
 );
+pub const SCREENSHOT_UNAVAILABLE: IpcError = IpcError::new(
+    "SCREENSHOT_UNAVAILABLE",
+    "This screenshot is no longer available (screenshots are kept for 7 days).",
+);
 pub const UNKNOWN_JOB: IpcError =
     IpcError::new("UNKNOWN_JOB", "That job is not running on this computer.");
 

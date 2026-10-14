@@ -612,6 +612,46 @@ impl AppState {
         self.automation_status()
     }
 
+    /// A job's screenshot for the window, as a `data:` URL (the window never fetches from the server itself).
+    pub fn automation_screenshot(
+        &self,
+        org: &str,
+        job: &str,
+        artifact: &str,
+    ) -> Result<String, IpcError> {
+        use base64::Engine;
+        if !id_ok("org", org) || !id_ok("job", job) || !id_ok("art", artifact) {
+            return Err(ipc::INVALID_ARGUMENT);
+        }
+        let (status, bytes) = self
+            .shell_get_bytes(&format!(
+                "/v1/orgs/{org}/automation/jobs/{job}/artifacts/{artifact}"
+            ))
+            .map_err(|e| match e {
+                ApiError::Offline => ipc::CLOUD_OFFLINE,
+                ApiError::SignedOut => ipc::CLOUD_SIGNED_OUT,
+                _ => ipc::CLOUD_UNAVAILABLE,
+            })?;
+        if status == 404 || status == 403 {
+            return Err(ipc::SCREENSHOT_UNAVAILABLE);
+        }
+        if status != 200 || bytes.len() > MAX_ARTIFACT_BYTES {
+            return Err(ipc::CLOUD_BAD_RESPONSE);
+        }
+        // Only images this app recognises are shown (the window renders them with an <img>).
+        let kind = if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            "image/jpeg"
+        } else if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+            "image/png"
+        } else {
+            return Err(ipc::CLOUD_BAD_RESPONSE);
+        };
+        Ok(format!(
+            "data:{kind};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ))
+    }
+
     /// "Allow Playwright connections" on this computer (off by default; audited). Turning it off ends debugging
     /// sessions that are open.
     pub fn automation_set_debugging(&self, allow: bool) -> Result<AutomationStatus, IpcError> {

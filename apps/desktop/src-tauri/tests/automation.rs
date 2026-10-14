@@ -726,6 +726,26 @@ fn a_computer_removed_in_the_organization_stops_asking_for_work() {
     f.state.run_automation_tick();
     assert_eq!(status(&f)["enrollments"], json!([]));
     assert!(audit_outcomes(&f).iter().any(|a| a == "unenrolled"));
+    // Screenshots are downloaded by the shell (signed in to the organization's server); ids are checked first.
+    let shot = |org: &str, job: &str, art: &str| {
+        code(&invoke(
+            &f,
+            "automation_screenshot",
+            json!({ "orgId": org, "jobId": job, "artifactId": art }),
+        ))
+    };
+    let (job_id, art_id) = (
+        "job_01J9ZSEED0A010000000000000",
+        "art_01J9ZSEED0A010000000000000",
+    );
+    assert_eq!(
+        shot(ORG, job_id, "art_x").as_deref(),
+        Some("INVALID_ARGUMENT")
+    );
+    assert_eq!(
+        shot(ORG, job_id, art_id).as_deref(),
+        Some("CLOUD_SIGNED_OUT")
+    );
     // Invalid requests are refused before anything is sent.
     for (cmd, body) in [
         (

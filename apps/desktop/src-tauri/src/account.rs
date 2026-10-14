@@ -885,6 +885,50 @@ impl AppState {
         }
     }
 
+    /// A raw download made by the shell's own code (milestone 10: a job's screenshot for the window), with the same
+    /// rules as [`Self::shell_api`]. Returns the status and the body.
+    pub(crate) fn shell_get_bytes(&self, path: &str) -> Result<(u16, Vec<u8>), pb_sync::ApiError> {
+        use pb_sync::ApiError as E;
+        let local = |code: &str| E::Code {
+            status: 0,
+            code: code.to_owned(),
+        };
+        let store = self.store().map_err(|_| local("LOCAL_STORE_ERROR"))?;
+        let server = store
+            .cloud_state(cs::SERVER_URL)
+            .map_err(|_| local("LOCAL_STORE_ERROR"))?
+            .ok_or(E::SignedOut)?;
+        if self.cloud_status() != SessionStatus::SignedIn {
+            return Err(E::SignedOut);
+        }
+        let url = api_url(&server, path).map_err(|_| local("CLOUD_BAD_SERVER"))?;
+        let mut retried = false;
+        loop {
+            let token = self.access_token(&server, retried).map_err(|e| match e {
+                NoAccess::Offline => E::Offline,
+                NoAccess::SignedOut => E::SignedOut,
+                NoAccess::Unavailable => local("CLOUD_UNAVAILABLE"),
+            })?;
+            let res = match self
+                .cloud
+                .http
+                .request(Method::Get, &url, Some(&token), &[], None)
+            {
+                Ok(r) => r,
+                Err(HttpError::Offline) => return Err(E::Offline),
+                Err(e) => return Err(local(http_err(e).code)),
+            };
+            if res.status == 401 && !retried {
+                retried = true;
+                continue;
+            }
+            if res.status == 401 {
+                self.expire_session();
+            }
+            return Ok((res.status, res.body));
+        }
+    }
+
     /// A raw upload made by the shell's own code (milestone 10: a job's screenshot), with the same rules.
     pub(crate) fn shell_put_bytes(
         &self,

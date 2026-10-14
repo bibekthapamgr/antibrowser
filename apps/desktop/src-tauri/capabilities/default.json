@@ -95,6 +95,7 @@
     "allow-automation-enroll",
     "allow-automation-unenroll",
     "allow-automation-stop-job",
-    "allow-automation-set-debugging"
+    "allow-automation-set-debugging",
+    "allow-automation-screenshot"
   ]
 }

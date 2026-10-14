@@ -1129,3 +1129,35 @@ kbd {
   color: var(--pb-text);
   opacity: 1;
 }
+
+/* ---------------------------------------------------------------- milestone 10: automation */
+.job-steps {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: grid;
+  gap: var(--pb-space-2);
+}
+.job-shot {
+  display: block;
+  max-width: min(100%, 640px);
+  height: auto;
+  margin-top: var(--pb-space-1);
+  border: 1px solid var(--pb-border-strong);
+  border-radius: 6px;
+}
+.token-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--pb-space-3);
+  max-height: 260px;
+  overflow: auto;
+}
+ul.deliveries > li,
+ul.runs > li {
+  padding: var(--pb-space-2) 0;
+  border-bottom: 1px solid var(--pb-border);
+}
+ul.deliveries .pb-button,
+ul.runs .pb-button {
+  margin-left: var(--pb-space-2);
+}

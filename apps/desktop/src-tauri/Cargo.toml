@@ -24,6 +24,7 @@ pb-cloud.workspace = true
 pb-seal.workspace = true
 pb-sync.workspace = true
 pb-devtools.workspace = true
+base64 = "0.22"
 serde.workspace = true
 sha2.workspace = true
 hex.workspace = true

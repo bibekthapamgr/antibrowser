@@ -596,6 +596,7 @@ export function App({ backend }: { backend: Backend }) {
             refreshKey={refreshKey}
             onChanged={refresh}
             notify={notify}
+            signedIn={account?.status === 'signed_in'}
           />
         )}
       </main>

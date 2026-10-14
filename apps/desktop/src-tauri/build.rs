@@ -91,6 +91,7 @@ const COMMANDS: &[&str] = &[
     "automation_unenroll",
     "automation_stop_job",
     "automation_set_debugging",
+    "automation_screenshot",
 ];
 
 fn main() {

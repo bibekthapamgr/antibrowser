@@ -26,6 +26,14 @@ export function tauriBackend(): Backend {
       previewDiagnostics: () => call('preview_diagnostics', {}),
       exportDiagnostics: (previewId) => call('export_diagnostics', { previewId }),
     },
+    automation: {
+      status: () => call('get_automation_status', {}),
+      enroll: (orgId, accepts, maxJobs) => call('automation_enroll', { orgId, accepts, maxJobs }),
+      unenroll: (orgId) => call('automation_unenroll', { orgId }),
+      stopJob: (jobId) => call('automation_stop_job', { jobId }),
+      setDebugging: (allow) => call('automation_set_debugging', { allow }),
+      screenshot: (orgId, jobId, artifactId) => call('automation_screenshot', { orgId, jobId, artifactId }),
+    },
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),

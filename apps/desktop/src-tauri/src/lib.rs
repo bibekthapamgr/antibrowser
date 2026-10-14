@@ -141,6 +141,7 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::automation_unenroll,
         commands::automation_stop_job,
         commands::automation_set_debugging,
+        commands::automation_screenshot,
     ]
 }
 
