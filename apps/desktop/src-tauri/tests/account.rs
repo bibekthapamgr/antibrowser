@@ -1136,7 +1136,10 @@ fn migration_adopts_only_opted_in_profiles_without_uploading_and_runs_twice_iden
     let p2 = plan(&f, &ws);
     assert_eq!(p2["counts"]["linked"], 2);
     assert_eq!(p2["counts"]["local_only"], 1);
-    assert_eq!(p2["run"]["id"], r["run"]["id"], "the same manifest is the same run");
+    assert_eq!(
+        p2["run"]["id"], r["run"]["id"],
+        "the same manifest is the same run"
+    );
     let r2 = ok(run(&f, &ws, &adopt, false, 10));
     assert_eq!(r2["run"]["state"], "completed");
     assert_eq!(r2["run"]["counts"], r["run"]["counts"]);
