@@ -41,7 +41,10 @@ export function stateLine(s: Subscription): string {
     case 'active':
       return s.cancel_at_period_end
         ? `Canceled: it stays active until ${day(s.current_period_end)}, then stops renewing. Nothing is deleted.`
-        : `Renews on ${day(s.current_period_end)}.`;
+        : s.current_period_end
+          ? `Renews on ${day(s.current_period_end)}.`
+          : // A workspace on a plan without a paid subscription (beta, or kept working by support): no renewal date.
+            'No payment is due for this plan right now.';
     case 'past_due':
       return 'A payment failed. Everything keeps working while the provider retries; please check the payment method.';
     case 'grace':
