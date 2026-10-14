@@ -31,7 +31,7 @@ export interface AuditHead {
 
 export async function auditHead(c: pg.Pool | pg.ClientBase): Promise<AuditHead> {
   const { rows } = await c.query<AuditHead>(
-    "select seq::text, encode(hash, 'hex') as hash from app.platform_audit_head where singleton",
+    "select seq::text, encode(hash, 'hex') as hash from app.platform_audit_head_read()",
   );
   const h = rows[0];
   if (!h) throw new Error('the platform audit has no chain head');
@@ -48,7 +48,7 @@ export async function exportAudit(
     `select seq::text, id, at::text, ((extract(epoch from at) * 1000000)::bigint)::text as at_us, actor_user_id,
             action, org_id, target, details::text as details_text, request_id,
             encode(prev_hash, 'hex') as prev_hash, encode(hash, 'hex') as hash
-       from app.platform_audit where seq > $1 order by seq limit $2`,
+       from app.platform_audit where seq > $1 order by platform_audit.seq limit $2`,
     [afterSeq.toString(), limit],
   );
   return rows;

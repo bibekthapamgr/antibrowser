@@ -85,6 +85,18 @@ pub struct Http {
     allow_loopback_http: bool,
 }
 
+/// The desktop app's version, sent as `x-pb-client-version` with every API request (milestone 12: the server can
+/// require a minimum version). Set once at start-up by the app; unset in tools and tests.
+static CLIENT_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn set_client_version(version: &str) {
+    let _ = CLIENT_VERSION.set(version.to_owned());
+}
+
+pub fn client_version() -> Option<&'static str> {
+    CLIENT_VERSION.get().map(String::as_str)
+}
+
 pub fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
@@ -156,6 +168,9 @@ impl Http {
                 if let Some(a) = &auth {
                     req = req.header("authorization", a);
                 }
+                if let Some(v) = client_version() {
+                    req = req.header("x-pb-client-version", v);
+                }
                 for (k, v) in headers {
                     req = req.header(*k, *v);
                 }
@@ -170,6 +185,9 @@ impl Http {
                 req = req.header("accept", "application/json");
                 if let Some(a) = &auth {
                     req = req.header("authorization", a);
+                }
+                if let Some(v) = client_version() {
+                    req = req.header("x-pb-client-version", v);
                 }
                 for (k, v) in headers {
                     req = req.header(*k, *v);
@@ -201,6 +219,9 @@ impl Http {
             .header("accept", "application/json");
         if let Some(t) = bearer {
             req = req.header("authorization", format!("Bearer {t}"));
+        }
+        if let Some(v) = client_version() {
+            req = req.header("x-pb-client-version", v);
         }
         read(req.content_type(content_type).send(bytes))
     }

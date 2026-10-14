@@ -15,6 +15,8 @@ export interface MigrateOptions {
   log?: boolean;
   /** Stop after this migration file (tests use it to load data in an older schema, then upgrade). */
   until?: string;
+  /** Another folder of migrations (tests: a failing migration, milestone 12). */
+  dir?: string;
 }
 
 export async function migrate(connectionString: string, opts: MigrateOptions = {}) {
@@ -29,7 +31,8 @@ export async function migrate(connectionString: string, opts: MigrateOptions = {
     await client.query(`create table if not exists public.schema_migrations (
       name text primary key, sha256 text not null, applied_at timestamptz not null default now())`);
 
-    const files = (await readdir(MIGRATIONS_DIR)).filter((f) => /^\d{4}_[a-z0-9_]+\.sql$/.test(f)).sort();
+    const dir = opts.dir ?? MIGRATIONS_DIR;
+    const files = (await readdir(dir)).filter((f) => /^\d{4}_[a-z0-9_]+\.sql$/.test(f)).sort();
     const applied = new Map(
       (
         await client.query<{ name: string; sha256: string }>(
@@ -40,7 +43,7 @@ export async function migrate(connectionString: string, opts: MigrateOptions = {
 
     for (const file of files) {
       if (opts.until && file > opts.until) break;
-      const sql = await readFile(join(MIGRATIONS_DIR, file), 'utf8');
+      const sql = await readFile(join(dir, file), 'utf8');
       const sha = createHash('sha256').update(sql).digest('hex');
       const previous = applied.get(file);
       if (previous) {

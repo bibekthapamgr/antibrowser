@@ -82,6 +82,7 @@ export function OrgPage({ orgId }: { orgId: string }) {
       </p>
       <Problem text={problem} />
 
+      {org.break_glass_until && <BreakGlass org={org} />}
       <Subscription org={org} onChanged={load} />
       <Limits org={org} />
       <Sensitive org={org} mine={mine} onChanged={load} />
@@ -324,6 +325,66 @@ function Limits({ org }: { org: SupportOrgOverview }) {
 }
 
 // ---------------------------------------------------------------- sensitive information
+/**
+ * Milestone 12: emergency access granted on the server (staff.ts break-glass), shown on every organization while it
+ * lasts. Its one emergency action revokes the organization's API tokens; customer data is never touched.
+ */
+function BreakGlass({ org }: { org: SupportOrgOverview }) {
+  const { api, explain } = useConsole();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const revoke = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    try {
+      const n = await api.revokeApiTokens(org.id, reason.trim());
+      setDone(
+        `${n} API token${n === 1 ? '' : 's'} revoked. The organization’s owners see this in their activity log.`,
+      );
+      setReason('');
+    } catch (err) {
+      setProblem(explain(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="break-glass" role="alert" aria-labelledby="break-glass-title">
+      <h2 id="break-glass-title">Break-glass access until {when(org.break_glass_until)}</h2>
+      <p>
+        Members and the activity log open without approval. Every view and action is recorded in the platform
+        audit and in this organization’s own activity log, and raises an alert.
+      </p>
+      <form className="stack" onSubmit={revoke}>
+        <label htmlFor="bg-reason">Revoke all of this organization’s API tokens (a leaked token): why?</label>
+        <textarea
+          id="bg-reason"
+          value={reason}
+          minLength={20}
+          maxLength={500}
+          required
+          onChange={(e) => setReason(e.target.value)}
+        />
+        <div className="row">
+          <button
+            type="submit"
+            className="pb-button"
+            data-variant="danger"
+            disabled={busy || reason.trim().length < 20}
+          >
+            Revoke all API tokens
+          </button>
+        </div>
+      </form>
+      {done && <p role="status">{done}</p>}
+      <Problem text={problem} />
+    </section>
+  );
+}
+
 function Sensitive({
   org,
   mine,
@@ -392,7 +453,10 @@ function Sensitive({
         org.active_access.includes(s) ? (
           <div key={s} className="granted">
             <p>
-              <strong>{ACCESS_LABEL[s]}:</strong> access approved until {when(until(s))}.{' '}
+              <strong>{ACCESS_LABEL[s]}:</strong>{' '}
+              {org.break_glass_until
+                ? `break-glass access until ${when(org.break_glass_until)}.`
+                : `access approved until ${when(until(s))}.`}{' '}
               <button type="button" className="pb-button" onClick={() => show(s)}>
                 Show {ACCESS_LABEL[s].toLowerCase()}
               </button>

@@ -143,7 +143,8 @@ export function backupRoutes(app: App, deps: Deps): void {
     {
       schema: {
         tags: ['backups'],
-        description: 'Restores a deleted profile from the trash (with its snapshots).',
+        description:
+          'Restores a deleted profile from the trash (with its snapshots). Needs a recent sign-in.',
         params: ProfileParams,
         response: { 200: Profile, ...errors },
       },
@@ -152,6 +153,8 @@ export function backupRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requireBillingAllows(access, 'trash.restore');
       requirePermission(access, 'profile.delete');
+      // Milestone 12: restoring from the trash needs a recent sign-in.
+      requireRecentAuth(principalOf(req), deps.config.session.recentAuthSeconds);
       return withTx(deps.pool, access, async (c) => {
         const { rows } = await c.query<Profile>(
           `update profiles p set deleted_at = null, version = version + 1, updated_at = now()

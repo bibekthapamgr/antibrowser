@@ -102,6 +102,13 @@ create trigger platform_audit_no_truncate before truncate on platform_audit
 
 revoke update, delete, truncate on platform_audit from pb_app, pb_worker;
 
+-- Staff exports read the chain head through this function only (no application role can write the head).
+create function platform_audit_head_read(out seq bigint, out hash bytea)
+  language sql stable security definer set search_path = app, pg_catalog
+  as $$ select seq, hash from platform_audit_head where singleton $$;
+revoke all on function platform_audit_head_read() from public;
+grant execute on function platform_audit_head_read() to pb_app;
+
 -- ------------------------------------------------------------------ 3. break-glass grants
 create table break_glass_grants (
   id         text primary key check (app.valid_id('bgg', id)),
@@ -116,6 +123,12 @@ create table break_glass_grants (
 );
 create index break_glass_grants_user_idx on break_glass_grants (user_id, expires_at desc);
 grant select on break_glass_grants to pb_app;
+
+-- A grant and every use of it raise a console alert.
+alter table billing_alerts drop constraint billing_alerts_kind_check;
+alter table billing_alerts add constraint billing_alerts_kind_check check (kind in ('webhook_backlog', 'event_failed',
+  'unknown_customer', 'unknown_price', 'duplicate_subscriptions', 'paid_not_active', 'missed_webhook', 'dispute',
+  'refund', 'signature_failures', 'resync_failed', 'break_glass_used'));
 
 comment on table break_glass_grants is
   'Emergency staff access (milestone 12): at most 60 minutes, with a reason; created only by staff.ts on the server.';

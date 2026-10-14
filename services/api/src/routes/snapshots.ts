@@ -41,7 +41,13 @@ import { normalizeEtag } from '../backup/objects.ts';
 import { ts, withTx } from '../db.ts';
 import { requestDigest, requireIdempotencyKey } from '../idempotency.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
-import { profileFor, requirePermission, resolveTenant, type TenantAccess } from '../tenancy.ts';
+import {
+  profileFor,
+  requirePermission,
+  requireRecentAuth,
+  resolveTenant,
+  type TenantAccess,
+} from '../tenancy.ts';
 import { errors, ProfileParams, pageOf, pageWindow, SnapshotParams } from './common.ts';
 
 /** Upload parts: 16 MiB each (S3 needs at least 5 MiB for every part but the last). */
@@ -662,7 +668,8 @@ export function snapshotRoutes(app: App, deps: Deps): void {
         tags: ['snapshots'],
         description:
           'Authorizes restoring one committed snapshot (default: the newest): a signed download URL and the data ' +
-          'key, for this device only. Needs snapshot.restore; every plan is audited.',
+          'key, for this device only. Needs snapshot.restore; an older version or a recovery copy also needs a ' +
+          'recent sign-in (REAUTHENTICATION_REQUIRED). Every plan is audited.',
         params: ProfileParams,
         body: RestorePlanRequest,
         response: { 200: RestorePlan, ...errors },
@@ -703,6 +710,11 @@ export function snapshotRoutes(app: App, deps: Deps): void {
         if (row.status === 'recovery') requirePermission(access, 'backups.manage');
         else if (row.status !== 'committed') {
           throw new ApiError('SNAPSHOT_UNAVAILABLE', 'This snapshot was removed by the retention policy');
+        }
+        // Milestone 12: going back to an older version or a recovery copy is a restore operation and needs a recent
+        // sign-in. Fetching the newest version (opening a shared profile, a handoff, an automation job) does not.
+        if (row.status === 'recovery' || row.id !== profile.head_snapshot_id) {
+          requireRecentAuth(principalOf(req), deps.config.session.recentAuthSeconds);
         }
         const orgKey = await orgKeyById(c, backup.kms, access.orgId, row.key_version_id);
         let dataKey: Buffer;

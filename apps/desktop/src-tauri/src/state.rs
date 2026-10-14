@@ -233,6 +233,8 @@ impl AppState {
         inspector: Arc<dyn ProcessInspector>,
         events: Arc<dyn EventSink>,
     ) -> Result<Arc<Self>, String> {
+        // Milestone 12: every API request says which app version sent it (the server may require a minimum).
+        pb_cloud::http::set_client_version(APP_VERSION);
         let paths = Paths {
             data: data_dir.to_path_buf(),
             db: data_dir.join("local.db"),

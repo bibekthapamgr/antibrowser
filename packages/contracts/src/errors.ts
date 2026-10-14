@@ -72,6 +72,9 @@ export const ERROR_CODES = {
   PLAN_NOT_AVAILABLE: { status: 422, retryable: false },
   INTERNAL: { status: 500, retryable: true },
   UNAVAILABLE: { status: 503, retryable: true },
+  // Milestone 12
+  /** This version of the desktop app is below the server's minimum (a known problem): update it. */
+  CLIENT_UPDATE_REQUIRED: { status: 426, retryable: false },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

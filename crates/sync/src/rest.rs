@@ -39,6 +39,12 @@ pub trait Transport: Send + Sync {
 pub fn map_error(status: u16, body: &Value) -> ApiError {
     let code = body.get("code").and_then(Value::as_str).unwrap_or("");
     match (status, code) {
+        // Milestone 12: a restore of an older version needs a recent sign-in. That is not a signed-out session:
+        // the job stops with this code and the person is asked to sign in again.
+        (_, "REAUTHENTICATION_REQUIRED") => ApiError::Code {
+            code: code.to_owned(),
+            status,
+        },
         (401, _) => ApiError::SignedOut,
         (_, "VERSION_CONFLICT") => ApiError::Conflict {
             head_version: body
@@ -600,5 +606,22 @@ impl<T: Transport> crate::automation::AutomationApi for RestApi<T> {
             jpeg,
         )?;
         s(&v, "/artifact_id")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_recent_sign_in_request_is_not_a_signed_out_session() {
+        let e = map_error(401, &json!({ "code": "REAUTHENTICATION_REQUIRED" }));
+        assert!(e.is_code("REAUTHENTICATION_REQUIRED"));
+        assert!(matches!(
+            map_error(401, &json!({ "code": "UNAUTHENTICATED" })),
+            ApiError::SignedOut
+        ));
     }
 }

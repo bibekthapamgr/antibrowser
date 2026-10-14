@@ -44,6 +44,10 @@ const FAILED: Record<string, string> = {
   SEAL_WRONG_BINDING: 'The file does not belong to this profile and was refused. Nothing was changed.',
   SNAPSHOT_CHANGED: 'The backup changed while it was being restored and was not used.',
   SNAPSHOT_UNAVAILABLE: 'That version was removed by the retention policy.',
+  CLIENT_UPDATE_REQUIRED:
+    'The server no longer accepts this version of Project Browser. Update it (Downloads and updates), then try again.',
+  REAUTHENTICATION_REQUIRED:
+    'Restoring an older version or a recovery copy needs a recent sign-in. Sign in again, then restore it again.',
   RUNTIME_TOO_OLD: 'This backup was made with a newer browser. Update the browser on this computer first.',
   NO_RUNTIME: 'Install the browser on this computer first.',
   UNKNOWN_PLATFORM: 'This backup was made on a system this app does not support.',
@@ -209,6 +213,18 @@ export function BackupSection(props: {
             <p className="warn small" role="status">
               {job.kind === 'upload' ? 'The last backup failed. ' : 'The last restore failed. '}
               {FAILED[job.error_code ?? ''] ?? 'Nothing was changed. Try again later.'}
+              {job.error_code === 'REAUTHENTICATION_REQUIRED' && (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className="pb-button"
+                    onClick={() => void props.backend.account.signIn(true).catch(() => undefined)}
+                  >
+                    Sign in again
+                  </button>
+                </>
+              )}
             </p>
           )}
           {!running && job?.kind === 'restore' && job.state === 'done' && job.portability && (
@@ -484,15 +500,38 @@ export function OrgBackupsSection(props: {
     }
   };
 
-  const undelete = async (t: TrashedProfile) => {
-    try {
-      await send(backend, 'POST', `/v1/orgs/${orgId}/profiles/${t.profile.id}/undelete`);
-      notify(`Restored ${t.profile.name} from the trash, with its backups.`);
-      load();
-    } catch (err) {
-      notify(errorMessage(err), 'error');
-    }
-  };
+  // Milestone 12: restoring from the trash needs a recent sign-in; after it, the restore continues by itself.
+  const [pendingUndelete, setPendingUndelete] = useState<TrashedProfile | null>(null);
+  const undelete = useCallback(
+    async (t: TrashedProfile) => {
+      try {
+        await send(backend, 'POST', `/v1/orgs/${orgId}/profiles/${t.profile.id}/undelete`);
+        notify(`Restored ${t.profile.name} from the trash, with its backups.`);
+        load();
+      } catch (err) {
+        if (err instanceof ApiFailure && err.code === 'REAUTHENTICATION_REQUIRED') {
+          setPendingUndelete(t);
+          notify(
+            'Restoring from the trash needs a recent sign-in. Sign in again in your browser to continue.',
+          );
+          void backend.account.signIn(true).catch(() => setPendingUndelete(null));
+        } else notify(errorMessage(err), 'error');
+      }
+    },
+    [backend, orgId, notify, load],
+  );
+  useEffect(() => {
+    if (!pendingUndelete) return;
+    return backend.on('account', (e) => {
+      if (e.status === 'signed_in' && e.reauth) {
+        setPendingUndelete(null);
+        void undelete(pendingUndelete);
+      } else if (e.status === 'failed') {
+        setPendingUndelete(null);
+        notify(e.message ?? 'Sign-in did not complete.', 'error');
+      }
+    });
+  }, [backend, notify, pendingUndelete, undelete]);
 
   const runRotate = useCallback(async () => {
     try {

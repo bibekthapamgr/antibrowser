@@ -292,3 +292,56 @@ describe('support console (milestone 11)', () => {
     await page.close();
   });
 });
+
+describe('break-glass and the verifiable audit export (milestone 12)', () => {
+  const demo = (page: Page) => ({
+    breakGlass: (minutes: number) =>
+      page.evaluate(
+        (m) =>
+          (
+            window as unknown as { __pbConsoleDemo: { breakGlass: (m: number) => void } }
+          ).__pbConsoleDemo.breakGlass(m),
+        minutes,
+      ),
+  });
+
+  it('break-glass shows on the organization, opens members without approval, revokes API tokens with a reason', async () => {
+    const page = await open('support');
+    await signIn(page);
+    await demo(page).breakGlass(30);
+    await openOrg(page, 'owner@northwind.example', 'Northwind Agency');
+    await waitText(page, 'Break-glass access until');
+    expect(await text(page, '.break-glass')).toContain('recorded in the platform audit');
+    await waitText(page, 'Members: break-glass access until');
+    await click(page, 'Show members');
+    await waitText(page, 'casey@northwind.example');
+    const disabled = await page.$eval(
+      '.break-glass button[type=submit]',
+      (b) => (b as HTMLButtonElement).disabled,
+    );
+    expect(disabled).toBe(true);
+    await page.type('#bg-reason', 'A token was posted in a public issue tracker (ticket 5120).');
+    await click(page, 'Revoke all API tokens');
+    await waitText(page, '3 API tokens revoked');
+    await noAxe(page, 'break-glass');
+    // Ended on the server: the banner is gone and approval is needed again.
+    await demo(page).breakGlass(0);
+    await page.evaluate(() => {
+      window.location.hash = '#/search';
+    });
+    await openOrg(page, 'owner@northwind.example', 'Northwind Agency');
+    expect(await page.$('.break-glass')).toBeNull();
+    await page.close();
+  });
+
+  it('support leads export a copy of the audit that verifies in the browser', async () => {
+    const page = await open('lead');
+    await signIn(page);
+    await click(page, 'Audit');
+    await page.waitForSelector('#audit-title');
+    await click(page, 'Export a verifiable copy');
+    await waitText(page, 'the chain verifies up to entry');
+    await noAxe(page, 'audit export');
+    await page.close();
+  });
+});

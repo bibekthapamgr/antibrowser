@@ -478,6 +478,8 @@ export const BILLING_ALERT_KINDS = [
   'refund',
   'signature_failures',
   'resync_failed',
+  // Milestone 12: emergency staff access was granted or used.
+  'break_glass_used',
 ] as const;
 export type BillingAlertKind = (typeof BILLING_ALERT_KINDS)[number];
 
@@ -543,6 +545,8 @@ export const SupportOrgOverview = Type.Object(
     events: Type.Array(BillingEventSummary),
     alerts: Type.Array(BillingAlert),
     active_access: Type.Array(Type.Enum(SUPPORT_ACCESS_SCOPES)),
+    /** Milestone 12: this staff member's break-glass access ends at this time (null: none). */
+    break_glass_until: Nullable(Timestamp),
   },
   { additionalProperties: false },
 );
@@ -643,6 +647,55 @@ export const PlatformAuditEntry = Type.Object(
   { additionalProperties: false },
 );
 export type PlatformAuditEntry = Static<typeof PlatformAuditEntry>;
+
+/**
+ * Milestone 12: an export of the hash-chained platform audit. Each entry's hash is
+ * sha256(prev_hash || UTF-8 of seq, id, at_us, actor, action, org, target, details_text, request id joined by U+001F),
+ * so a copy kept elsewhere proves later that no entry was changed, reordered or removed (services/api/src/audit-chain.ts).
+ */
+const Hex = Type.String({ pattern: '^([0-9a-f]{64})?$' });
+export const AuditExportEntry = Type.Object(
+  {
+    seq: Type.String({ pattern: '^[0-9]{1,19}$' }),
+    id: Id('aud'),
+    at: Type.String(),
+    at_us: Type.String({ pattern: '^-?[0-9]{1,20}$' }),
+    actor_user_id: Nullable(Id('usr')),
+    action: Type.String(),
+    org_id: Nullable(Type.String()),
+    target: Nullable(Type.String()),
+    details_text: Type.String(),
+    request_id: Nullable(Type.String()),
+    prev_hash: Hex,
+    hash: Hex,
+  },
+  { additionalProperties: false },
+);
+export const AuditExport = Type.Object(
+  {
+    items: Type.Array(AuditExportEntry),
+    head: Type.Object({ seq: Type.String(), hash: Hex }, { additionalProperties: false }),
+  },
+  { additionalProperties: false },
+);
+export type AuditExport = Static<typeof AuditExport>;
+export const AuditExportQuery = Type.Object(
+  {
+    after_seq: Type.Optional(Type.String({ pattern: '^[0-9]{1,19}$' })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })),
+  },
+  { additionalProperties: false },
+);
+
+/** Milestone 12: emergency action under break-glass access. */
+export const EmergencyRevokeRequest = Type.Object(
+  { reason: Type.String({ minLength: 20, maxLength: 500 }) },
+  { additionalProperties: false },
+);
+export const EmergencyRevokeResult = Type.Object(
+  { revoked_api_tokens: Type.Integer({ minimum: 0 }) },
+  { additionalProperties: false },
+);
 
 // ================================================================ Support console page
 /** Where the API serves the support console (same origin as the API, so its requests need no CORS). */

@@ -6,17 +6,25 @@
  *   node --env-file=/etc/project-browser/api.env scripts/staff.ts list
  *   node --env-file=… scripts/staff.ts add <e-mail or usr_…> --roles support[,support_lead][,billing_admin] [--note "…"]
  *   node --env-file=… scripts/staff.ts remove <e-mail or usr_…>
+ *   node --env-file=… scripts/staff.ts break-glass <e-mail or usr_…> --reason "…" [--minutes 30]
+ *   node --env-file=… scripts/staff.ts break-glass-end <e-mail or usr_…>
  *
+ * Break-glass (milestone 12, ADR-0019): emergency access for one staff member for at most 60 minutes, with a reason
+ * of at least 20 characters. While it lasts they see members and the activity log without a second person's
+ * approval and may revoke an organization's API tokens; every use is in the platform audit, in the organization's
+ * own activity log, and raises a console alert. Only this command creates it (never the API), so it needs someone
+ * with access to the server.
  * The person must have signed in to Project Browser once (so their account exists). Roles: `support` (find
  * organizations, billing overview, ask for sensitive access), `support_lead` (approve others' access requests, read the
  * platform audit), `billing_admin` (entitlement overrides, resync, alerts).
  */
 import { randomBytes } from 'node:crypto';
+import { userInfo } from 'node:os';
 import { STAFF_ROLES, type StaffRole } from '@pb/contracts';
 import pg from 'pg';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-function auditId(): string {
+function auditId(prefix = 'aud'): string {
   const bytes = randomBytes(16);
   let value = 0n;
   for (const b of bytes) value = (value << 8n) | BigInt(b);
@@ -25,7 +33,7 @@ function auditId(): string {
     out = CROCKFORD.charAt(Number(value & 31n)) + out;
     value >>= 5n;
   }
-  return `aud_${out}`;
+  return `${prefix}_${out}`;
 }
 
 export interface StaffRow {
@@ -102,6 +110,69 @@ export async function removeStaff(c: pg.ClientBase, who: string): Promise<void> 
   await record(c, 'staff.removed', user.id, {});
 }
 
+/** Who ran this command on the server (the operating-system account, and the sudo caller when there is one). */
+export function serverOperator(): string {
+  const os = userInfo().username;
+  const sudo = process.env.SUDO_USER;
+  return `server:${os}${sudo && sudo !== os ? ` (via ${sudo})` : ''}`.slice(0, 80);
+}
+
+export async function grantBreakGlass(
+  c: pg.ClientBase,
+  who: string,
+  reason: string,
+  minutes: number,
+  operator: string,
+): Promise<{ id: string; user_id: string; expires_at: string }> {
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 60) throw new Error('--minutes must be 5-60');
+  if (reason.trim().length < 20) throw new Error('--reason must say why in at least 20 characters');
+  const user = await findUser(c, who);
+  if (!user) throw new Error('no such account');
+  const staff = await c.query('select 1 from app.platform_staff where user_id = $1 and disabled_at is null', [
+    user.id,
+  ]);
+  if (!staff.rowCount)
+    throw new Error('break-glass is only for active staff (add them with staff.ts add first)');
+  const id = auditId('bgg');
+  const { rows } = await c.query<{ expires_at: string }>(
+    `insert into app.break_glass_grants (id, user_id, reason, granted_by, expires_at)
+     values ($1, $2, $3, $4, now() + make_interval(mins => $5)) returning expires_at::text`,
+    [id, user.id, reason.trim(), operator, minutes],
+  );
+  await record(c, 'staff.break_glass_granted', user.id, {
+    grant: id,
+    minutes,
+    reason: reason.trim(),
+    operator,
+  });
+  await c.query(
+    `insert into app.billing_alerts (id, kind, ref, detail) values ($1, 'break_glass_used', $2, $3)
+     on conflict (kind, coalesce(org_id, ''), coalesce(ref, '')) where resolved_at is null
+     do update set count = app.billing_alerts.count + 1, last_seen_at = now(), detail = excluded.detail`,
+    [
+      auditId('alr'),
+      id,
+      `Break-glass access for ${user.email ?? user.id} until ${rows[0]?.expires_at}: ${reason.trim()}`.slice(
+        0,
+        300,
+      ),
+    ],
+  );
+  return { id, user_id: user.id, expires_at: rows[0]?.expires_at ?? '' };
+}
+
+export async function endBreakGlass(c: pg.ClientBase, who: string, operator: string): Promise<number> {
+  const user = await findUser(c, who);
+  if (!user) throw new Error('no such account');
+  const r = await c.query(
+    `update app.break_glass_grants set revoked_at = now()
+      where user_id = $1 and revoked_at is null and expires_at > now()`,
+    [user.id],
+  );
+  await record(c, 'staff.break_glass_ended', user.id, { grants: r.rowCount ?? 0, operator });
+  return r.rowCount ?? 0;
+}
+
 if (import.meta.main) {
   const url = process.env.MIGRATION_DATABASE_URL;
   if (!url)
@@ -131,9 +202,24 @@ if (import.meta.main) {
     } else if (command === 'remove' && who) {
       await removeStaff(client, who);
       console.log('removed; their console sessions ended');
+    } else if (command === 'break-glass' && who) {
+      const g = await grantBreakGlass(
+        client,
+        who,
+        flag('--reason') ?? '',
+        Number(flag('--minutes') ?? '30'),
+        serverOperator(),
+      );
+      console.log(
+        `break-glass ${g.id} for ${who} until ${g.expires_at} (audited; a console alert was raised)`,
+      );
+    } else if (command === 'break-glass-end' && who) {
+      const n = await endBreakGlass(client, who, serverOperator());
+      console.log(n ? 'break-glass access ended' : 'no active break-glass access');
     } else {
       console.log(
-        'usage: staff.ts list | add <e-mail|usr_id> --roles support,support_lead,billing_admin [--note "…"] | remove <e-mail|usr_id>',
+        'usage: staff.ts list | add <e-mail|usr_id> --roles support,support_lead,billing_admin [--note "…"] | remove <e-mail|usr_id>\n' +
+          '       | break-glass <e-mail|usr_id> --reason "…" [--minutes 5-60] | break-glass-end <e-mail|usr_id>',
       );
       process.exitCode = 2;
     }

@@ -8,7 +8,8 @@ import { randomBytes } from 'node:crypto';
 import { newId } from '@pb/contracts';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { addStaff, listStaff, removeStaff } from '../scripts/staff.ts';
+import { addStaff, endBreakGlass, grantBreakGlass, listStaff, removeStaff } from '../scripts/staff.ts';
+import { verifyChain } from '../src/audit-chain.ts';
 import { type Harness, harness, type SignedIn } from './helpers.ts';
 import { nonce } from './idp.ts';
 
@@ -373,5 +374,111 @@ describe('overrides, resync and alerts', () => {
     const r = await post(`/v1/support/orgs/${org.id}/billing/resync`, admin.headers);
     expect(r.statusCode).toBe(202);
     expect(r.json()).toEqual({ queued: false }); // a trial without a provider subscription has nothing to resync
+  });
+});
+
+describe('break-glass access and the audit export (milestone 12)', () => {
+  it('only the server command grants it: reasoned, at most 60 minutes, every use recorded and alerted', async () => {
+    const s = await staff(['support']);
+    const org = await customerOrg();
+    // Without it: the usual approval is needed, and emergency actions are refused.
+    expect((await get(`/v1/support/orgs/${org.id}/members`, s.headers)).json().safe_details).toMatchObject({
+      reason: 'access_required',
+    });
+    const refused = await post(`/v1/support/orgs/${org.id}/emergency/revoke-api-tokens`, s.headers, {
+      reason: 'A token was posted in a public issue tracker',
+    });
+    expect(refused.json()).toMatchObject({
+      code: 'FORBIDDEN',
+      safe_details: { reason: 'break_glass_required' },
+    });
+
+    // The grant needs a real reason, a short duration, and an active staff member.
+    await expect(grantBreakGlass(db, s.person.person.email, 'too short', 10, 'server:test')).rejects.toThrow(
+      /reason/,
+    );
+    await expect(
+      grantBreakGlass(db, s.person.person.email, 'Customer reports a leaked API token', 61, 'server:test'),
+    ).rejects.toThrow(/5-60/);
+    const outsider = await h.signIn();
+    await expect(
+      grantBreakGlass(db, outsider.person.email, 'Customer reports a leaked API token', 10, 'server:test'),
+    ).rejects.toThrow(/only for active staff/);
+    await expect(
+      db.query(
+        `insert into break_glass_grants (id, user_id, reason, granted_by, expires_at)
+         values ($1, $2, 'A long enough emergency reason here', 'x', now() + interval '2 hours')`,
+        [newId('audit').replace('aud_', 'bgg_'), s.person.session.user.id],
+      ),
+    ).rejects.toThrow(/check constraint/);
+    const grant = await grantBreakGlass(
+      db,
+      s.person.person.email,
+      'Customer reports a leaked API token',
+      10,
+      'server:test',
+    );
+
+    const overview = (await get(`/v1/support/orgs/${org.id}`, s.headers)).json();
+    expect(overview.active_access.sort()).toEqual(['activity', 'members']);
+    expect(Date.parse(overview.break_glass_until)).toBeGreaterThan(Date.now());
+    expect((await get(`/v1/support/orgs/${org.id}/members`, s.headers)).statusCode).toBe(200);
+
+    // Emergency: every API token of the organization stops working at once; nothing else changes.
+    const tokenId = newId('apiToken');
+    await db.query(
+      `insert into api_tokens (id, org_id, user_id, name, token_hash, scopes, expires_at)
+       values ($1, $2, $3, 'ci', $4, array['profiles:read'], now() + interval '30 days')`,
+      [tokenId, org.id, org.owner.session.user.id, randomBytes(32).toString('hex')],
+    );
+    const revoked = await post(`/v1/support/orgs/${org.id}/emergency/revoke-api-tokens`, s.headers, {
+      reason: 'A token was posted in a public issue tracker',
+    });
+    expect(revoked.json()).toEqual({ revoked_api_tokens: 1 });
+    expect(
+      (await db.query('select revoked_at from api_tokens where id = $1', [tokenId])).rows[0]?.revoked_at,
+    ).not.toBeNull();
+    expect((await get(`/v1/orgs/${org.id}/profiles`, org.owner.headers)).statusCode).toBe(200);
+
+    // Recorded: platform audit, the organization's own log, and an open console alert.
+    const actions = (
+      await db.query<{ action: string }>('select action from platform_audit where org_id = $1 order by seq', [
+        org.id,
+      ])
+    ).rows.map((r) => r.action);
+    expect(actions).toEqual(
+      expect.arrayContaining(['support.break_glass_members', 'support.revoked_api_tokens']),
+    );
+    const orgLog = (
+      await db.query<{ action: string }>('select action from audit_events where org_id = $1', [org.id])
+    ).rows.map((r) => r.action);
+    expect(orgLog).toEqual(
+      expect.arrayContaining(['support.break_glass_members', 'support.revoked_api_tokens']),
+    );
+    const alerts = await db.query(
+      "select count from billing_alerts where kind = 'break_glass_used' and (ref = $1 or org_id = $2) and resolved_at is null",
+      [grant.id, org.id],
+    );
+    expect(alerts.rowCount).toBeGreaterThanOrEqual(2);
+
+    // Ended on the server: back to the usual approval.
+    expect(await endBreakGlass(db, s.person.person.email, 'server:test')).toBe(1);
+    expect((await get(`/v1/support/orgs/${org.id}/members`, s.headers)).statusCode).toBe(403);
+    expect((await get(`/v1/support/orgs/${org.id}`, s.headers)).json().break_glass_until).toBeNull();
+  });
+
+  it('support leads export the hash-chained audit; anyone can recompute the chain', async () => {
+    const lead = await staff(['support_lead']);
+    const support = await staff(['support']);
+    expect((await get('/v1/support/audit/export', support.headers)).statusCode).toBe(403);
+    const first = await get('/v1/support/audit/export?limit=5000', lead.headers);
+    expect(first.statusCode, first.body).toBe(200);
+    const body = first.json();
+    expect(verifyChain(body.items, '', 1n).ok).toBe(true);
+    expect(body.items.at(-1).hash).toBe(body.head.hash);
+    // The next export continues from the last hash; the export itself was recorded.
+    const next = (await get(`/v1/support/audit/export?after_seq=${body.head.seq}`, lead.headers)).json();
+    expect(next.items[0].action).toBe('support.audit_exported');
+    expect(verifyChain(next.items, body.head.hash, BigInt(body.head.seq) + 1n).ok).toBe(true);
   });
 });

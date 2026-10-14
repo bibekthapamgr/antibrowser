@@ -76,6 +76,26 @@ async function restorePlan(profile: string, snapshotId?: string, headers = owner
   });
 }
 
+/**
+ * Runs `f` as a person who just signed in (a recent sign-in), made an owner of the fixture organization for the
+ * duration only (other test files count the fixture organization's members).
+ */
+async function asRecentOwner<T>(f: (headers: Record<string, string>) => Promise<T>): Promise<T> {
+  const me = await h.signIn();
+  await h.owner.query("insert into memberships (org_id, user_id, role) values ($1, $2, 'owner')", [
+    acme.id,
+    me.session.user.id,
+  ]);
+  try {
+    return await f(me.headers);
+  } finally {
+    await h.owner.query('delete from memberships where org_id = $1 and user_id = $2', [
+      acme.id,
+      me.session.user.id,
+    ]);
+  }
+}
+
 async function profileHead(profile: string) {
   const res = await h.app.inject({
     method: 'GET',
@@ -512,8 +532,10 @@ describe('interruptions leave the previous snapshot restorable', () => {
     expect((await operation(h, owner, acme.id, slow.init.operation.id)).state).toBe('committed');
     expect((await profileHead(profile)).snapshot_version).toBe(2);
 
-    // The first snapshot is still restorable by id.
-    const old = await restorePlan(profile, first.init.key.snapshot_id);
+    // The first snapshot is still restorable by id; going back to an older version needs a recent sign-in (12).
+    const stale = await restorePlan(profile, first.init.key.snapshot_id);
+    expect(stale.json().code).toBe('REAUTHENTICATION_REQUIRED');
+    const old = await asRecentOwner((headers) => restorePlan(profile, first.init.key.snapshot_id, headers));
     expect(old.statusCode).toBe(200);
     expect(old.json().key.data_key).toBe(first.init.key.data_key);
     await releaseLease(h, owner, acme.id, profile, fencing);
@@ -724,11 +746,11 @@ describe('retention, quota and trash', () => {
     expect(Date.parse(entry.purge_after) - Date.parse(entry.deleted_at)).toBe(30 * 86400_000);
     expect((await restorePlan(profile)).statusCode).toBe(404); // deleted profiles are not restored from
 
-    const undo = await h.app.inject({
-      method: 'POST',
-      url: `/v1/orgs/${acme.id}/profiles/${profile}/undelete`,
-      headers: owner,
-    });
+    const undoUrl = `/v1/orgs/${acme.id}/profiles/${profile}/undelete`;
+    // Restoring from the trash needs a recent sign-in (milestone 12).
+    const stale = await h.app.inject({ method: 'POST', url: undoUrl, headers: owner });
+    expect(stale.json().code).toBe('REAUTHENTICATION_REQUIRED');
+    const undo = await asRecentOwner((headers) => h.app.inject({ method: 'POST', url: undoUrl, headers }));
     expect(undo.statusCode).toBe(200);
     expect((await restorePlan(profile)).statusCode).toBe(200);
 

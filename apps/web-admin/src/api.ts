@@ -6,6 +6,7 @@
 import type {
   AccessRequest,
   AccessRequestCreate,
+  AuditExport,
   BillingAlert,
   ConsoleConfig,
   Override,
@@ -76,6 +77,10 @@ export interface ConsoleApi {
   alerts(openOnly: boolean): Promise<BillingAlert[]>;
   resolveAlert(id: string): Promise<BillingAlert>;
   audit(orgId?: string): Promise<PlatformAuditEntry[]>;
+  /** Milestone 12: the hash-chained audit in chain order (support leads). */
+  auditExport(afterSeq?: string): Promise<AuditExport>;
+  /** Milestone 12: break-glass only. */
+  revokeApiTokens(orgId: string, reason: string): Promise<number>;
 }
 
 const enc = encodeURIComponent;
@@ -179,5 +184,15 @@ export function httpApi(): ConsoleApi {
           `/support/audit${orgId ? `?org_id=${enc(orgId)}` : ''}`,
         )
       ).items,
+    auditExport: (afterSeq) =>
+      call('GET', `/support/audit/export?limit=5000${afterSeq ? `&after_seq=${enc(afterSeq)}` : ''}`),
+    revokeApiTokens: async (orgId, reason) =>
+      (
+        await call<{ revoked_api_tokens: number }>(
+          'POST',
+          `/support/orgs/${enc(orgId)}/emergency/revoke-api-tokens`,
+          { reason },
+        )
+      ).revoked_api_tokens,
   };
 }

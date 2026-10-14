@@ -69,11 +69,17 @@ export interface DemoControls {
   switchTo(persona: keyof typeof PERSONAS): void;
   /** Ends every approved access window now (tests of expiry). */
   expireAccess(): void;
+  /** Milestone 12: what `staff.ts break-glass` does on the server, for the signed-in staff member (minutes; 0 ends it). */
+  breakGlass(minutes: number): void;
 }
 
 export function demoApi(persona: string): ConsoleApi & { controls: DemoControls } {
   const now = Date.now();
   let me: Staff | null = null;
+  let breakGlassUntil: number | null = null;
+  const breakGlass = () => (breakGlassUntil && breakGlassUntil > Date.now() ? breakGlassUntil : null);
+  /** API tokens per organization (counts only). */
+  const apiTokens = new Map<string, number>();
   let current: Staff = PERSONAS[persona] ?? (PERSONAS.all as Staff);
 
   const invoice = (n: number, amount: number, paid: boolean, at: number): Invoice => ({
@@ -478,7 +484,8 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
         invoices: o.invoices,
         events: o.events,
         alerts: alerts.filter((a) => a.org_id === o.id),
-        active_access: active(o.id, s.user_id),
+        active_access: breakGlass() ? ['members', 'activity'] : active(o.id, s.user_id),
+        break_glass_until: breakGlass() ? iso(breakGlass() as number) : null,
       });
     },
     async overrides(orgId) {
@@ -608,7 +615,8 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     async members(orgId) {
       const s = who();
       const o = orgOf(orgId);
-      if (!active(orgId, s.user_id).includes('members')) {
+      if (breakGlass()) record('support.break_glass_members', o.id);
+      else if (!active(orgId, s.user_id).includes('members')) {
         throw new ConsoleError(
           'FORBIDDEN',
           'Request access to this information first; a support lead must approve it',
@@ -625,7 +633,8 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     async activity(orgId) {
       const s = who();
       const o = orgOf(orgId);
-      if (!active(orgId, s.user_id).includes('activity')) {
+      if (breakGlass()) record('support.break_glass_activity', o.id);
+      else if (!active(orgId, s.user_id).includes('activity')) {
         throw new ConsoleError(
           'FORBIDDEN',
           'Request access to this information first; a support lead must approve it',
@@ -656,6 +665,77 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       who('support_lead', 'billing_admin');
       return delay(audit.filter((e) => !orgId || e.org_id === orgId).slice(0, 200));
     },
+    async auditExport(afterSeq) {
+      who('support_lead');
+      // The demo chain: the same hash rule as the server (sha256 of the previous hash and the entry's text).
+      const entries = [...audit].reverse();
+      const items = [];
+      let prev = '';
+      const hex = (b: ArrayBuffer) =>
+        [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+      for (const [i, e] of entries.entries()) {
+        const at_us = String(Date.parse(e.at) * 1000);
+        const details_text = JSON.stringify(e.details);
+        const text = [
+          i + 1,
+          e.id,
+          at_us,
+          e.actor_user_id ?? '',
+          e.action,
+          e.org_id ?? '',
+          e.target ?? '',
+          details_text,
+          '',
+        ].join('\u001f');
+        const prevBytes = new Uint8Array((prev.match(/../g) ?? []).map((h) => Number.parseInt(h, 16)));
+        const data = new Uint8Array([...prevBytes, ...new TextEncoder().encode(text)]);
+        const hash = hex(await crypto.subtle.digest('SHA-256', data));
+        items.push({
+          seq: String(i + 1),
+          id: e.id,
+          at: e.at,
+          at_us,
+          actor_user_id: e.actor_user_id,
+          action: e.action,
+          org_id: e.org_id,
+          target: e.target,
+          details_text,
+          request_id: null,
+          prev_hash: prev,
+          hash,
+        });
+        prev = hash;
+      }
+      const after = Number(afterSeq ?? '0');
+      record('support.audit_exported');
+      return delay({
+        items: items.filter((x) => Number(x.seq) > after),
+        head: { seq: String(items.length), hash: prev },
+      });
+    },
+    async revokeApiTokens(orgId, reason) {
+      const s = who();
+      const o = orgOf(orgId);
+      if (!breakGlass()) {
+        throw new ConsoleError(
+          'FORBIDDEN',
+          'Emergency actions need break-glass access (granted on the server)',
+          403,
+          {
+            reason: 'break_glass_required',
+          },
+        );
+      }
+      if (reason.trim().length < 20) {
+        throw new ConsoleError('VALIDATION_FAILED', 'Request failed validation', 422, {
+          issues: [{ path: '/reason', message: 'must NOT have fewer than 20 characters' }],
+        });
+      }
+      const n = apiTokens.get(o.id) ?? 3;
+      apiTokens.set(o.id, 0);
+      record('support.revoked_api_tokens', o.id, null, { revoked: n, reason, by: s.user_id });
+      return delay(n);
+    },
     controls: {
       switchTo(p) {
         current = PERSONAS[p] ?? current;
@@ -664,6 +744,10 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
         for (const r of requests) {
           if (r.state === 'approved') r.expires_at = iso(Date.now() - 1000);
         }
+      },
+      breakGlass(minutes) {
+        breakGlassUntil = minutes > 0 ? Date.now() + minutes * MIN : null;
+        record(minutes > 0 ? 'staff.break_glass_granted' : 'staff.break_glass_ended', null, current.user_id);
       },
     },
   };

@@ -17,9 +17,13 @@ import {
   AccessRequest,
   AccessRequestCreate,
   ApiError,
+  AuditExport,
+  AuditExportQuery,
   BILLING_TIMING,
   BillingAlert,
   ConsoleConfig,
+  EmergencyRevokeRequest,
+  EmergencyRevokeResult,
   isId,
   newId,
   Override,
@@ -40,6 +44,7 @@ import type pg from 'pg';
 import Type from 'typebox';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit } from '../audit.ts';
+import { auditHead, exportAudit } from '../audit-chain.ts';
 import type { Principal } from '../auth.ts';
 import { subscriptionView } from '../billing/state.ts';
 import { ts, withTx } from '../db.ts';
@@ -58,16 +63,15 @@ const IdParam = (prefix: 'sar' | 'ovr' | 'alr') =>
     { additionalProperties: false },
   );
 
-function staffOf(
-  req: { principal: Principal | null },
-  ...roles: StaffRole[]
-): Principal & { staff: { roles: StaffRole[] } } {
+type StaffPrincipal = Principal & { staff: NonNullable<Principal['staff']> };
+
+function staffOf(req: { principal: Principal | null }, ...roles: StaffRole[]): StaffPrincipal {
   const p = principalOf(req);
   if (p.kind !== 'staff' || !p.staff) throw new ApiError('UNAUTHENTICATED', 'Sign in to the support console');
   if (roles.length && !roles.some((r) => p.staff?.roles.includes(r))) {
     throw new ApiError('FORBIDDEN', 'Your support role does not allow this', { required: roles });
   }
-  return p as Principal & { staff: { roles: StaffRole[] } };
+  return p as StaffPrincipal;
 }
 
 async function platformAudit(
@@ -136,6 +140,26 @@ async function activeAccess(c: pg.PoolClient, orgId: string, userId: string): Pr
     [orgId, userId],
   );
   return rows.map((r) => r.scope);
+}
+
+/** Every use of break-glass access: platform audit, the organization's own activity log, and a console alert. */
+async function breakGlassUsed(
+  c: pg.PoolClient,
+  p: StaffPrincipal,
+  orgId: string,
+  action: string,
+  requestId: string,
+  details: object = {},
+): Promise<void> {
+  const grant = p.staff.breakGlass?.id ?? null;
+  await platformAudit(c, { actor: p.userId, action, orgId, target: grant, details, requestId });
+  await orgAudit(c, orgId, p.userId, action, requestId, { break_glass: true });
+  await c.query(
+    `insert into billing_alerts (id, kind, org_id, ref, detail) values ($1, 'break_glass_used', $2, $3, $4)
+     on conflict (kind, coalesce(org_id, ''), coalesce(ref, '')) where resolved_at is null
+     do update set count = billing_alerts.count + 1, last_seen_at = now()`,
+    [newId('billingAlert'), orgId, grant, `Break-glass access used: ${action}`.slice(0, 300)],
+  );
 }
 
 const maskEmail = (email: string): string => {
@@ -429,7 +453,10 @@ export function supportRoutes(app: App, deps: Deps): void {
           invoices: invoices.rows,
           events: events.rows,
           alerts: alerts.rows,
-          active_access: await activeAccess(c, orgId, p.userId),
+          active_access: p.staff.breakGlass
+            ? (['members', 'activity'] as SupportAccessScope[])
+            : await activeAccess(c, orgId, p.userId),
+          break_glass_until: p.staff.breakGlass?.expiresAt ?? null,
         } as never;
       });
     },
@@ -627,8 +654,22 @@ export function supportRoutes(app: App, deps: Deps): void {
     },
   );
 
-  const needAccess = async (c: pg.PoolClient, orgId: string, userId: string, scope: SupportAccessScope) => {
-    const active = await activeAccess(c, orgId, userId);
+  /**
+   * Approved access, or (milestone 12) break-glass access, which needs no approval but is recorded as such in the
+   * platform audit and the organization's activity log, and raises a console alert.
+   */
+  const needAccess = async (
+    c: pg.PoolClient,
+    orgId: string,
+    p: StaffPrincipal,
+    scope: SupportAccessScope,
+    requestId: string,
+  ) => {
+    const active = await activeAccess(c, orgId, p.userId);
+    if (!active.includes(scope) && p.staff.breakGlass) {
+      await breakGlassUsed(c, p, orgId, `support.break_glass_${scope}`, requestId);
+      return;
+    }
     if (!active.includes(scope)) {
       throw new ApiError(
         'FORBIDDEN',
@@ -661,7 +702,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       const orgId = req.params.orgId;
       return withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         await orgExists(c, orgId);
-        await needAccess(c, orgId, p.userId, 'members');
+        await needAccess(c, orgId, p, 'members', req.id);
         const { rows } = await c.query(
           `select m.user_id, u.display_name, u.email, m.role, ${ts('m.created_at')} as joined_at
              from memberships m join users u on u.id = m.user_id where m.org_id = $1 order by m.created_at`,
@@ -700,7 +741,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       const orgId = req.params.orgId;
       return withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         await orgExists(c, orgId);
-        await needAccess(c, orgId, p.userId, 'activity');
+        await needAccess(c, orgId, p, 'activity', req.id);
         const { rows } = await c.query(
           `select ${ts('created_at')} as at, action, outcome, actor_user_id, target_type from audit_events
             where org_id = $1 order by created_at desc, id desc limit 100`,
@@ -968,10 +1009,79 @@ export function supportRoutes(app: App, deps: Deps): void {
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         const { rows } = await c.query(
           `select id, ${ts('at')} as at, actor_user_id, action, org_id, target, details from platform_audit
-            where ($1::text is null or org_id = $1) order by at desc limit 200`,
+            where ($1::text is null or org_id = $1) order by seq desc limit 200`,
           [req.query.org_id ?? null],
         );
         return { items: rows as never };
+      });
+    },
+  );
+
+  // ---------------------------------------------------------------- milestone 12: audit export, break-glass
+  app.get(
+    '/support/audit/export',
+    {
+      config: { staff: true },
+      schema: {
+        tags: ['support'],
+        description:
+          'Exports the hash-chained platform audit in chain order (support leads), with the chain head, so a copy ' +
+          'kept elsewhere proves later that nothing was changed or removed. The export itself is audited.',
+        querystring: AuditExportQuery,
+        response: { 200: AuditExport, ...errors },
+      },
+    },
+    async (req) => {
+      const p = staffOf(req, 'support_lead');
+      return withTx(deps.pool, ctx(null, p.userId), async (c) => {
+        const items = await exportAudit(c, BigInt(req.query.after_seq ?? '0'), req.query.limit ?? 1000);
+        const head = await auditHead(c);
+        await platformAudit(c, {
+          actor: p.userId,
+          action: 'support.audit_exported',
+          details: { after_seq: req.query.after_seq ?? '0', entries: items.length, head_seq: head.seq },
+          requestId: req.id,
+        });
+        return { items, head } as never;
+      });
+    },
+  );
+
+  app.post(
+    '/support/orgs/:orgId/emergency/revoke-api-tokens',
+    {
+      config: { staff: true },
+      schema: {
+        tags: ['support'],
+        description:
+          'Break-glass only: revokes every API token of the organization at once (a leaked token). Reason required; ' +
+          'recorded in the platform audit and the organization’s activity log, and raises a console alert. Customer ' +
+          'data is not touched.',
+        params: OrgParams,
+        body: EmergencyRevokeRequest,
+        response: { 200: EmergencyRevokeResult, ...errors },
+      },
+    },
+    async (req) => {
+      const p = staffOf(req);
+      if (!p.staff.breakGlass) {
+        throw new ApiError('FORBIDDEN', 'Emergency actions need break-glass access (granted on the server)', {
+          reason: 'break_glass_required',
+        });
+      }
+      const orgId = req.params.orgId;
+      return withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
+        await orgExists(c, orgId);
+        const r = await c.query(
+          'update api_tokens set revoked_at = now() where org_id = $1 and revoked_at is null',
+          [orgId],
+        );
+        const revoked = r.rowCount ?? 0;
+        await breakGlassUsed(c, p, orgId, 'support.revoked_api_tokens', req.id, {
+          revoked,
+          reason: req.body.reason,
+        });
+        return { revoked_api_tokens: revoked };
       });
     },
   );

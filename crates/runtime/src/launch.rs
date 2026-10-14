@@ -190,6 +190,9 @@ pub fn prepare_launch(
         flag("--disk-cache-dir=", &dirs.cache),
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
+        // Milestone 12: no crash dumps. A dump holds page memory (cookies, form contents, session data); the
+        // manager reports a crash from the exit record without one.
+        "--disable-breakpad".into(),
     ];
     if let Some(n) = request.network {
         // Everything, including loopback addresses, goes to the gateway; QUIC (UDP) is never used.
@@ -709,6 +712,8 @@ mod tests {
             "--lang=de-DE",
             "--window-size=1366,768",
             "--force-prefers-reduced-motion",
+            // Milestone 12: no crash dumps (they would hold page memory).
+            "--disable-breakpad",
         ] {
             assert!(
                 args.contains(&expected.to_owned()),

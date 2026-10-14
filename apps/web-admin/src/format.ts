@@ -73,6 +73,7 @@ export const ALERT_LABEL: Record<BillingAlertKind, string> = {
   refund: 'Refund',
   signature_failures: 'Signature failures',
   resync_failed: 'Resync failing',
+  break_glass_used: 'Break-glass access',
 };
 
 export function when(ts: string | null): string {

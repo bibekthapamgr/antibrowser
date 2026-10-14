@@ -261,6 +261,14 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
 
   app.addHook('onRequest', async (req) => {
     if (req.is404 || req.routeOptions.config.public) return;
+    // Milestone 12: desktop apps below the server's minimum version (a known problem) must update first. Tokens,
+    // the SDK and browsers do not send the desktop's user agent and are not affected.
+    const min = config.minDesktopVersion;
+    if (min && !req.routeOptions.config.staff && desktopTooOld(req.headers, min)) {
+      throw new ApiError('CLIENT_UPDATE_REQUIRED', 'Update Project Browser to keep using this server', {
+        minimum_version: min,
+      });
+    }
     if (req.routeOptions.config.staff) {
       req.principal = await deps.auth.authenticateStaff(req.headers.authorization);
       return;
@@ -401,6 +409,29 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
   );
 
   return app;
+}
+
+/**
+ * A desktop request (user agent `project-browser-manager/…`) whose `x-pb-client-version` is missing (apps before
+ * 0.12 did not send it) or below `min`. A pre-release (0.12.1-beta.1) is below its release (0.12.1).
+ */
+export function desktopTooOld(headers: Record<string, string | string[] | undefined>, min: string): boolean {
+  const ua = String(headers['user-agent'] ?? '');
+  if (!ua.startsWith('project-browser-manager/')) return false;
+  const parse = (v: string) => {
+    const m = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(-[0-9A-Za-z.-]+)?$/.exec(v);
+    return m ? { n: [Number(m[1]), Number(m[2]), Number(m[3])], pre: Boolean(m[4]) } : null;
+  };
+  const v = parse(String(headers['x-pb-client-version'] ?? ''));
+  const m = parse(min);
+  if (!m) return false;
+  if (!v) return true;
+  for (let i = 0; i < 3; i++) {
+    const a = v.n[i] ?? 0;
+    const b = m.n[i] ?? 0;
+    if (a !== b) return a < b;
+  }
+  return v.pre && !m.pre;
 }
 
 /** Principal set by the onRequest hook; routes marked public never call this. */

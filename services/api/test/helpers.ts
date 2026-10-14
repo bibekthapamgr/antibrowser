@@ -55,6 +55,8 @@ export interface HarnessOptions {
   env?: Record<string, string>;
   /** Milestone 11: the support console's client id (its ID tokens are signed by the same test provider). */
   consoleClientId?: string;
+  /** Milestone 12: another root key provider (an unavailable key service). */
+  kms?: RootKeyProvider;
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -74,7 +76,7 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
   const idp = await testIdp();
   const lines = opts.logLines;
   if (!config.kms) throw new Error('the test environment needs KMS_LOCAL_KEYS (infra/env/test.env.example)');
-  const kms = localKeyProvider(config.kms);
+  const kms = opts.kms ?? localKeyProvider(config.kms);
   const memory = opts.storage === 's3' ? null : new MemoryObjectStore();
   let objects: ObjectStore;
   if (memory) objects = memory;

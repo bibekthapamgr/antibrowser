@@ -1,5 +1,5 @@
 /** Access requests (everyone: their own; support leads: all and decide), alerts and the platform audit. */
-import type { AccessRequest, BillingAlert, PlatformAuditEntry } from '@pb/contracts/billing';
+import type { AccessRequest, AuditExport, BillingAlert, PlatformAuditEntry } from '@pb/contracts/billing';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { href, PageTitle, Problem, useConsole } from './App.tsx';
 import { ACCESS_LABEL, ALERT_LABEL, when } from './format.ts';
@@ -256,6 +256,33 @@ export function AlertsPage() {
   );
 }
 
+/** Recomputes the audit's hash chain (the server's rule, src/audit-chain.ts in the API) with the browser's SHA-256. */
+async function verifyChain(
+  rows: AuditExport['items'],
+): Promise<{ ok: boolean; brokenAt: string | null; lastSeq: string | null }> {
+  let prev = '';
+  const bytes = (hex: string) => new Uint8Array((hex.match(/../g) ?? []).map((h) => Number.parseInt(h, 16)));
+  const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+  for (const r of rows) {
+    const text = [
+      r.seq,
+      r.id,
+      r.at_us,
+      r.actor_user_id ?? '',
+      r.action,
+      r.org_id ?? '',
+      r.target ?? '',
+      r.details_text,
+      r.request_id ?? '',
+    ].join('\u001f');
+    const data = new Uint8Array([...bytes(prev), ...new TextEncoder().encode(text)]);
+    const hash = hex(await crypto.subtle.digest('SHA-256', data));
+    if (r.prev_hash !== prev || hash !== r.hash) return { ok: false, brokenAt: r.seq, lastSeq: null };
+    prev = hash;
+  }
+  return { ok: true, brokenAt: null, lastSeq: rows.at(-1)?.seq ?? null };
+}
+
 export function AuditPage({ org }: { org: string | null }) {
   const { api, staff, explain } = useConsole();
   const [items, setItems] = useState<PlatformAuditEntry[] | null>(null);
@@ -276,6 +303,40 @@ export function AuditPage({ org }: { org: string | null }) {
   const apply = (e: FormEvent) => {
     e.preventDefault();
     window.location.hash = href.audit(filter.trim() || undefined);
+  };
+
+  // Milestone 12: a verifiable copy of the whole hash-chained audit, checked here before it is saved.
+  const [exported, setExported] = useState<string | null>(null);
+  const exportChain = async () => {
+    setProblem(null);
+    try {
+      const all: AuditExport['items'] = [];
+      let head: AuditExport['head'] = { seq: '0', hash: '' };
+      for (let page = 0; page < 200; page++) {
+        const r = await api.auditExport(all.at(-1)?.seq);
+        all.push(...r.items);
+        head = r.head;
+        if (r.items.length === 0 || all.at(-1)?.seq === r.head.seq) break;
+      }
+      const check = await verifyChain(all);
+      if (!check.ok) {
+        setProblem(
+          `The audit chain does not verify at entry ${check.brokenAt}. Report this to the security contact.`,
+        );
+        return;
+      }
+      const lines = [...all.map((e) => JSON.stringify(e)), JSON.stringify({ head })].join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([`${lines}\n`], { type: 'application/x-ndjson' }));
+      a.download = `platform-audit-${new Date().toISOString().slice(0, 10)}.ndjson`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      setExported(
+        `Exported ${all.length} entries; the chain verifies up to entry ${check.lastSeq}. Keep the file outside this server.`,
+      );
+    } catch (e) {
+      setProblem(explain(e));
+    }
   };
 
   return (
@@ -301,6 +362,14 @@ export function AuditPage({ org }: { org: string | null }) {
           Filter
         </button>
       </form>
+      {staff.roles.includes('support_lead') && (
+        <div className="row">
+          <button type="button" className="pb-button" onClick={() => void exportChain()}>
+            Export a verifiable copy
+          </button>
+          {exported && <span role="status">{exported}</span>}
+        </div>
+      )}
       <Problem text={problem} />
       {items && items.length === 0 && <p className="muted">No entries.</p>}
       {items && items.length > 0 && (

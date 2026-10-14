@@ -347,3 +347,14 @@ ul.plain {
 .sensitive .granted p {
   margin: 0 0 var(--pb-space-2);
 }
+
+/* Milestone 12: break-glass access is impossible to miss. */
+.break-glass {
+  border: 2px solid var(--pb-danger);
+  border-radius: var(--pb-radius);
+  padding: var(--pb-space-3) var(--pb-space-4);
+  background: color-mix(in srgb, var(--pb-danger) 8%, transparent);
+}
+.break-glass h2 {
+  margin-top: 0;
+}

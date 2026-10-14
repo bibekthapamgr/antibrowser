@@ -54,6 +54,11 @@ export interface AppConfig {
   };
   /** Number of trusted reverse-proxy hops for the client address (0 = use the socket address). */
   trustProxyHops: number;
+  /**
+   * Milestone 12: the lowest desktop app version allowed to use the API (null: any). Desktop requests below it, or
+   * from a desktop too old to say its version, get CLIENT_UPDATE_REQUIRED.
+   */
+  minDesktopVersion: string | null;
   /** Private S3-compatible storage for encrypted snapshots (milestone 07). */
   objectStore: {
     /** API/worker endpoint ('' = the provider's default). */
@@ -193,6 +198,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     recentAuthSeconds: seconds('SESSION_RECENT_AUTH_SECONDS', 600, 60, 3600),
   };
   if (!local && !session.signingKeyJwk) problems.push(`SESSION_SIGNING_KEY is required in ${appEnv}`);
+  const minDesktopVersion = env.MIN_DESKTOP_VERSION?.trim() || null;
+  if (minDesktopVersion && !/^\d+\.\d+\.\d+$/.test(minDesktopVersion))
+    problems.push('MIN_DESKTOP_VERSION must be a plain version such as 0.12.0');
   const trustProxyHops = Number(env.TRUST_PROXY_HOPS ?? '0');
   if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 5)
     problems.push('TRUST_PROXY_HOPS must be 0-5');
@@ -252,6 +260,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     oidc,
     session,
     trustProxyHops,
+    minDesktopVersion,
     objectStore,
     kms,
     webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
