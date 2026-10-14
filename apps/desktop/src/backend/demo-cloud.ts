@@ -250,6 +250,8 @@ export interface DemoCloudSync {
     orgId: string,
   ): { mode: 'off' | 'warn' | 'enforce'; version: number; rules: ExtensionRule[] } | null;
   profileName(orgId: string, orgProfileId: string): string | null;
+  /** R1: creates organization profiles for local ones and links them (idempotent per local id). */
+  adopt(orgId: string, profiles: { id: string; name: string }[]): { local_id: string; profile_id: string }[];
   /** Newest committed version (0: none) and its snapshot. */
   head(orgId: string, orgProfileId: string): { version: number; snapshot: DemoSnapshot | null };
   snapshot(orgId: string, snapshotId: string): DemoSnapshot | null;
@@ -1815,6 +1817,28 @@ export function demoCloud(opts: {
     },
     profileName(orgId, orgProfileId) {
       return orgs.get(orgId)?.profiles.find((p) => p.id === orgProfileId)?.name ?? null;
+    },
+    adopt(orgId, profiles) {
+      const org = orgs.get(orgId);
+      if (!org) return [];
+      const t = now();
+      return profiles.map((p) => {
+        const existing = links.find((l) => l.local_profile_id === p.id && l.org_id === orgId);
+        if (existing) return { local_id: p.id, profile_id: existing.org_profile_id };
+        const rec = {
+          id: rid('prf'),
+          name: p.name,
+          client_id: null,
+          notes: '',
+          version: 1,
+          created_at: t,
+          updated_at: t,
+          deleted: false,
+        };
+        org.profiles.push(rec);
+        links.push({ local_profile_id: p.id, org_id: orgId, org_profile_id: rec.id, linked_at: t });
+        return { local_id: p.id, profile_id: rec.id };
+      });
     },
     head(orgId, orgProfileId) {
       const list = (orgs.get(orgId)?.snapshots ?? []).filter((x) => x.profile_id === orgProfileId);

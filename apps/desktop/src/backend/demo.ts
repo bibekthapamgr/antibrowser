@@ -40,6 +40,7 @@ import type {
 import { nameKey, sanitizeNotes, secretHint } from '../notes.ts';
 import { announceDemoExtensionUpdate, demoAgency } from './demo-agency.ts';
 import { demoCloud } from './demo-cloud.ts';
+import { demoMigration } from './demo-migration.ts';
 import { demoSync } from './demo-sync.ts';
 import { demoTeam } from './demo-team.ts';
 import { DEMO_APP_VERSION, demoUpdates } from './demo-updates.ts';
@@ -459,6 +460,7 @@ export function demoBackend(mode = ''): Backend {
     },
     'updates.channel': { key: 'updates.channel', value: 'stable', version: 0, ui_settable: true },
     'updates.automatic': { key: 'updates.automatic', value: true, version: 0, ui_settable: true },
+    'ui.unified_profiles': { key: 'ui.unified_profiles', value: false, version: 0, ui_settable: true },
   };
   const ENUMS: Record<string, unknown[]> = {
     'proxies.allow_private_addresses': [true, false],
@@ -467,6 +469,7 @@ export function demoBackend(mode = ''): Backend {
     'resources.memory_warning': [true, false],
     'updates.channel': ['stable', 'canary', 'dev'],
     'updates.automatic': [true, false],
+    'ui.unified_profiles': [true, false],
     'appearance.theme': ['system', 'light', 'dark'],
     'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
     'profiles.trash_retention_days': ['7', '30', '90'],
@@ -1324,6 +1327,26 @@ export function demoBackend(mode = ''): Backend {
     teamPhase: (pid) => teamHooks?.phase(pid) ?? null,
   });
   syncHooks = sync;
+  const migration = demoMigration({
+    deviceId: cloud.sync.deviceId,
+    profiles: (wsId) =>
+      recs
+        .filter((r) => r.workspace_id === wsId && !r.trashed_at)
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          state: r.state,
+          workspace_id: r.workspace_id,
+          clean: r.last_started_at === null || r.last_clean_shutdown_at !== null,
+        })),
+    linkOf: (pid) => cloud.sync.linkOf(pid),
+    adopt: (orgId, list) => cloud.sync.adopt(orgId, list),
+    setUnified: (on) => {
+      const cur = settings['ui.unified_profiles'] as SettingValue;
+      settings['ui.unified_profiles'] = { ...cur, value: on, version: cur.version + 1 };
+    },
+    changed: () => changed(),
+  });
   const team = demoTeam({
     mode,
     cloud: cloud.team,
@@ -1389,6 +1412,7 @@ export function demoBackend(mode = ''): Backend {
     automation: cloud.automation,
     billing: cloud.billing,
     updates,
+    migration,
     account: cloud,
     sync,
     team,

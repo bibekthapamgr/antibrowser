@@ -26,6 +26,8 @@ import type {
   IpcError,
   LaunchCheck,
   Library,
+  MigrationPlan,
+  MigrationReport,
   NetworkCheck,
   OrgImportView,
   OrgLink,
@@ -378,6 +380,20 @@ export interface BillingRepository {
  * Milestone 12: the manager's own signed updates. The channel and automatic checks are the settings
  * `updates.channel` and `updates.automatic`; installing restarts the app and needs closed profiles.
  */
+/** R1 (ADR-0020): this device's migration of a workspace into the unified model. */
+export interface MigrationRepository {
+  plan(workspaceId: string, orgId: string): Promise<MigrationPlan>;
+  run(
+    workspaceId: string,
+    orgId: string,
+    adopt: string[],
+    sync: boolean,
+    batchSize?: number,
+  ): Promise<MigrationReport>;
+  rollback(orgId: string): Promise<MigrationReport>;
+  report(orgId: string): Promise<MigrationReport>;
+}
+
 export interface UpdatesRepository {
   get(): Promise<UpdateStatus>;
   check(): Promise<UpdateStatus>;
@@ -392,6 +408,7 @@ export interface Backend {
   automation: AutomationRepository;
   billing: BillingRepository;
   updates: UpdatesRepository;
+  migration: MigrationRepository;
   account: AccountRepository;
   sync: SyncRepository;
   team: TeamRepository;

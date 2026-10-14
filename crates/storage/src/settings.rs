@@ -48,6 +48,8 @@ pub const AUTOMATION_DEBUGGING: &str = "automation.allow_debugging";
 pub const UPDATE_CHANNEL: &str = "updates.channel";
 /// Check for manager updates (and download them in the background) automatically. Installing always needs a click.
 pub const UPDATE_AUTOMATIC: &str = "updates.automatic";
+/// R1 (ADR-0020): this device shows the unified Profiles view (R3). Off restores the earlier screens (rollback).
+pub const UNIFIED_PROFILES: &str = "ui.unified_profiles";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -127,6 +129,12 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingKind::Bool,
         ui_settable: true,
         default: || Value::from(true),
+    },
+    SettingSpec {
+        key: UNIFIED_PROFILES,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::Bool(false),
     },
 ];
 

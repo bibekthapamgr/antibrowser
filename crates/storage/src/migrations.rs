@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -28,6 +28,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (8, "team_sessions", v8),
     (9, "agency_workspace", v9),
     (10, "automation", v10),
+    (11, "product_model", v11),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,5 +781,28 @@ fn v10(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          drop table audit_log;
          alter table audit_log_v10 rename to audit_log;
          create index audit_log_profile_idx on audit_log (profile_id, seq);"
+    ))
+}
+
+/// R1 (ADR-0020): the device's migration runs toward the unified workspace model. `org_profile_links` (v6) is the
+/// device's profile identity map and stays as it is; a run records what was inventoried, which step and batch
+/// finished last (resumable), and ends `completed`, `failed` or `rolled_back`. The manifest digest identifies a run:
+/// the same inventory for the same workspace is the same run, so re-running never duplicates anything.
+fn v11(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table migration_runs (
+           id              text primary key check (id glob 'mgr_*' and length(id) = 30),
+           org_id          text not null check (org_id glob 'org_*' and length(org_id) = 30),
+           workspace_id    text not null references workspaces(id) on delete cascade,
+           manifest_digest text not null unique check (length(manifest_digest) = 64),
+           state           text not null check (state in ('planned', 'running', 'completed', 'failed', 'rolled_back')),
+           checkpoint_json text not null default '{{}}' check (length(checkpoint_json) <= 16384),
+           counts_json     text not null default '{{}}' check (length(counts_json) <= 4096),
+           error_code      text check (error_code is null or length(error_code) <= 64),
+           server_run_id   text check (server_run_id is null or (server_run_id glob 'mgr_*' and length(server_run_id) = 30)),
+           created_at      text not null default {NOW},
+           updated_at      text not null default {NOW}
+         ) strict;
+         create index migration_runs_org_idx on migration_runs (org_id, updated_at desc);"
     ))
 }

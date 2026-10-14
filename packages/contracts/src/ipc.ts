@@ -183,6 +183,7 @@ export const SettingValue = Type.Object({
     'automation.allow_debugging',
     'updates.channel',
     'updates.automatic',
+    'ui.unified_profiles',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -1174,6 +1175,65 @@ export type DiagnosticsPreview = Static<typeof DiagnosticsPreview>;
 
 const ProfileIdsArg = Type.Object({ profileIds: ProfileIds });
 
+// ---------------------------------------------------------------- R1: migration to the unified model (ADR-0020)
+const MigrationRunIdPattern = '^mgr_[0-9A-HJKMNP-TV-Z]{26}$';
+/** This device's record of a migration run (counts only; no names or secrets). */
+export const LocalMigrationRun = Type.Object({
+  id: Type.String({ pattern: MigrationRunIdPattern }),
+  org_id: Type.String({ pattern: OrgIdPattern }),
+  workspace_id: Type.String({ pattern: WorkspaceIdPattern }),
+  manifest_digest: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+  state: Type.Enum(['planned', 'running', 'completed', 'failed', 'rolled_back']),
+  checkpoint: Type.Unknown(),
+  counts: Type.Unknown(),
+  error_code: Nullable(Type.String()),
+  server_run_id: Nullable(Type.String()),
+  created_at: Type.String(),
+  updated_at: Type.String(),
+});
+export type LocalMigrationRun = Static<typeof LocalMigrationRun>;
+export const MigrationCounts = Type.Object({
+  profiles: Type.Integer({ minimum: 0 }),
+  linked: Type.Integer({ minimum: 0 }),
+  mapped_on_server: Type.Integer({ minimum: 0 }),
+  local_only: Type.Integer({ minimum: 0 }),
+  blocked: Type.Integer({ minimum: 0 }),
+  adopted: Type.Integer({ minimum: 0 }),
+  skipped: Type.Integer({ minimum: 0 }),
+});
+export type MigrationCounts = Static<typeof MigrationCounts>;
+export const MigrationPlanEntry = Type.Object({
+  local_id: Type.String({ pattern: ProfileIdPattern }),
+  /** Stable key for the unified view: the workspace profile id when linked, else `local:<local id>`. */
+  view_key: Type.String(),
+  name: Type.String(),
+  state: Type.Enum(['linked', 'mapped_on_server', 'local_only', 'blocked_running', 'blocked_unclean']),
+  cloud_profile_id: Nullable(Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' })),
+});
+export type MigrationPlanEntry = Static<typeof MigrationPlanEntry>;
+export const MigrationPlan = Type.Object({
+  org_id: Type.String({ pattern: OrgIdPattern }),
+  workspace_id: Type.String({ pattern: WorkspaceIdPattern }),
+  device_id: Type.String(),
+  manifest_digest: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+  entries: Type.Array(MigrationPlanEntry),
+  counts: MigrationCounts,
+  quota: Nullable(
+    Type.Object({
+      profiles_used: Type.Integer({ minimum: 0 }),
+      profiles_allowed: Nullable(Type.Integer({ minimum: 0 })),
+    }),
+  ),
+  run: Nullable(LocalMigrationRun),
+});
+export type MigrationPlan = Static<typeof MigrationPlan>;
+export const MigrationReport = Type.Object({
+  run: LocalMigrationRun,
+  /** local profile id → workspace profile id for every linked profile of the workspace. */
+  mappings: Type.Record(Type.String(), Type.String()),
+});
+export type MigrationReport = Static<typeof MigrationReport>;
+
 export const COMMANDS = {
   get_app_state: { args: Type.Object({}), result: AppView },
   create_workspace: {
@@ -1637,6 +1697,38 @@ export const COMMANDS = {
   cancel_update_download: { args: Type.Object({}), result: UpdateStatus },
   /** Installs the downloaded, verified update (profiles closed); the app restarts. */
   install_update: { args: Type.Object({}), result: Type.Null() },
+  // R1: migration to the unified workspace model (ADR-0020). Errors: UNKNOWN_WORKSPACE, UNKNOWN_PROFILE,
+  // PROFILE_RUNNING, MIGRATION_PROFILE_UNCLEAN, MIGRATION_PLAN_LIMIT, MIGRATION_INTERRUPTED, MIGRATION_NO_RUN,
+  // CLOUD_* as for other cloud calls.
+  /** Dry run: what this device would link or adopt for the workspace. Changes nothing. */
+  migration_plan: {
+    args: Type.Object({
+      workspaceId: Type.String({ pattern: WorkspaceIdPattern }),
+      orgId: Type.String({ pattern: OrgIdPattern }),
+    }),
+    result: MigrationPlan,
+  },
+  /** Runs or resumes the migration for the chosen local-only profiles; uploads only when `sync` is true. */
+  migration_run: {
+    args: Type.Object({
+      workspaceId: Type.String({ pattern: WorkspaceIdPattern }),
+      orgId: Type.String({ pattern: OrgIdPattern }),
+      adopt: Type.Array(Type.String({ pattern: ProfileIdPattern }), { maxItems: 10000 }),
+      sync: Type.Boolean(),
+      batchSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    }),
+    result: MigrationReport,
+  },
+  /** Turns the unified view off here and for the workspace; mappings and metadata stay. */
+  migration_rollback: {
+    args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
+    result: MigrationReport,
+  },
+  /** The latest run for the workspace on this device, with its mapping. */
+  migration_report: {
+    args: Type.Object({ orgId: Type.String({ pattern: OrgIdPattern }) }),
+    result: MigrationReport,
+  },
 } satisfies Record<string, { args: TSchema; result: TSchema }>;
 
 export type CommandName = keyof typeof COMMANDS;

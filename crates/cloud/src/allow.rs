@@ -164,6 +164,16 @@ const RULES: &[Rule] = &[
     live(Method::Get, "/v1/orgs/{org}/billing/plans"),
     live(Method::Get, "/v1/orgs/{org}/billing/usage"),
     live(Method::Get, "/v1/orgs/{org}/billing/invoices"),
+    // R1 (ADR-0020): capability negotiation, onboarding, folders and feature settings. Migration runs and the
+    // local import are made by the shell (migration.rs), never from the window.
+    rule(Method::Get, "/v1/me/capabilities"),
+    rule(Method::Get, "/v1/me/onboarding"),
+    rule(Method::Get, "/v1/orgs/{org}/folders"),
+    rule(Method::Post, "/v1/orgs/{org}/folders"),
+    rule(Method::Patch, "/v1/orgs/{org}/folders/{fld}"),
+    rule(Method::Put, "/v1/orgs/{org}/profiles/{prf}/folder"),
+    rule(Method::Get, "/v1/orgs/{org}/feature-settings"),
+    rule(Method::Put, "/v1/orgs/{org}/feature-settings"),
 ];
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -198,6 +208,7 @@ fn segment_matches(template: &str, segment: &str) -> bool {
         "{job}" => is_id("job", segment),
         "{agt}" => is_id("agt", segment),
         "{tok}" => is_id("tok", segment),
+        "{fld}" => is_id("fld", segment),
         "{whk}" => is_id("whk", segment),
         "{dlv}" => is_id("dlv", segment),
         "{token}" => is_token(segment),

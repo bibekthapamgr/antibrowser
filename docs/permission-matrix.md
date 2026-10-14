@@ -41,6 +41,8 @@ web UIs may hide controls but are never the authority. Decisions: [ADR-0013](adr
 | `tokens.create` | yes | yes | yes | — | — |
 | `tokens.manage` | yes | yes | — | — | — |
 | `webhooks.manage` | yes | yes | — | — | — |
+| `folders.manage` | yes | yes | — | — | — |
+| `features.manage` | yes | yes | — | — | — |
 
 ## Which clients and profiles a role reaches
 

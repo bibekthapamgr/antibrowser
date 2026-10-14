@@ -5,6 +5,24 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.13.0 — 2026-10-14 (R1: product contracts and safe migration foundation)
+Added (all additive; no route, table or column was removed or renamed — see ADR-0020)
+- `GET /me/capabilities`: capability negotiation (`features`, `minimum_desktop_version`, `latest_desktop_version`).
+  Accepts API tokens.
+- `GET /me/onboarding`: the caller's onboarding state (`new` / `invited` / `ready`) and default workspace.
+- Folders: `GET/POST /orgs/{org}/folders`, `PATCH /orgs/{org}/folders/{fld}`,
+  `PUT /orgs/{org}/profiles/{prf}/folder`. Folders organize profiles and are never a grant scope; `GET …/folders`
+  accepts API tokens with `profiles:read`.
+- Per-workspace feature settings: `GET/PUT /orgs/{org}/feature-settings` (`ui.unified_profiles`, `modules.agency`,
+  `modules.automation`; owner/admin). The desktop's rollback switch is `ui.unified_profiles = false`.
+- Migration runs (desktop devices): `POST /orgs/{org}/migration-runs` (upsert per device and manifest digest;
+  counts and checkpoint only, never names or secrets), `GET /orgs/{org}/migration-runs/{mgr}` (owner).
+- `POST /orgs/{org}/local-import` takes an optional `device_id`; with it, the server records a profile identity map
+  (`device_id` + local profile id → workspace profile id) and answers a profile already mapped for that device
+  with `outcome: "existing"` and its existing `profile_id` instead of creating a second one.
+- New id prefixes `fld_` (folder) and `mgr_` (migration run); new permissions `folders.manage`, `features.manage`
+  (owner, admin).
+
 ## 0.12.0 — 2026-10-14 (milestone 12: production security, updates and recovery)
 Added
 - `GET /support/audit/export?after_seq=&limit=` (support leads): the hash-chained platform audit with the chain head;

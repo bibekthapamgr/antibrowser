@@ -475,6 +475,9 @@ describe('API tokens', () => {
         'POST /v1/orgs/{orgId}/automation/jobs/{jobId}/cancel',
         'GET /v1/orgs/{orgId}/automation/jobs/{jobId}/artifacts/{artifactId}',
         'GET /v1/orgs/{orgId}/automation/agents',
+        // R1: read-only workspace shape (capabilities, folders).
+        'GET /v1/me/capabilities',
+        'GET /v1/orgs/{orgId}/folders',
       ].sort(),
     );
   });

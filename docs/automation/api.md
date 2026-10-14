@@ -24,7 +24,7 @@ Tokens expire after 1–365 days, are revoked at once, and can be rotated (the p
 default 1 h). At most 25 active tokens per member and organization; 30 created per member per hour. Tokens are managed
 only with an interactive sign-in (a token cannot create, rotate or revoke tokens, or manage webhooks or computers).
 
-### Routes that accept tokens (16)
+### Routes that accept tokens (18)
 | Method | Path (under `/v1`) | Scope |
 |---|---|---|
 | GET | `/orgs/{org}` | any scope but `automation:debug` alone |
@@ -32,6 +32,8 @@ only with an interactive sign-in (a token cannot create, rotate or revoke tokens
 | GET | `/orgs/{org}/profiles`, `/orgs/{org}/profiles/{prf}` | `profiles:read` |
 | POST, PATCH, DELETE | `/orgs/{org}/profiles`, `/orgs/{org}/profiles/{prf}` | `profiles:write` |
 | GET | `/orgs/{org}/clients`, `/orgs/{org}/clients/{cli}` | `profiles:read` |
+| GET | `/orgs/{org}/folders` (R1: folders organize profiles, they never grant access) | `profiles:read` |
+| GET | `/me/capabilities` (R1: what this server offers) | any |
 | GET | `/orgs/{org}/automation/settings`, `/orgs/{org}/automation/agents` | `automation:read` |
 | GET | `/orgs/{org}/automation/jobs`, `/orgs/{org}/automation/jobs/{job}` | `automation:read` |
 | GET | `/orgs/{org}/automation/jobs/{job}/artifacts/{art}` | `automation:read` |

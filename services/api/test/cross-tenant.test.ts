@@ -38,6 +38,8 @@ const MISSING = {
   delivery: fx('dlv', 'ZZZZ'),
   seq: '2',
   invoice: 'in_MISSINGZZZZ',
+  folder: fx('fld', 'ZZZZ'),
+  run: fx('mgr', 'ZZZZ'),
 };
 type Ids = typeof MISSING;
 const FOREIGN: Ids = {
@@ -61,6 +63,8 @@ const FOREIGN: Ids = {
   delivery: fx('dlv', 'B1D1'),
   seq: '2',
   invoice: 'in_BETAFOREIGN1',
+  folder: '',
+  run: '',
 };
 
 let h: Harness;
@@ -96,6 +100,12 @@ async function betaState(): Promise<string> {
     'job_artifacts o where o.org_id = $1',
     'webhook_endpoints o where o.org_id = $1',
     'webhook_deliveries o where o.org_id = $1',
+    // R1 (ADR-0020)
+    'folders o where o.org_id = $1',
+    'profile_folders o where o.org_id = $1',
+    'feature_settings o where o.org_id = $1',
+    'profile_identity_map o where o.org_id = $1',
+    'migration_runs o where o.org_id = $1',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -272,6 +282,27 @@ beforeAll(async () => {
      values ($1, $2, $3, $4, 'automation.job.failed', now(), '{}', 'dead', null)`,
     [FOREIGN.delivery, beta.id, FOREIGN.webhook, fx('evt', 'B1E1')],
   );
+  // R1: a beta folder and migration run.
+  const folder = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/folders`,
+    headers: betaOwner,
+    payload: { name: 'Beta folder' },
+  });
+  expect(folder.statusCode, folder.body).toBe(201);
+  FOREIGN.folder = folder.json().id;
+  const run = await h.app.inject({
+    method: 'POST',
+    url: `/v1/orgs/${beta.id}/migration-runs`,
+    headers: betaOwner,
+    payload: {
+      device_id: FIXTURES.devices.betaOwnerLaptop.id,
+      manifest_digest: 'b'.repeat(64),
+      state: 'planned',
+    },
+  });
+  expect(run.statusCode, run.body).toBe(201);
+  FOREIGN.run = run.json().id;
 });
 afterAll(async () => {
   await h.close();
@@ -620,6 +651,34 @@ function orgEndpoints(o: string, ids: Ids): Req[] {
     { name: 'usage', method: 'GET', url: `${base}/billing/usage` },
     { name: 'invoices', method: 'GET', url: `${base}/billing/invoices` },
     { name: 'invoice links', method: 'GET', url: `${base}/billing/invoices/${ids.invoice}/links` },
+    // R1 (ADR-0020): folders, feature settings, migration runs.
+    { name: 'list folders', method: 'GET', url: `${base}/folders` },
+    { name: 'create folder', method: 'POST', url: `${base}/folders`, payload: { name: 'Hijack' } },
+    {
+      name: 'rename folder',
+      method: 'PATCH',
+      url: `${base}/folders/${ids.folder}`,
+      payload: { name: 'x', expected_version: 1 },
+    },
+    { name: 'file profile', method: 'PUT', url: `${p}/folder`, payload: { folder_id: ids.folder } },
+    { name: 'feature settings', method: 'GET', url: `${base}/feature-settings` },
+    {
+      name: 'set feature settings',
+      method: 'PUT',
+      url: `${base}/feature-settings`,
+      payload: { settings: [{ key: 'ui.unified_profiles', value: true }] },
+    },
+    {
+      name: 'record migration run',
+      method: 'POST',
+      url: `${base}/migration-runs`,
+      payload: {
+        device_id: FIXTURES.devices.acmeOwnerLaptop.id,
+        manifest_digest: 'a'.repeat(64),
+        state: 'planned',
+      },
+    },
+    { name: 'migration run', method: 'GET', url: `${base}/migration-runs/${ids.run}` },
   ];
 }
 
@@ -658,6 +717,8 @@ describe('coverage', () => {
       delivery: '{deliveryId}',
       seq: '{seq}',
       invoice: '{invoiceId}',
+      folder: '{folderId}',
+      run: '{id}',
     };
     const covered = new Set(
       orgEndpoints('{orgId}', placeholders).map((r) => `${r.method} ${r.url.split('?')[0]}`),
@@ -706,6 +767,8 @@ describe('another organization’s ids inside our own organization', () => {
       artifact: MISSING.artifact,
       webhook: MISSING.webhook,
       delivery: MISSING.delivery,
+      folder: MISSING.folder,
+      run: MISSING.run,
       [kind]: value,
     } as Ids);
 
@@ -727,6 +790,8 @@ describe('another organization’s ids inside our own organization', () => {
     'artifact',
     'webhook',
     'delivery',
+    'folder',
+    'run',
   ] as const) {
     it(`${kind} ids answer like nonexistent ids on every endpoint that takes one`, async () => {
       const before = await betaState();

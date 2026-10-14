@@ -42,6 +42,7 @@ import { snapshotRoutes } from './routes/snapshots.ts';
 import { supportRoutes } from './routes/support.ts';
 import { tokenRoutes } from './routes/tokens.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
+import { workspaceRoutes } from './routes/workspace.ts';
 import { createSessionKeys, type SessionKeys } from './session.ts';
 import type { TenantAccess } from './tenancy.ts';
 
@@ -212,7 +213,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.12.0',
+        version: '0.13.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +
@@ -402,6 +403,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       backupRoutes(scoped, deps);
       auditRoutes(scoped, deps);
       importRoutes(scoped, deps);
+      workspaceRoutes(scoped, deps);
       billingRoutes(scoped, deps);
       supportRoutes(scoped, deps);
     },

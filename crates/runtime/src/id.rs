@@ -139,6 +139,10 @@ opaque_id!(
     /// One user-started proxy connectivity check. Milestone 05.
     NetworkCheckId, InvalidNetworkCheckId, "nck_", "network check"
 );
+opaque_id!(
+    /// A device's migration run toward the unified workspace model (R1, ADR-0020).
+    MigrationRunId, InvalidMigrationRunId, "mgr_", "migration run"
+);
 
 #[cfg(test)]
 mod tests {

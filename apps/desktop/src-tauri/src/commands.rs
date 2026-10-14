@@ -16,6 +16,7 @@ use crate::sync::{ConflictChoice, SyncStatus};
 use crate::transfer::{ChosenImport, ExportFormat, ExportResult, ImportPreview, ImportSettings};
 use pb_runtime::{
     ClientId, FilterId, ImportJobId, PrivacyConfig, ProfileId, ProxyId, TagId, TemplateId,
+    WorkspaceId,
 };
 use pb_storage::Workspace;
 use pb_storage::catalog::{Client, SavedFilter, TagRefOwned, Template};
@@ -1228,6 +1229,84 @@ pub fn team_restore_recovery_copy<Rt: Runtime>(
 ) -> R<ProfileView> {
     caller(&webview)?;
     state.restore_recovery_copy(&org_id, &org_profile_id, &snapshot_id, &name)
+}
+
+// ------------------------------------------------------------------------------- R1 migration (ADR-0020)
+
+/// Plans this device's migration of a workspace into the unified model: what is linked, what the server already
+/// mapped, what is local-only (adoptable with opt-in) and what is blocked. Nothing changes.
+#[tauri::command]
+pub async fn migration_plan<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    workspace_id: String,
+    org_id: String,
+) -> R<crate::migration::MigrationPlan> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let ws = WorkspaceId::parse(&workspace_id).map_err(|_| ipc::INVALID_ARGUMENT)?;
+        state.migration_plan(&ws, &org_id)
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Runs (or resumes) the migration: links mapped profiles and adopts the chosen local-only ones in bounded
+/// batches. Profile data uploads only when `sync` is chosen. Running it again never duplicates.
+#[tauri::command]
+pub async fn migration_run<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    workspace_id: String,
+    org_id: String,
+    adopt: Vec<String>,
+    sync: bool,
+    batch_size: Option<u32>,
+) -> R<crate::migration::MigrationReport> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let ws = WorkspaceId::parse(&workspace_id).map_err(|_| ipc::INVALID_ARGUMENT)?;
+        let adopt = adopt
+            .iter()
+            .map(|id| ProfileId::parse(id).map_err(|_| ipc::INVALID_ARGUMENT))
+            .collect::<Result<Vec<_>, _>>()?;
+        state.migration_run(
+            &ws,
+            &org_id,
+            &adopt,
+            sync,
+            batch_size.unwrap_or(50) as usize,
+        )
+    })
+    .await
+    .map_err(|_| ipc::INTERNAL)?
+}
+
+/// Rolls the workspace back to the earlier screens (here and for the workspace); the identity map stays.
+#[tauri::command]
+pub async fn migration_rollback<Rt: Runtime>(
+    app: AppHandle<Rt>,
+    webview: Webview<Rt>,
+    org_id: String,
+) -> R<crate::migration::MigrationReport> {
+    caller(&webview)?;
+    let state = blocking_state(&app);
+    tauri::async_runtime::spawn_blocking(move || state.migration_rollback(&org_id))
+        .await
+        .map_err(|_| ipc::INTERNAL)?
+}
+
+/// The latest run of a workspace on this device with the local → workspace profile mapping.
+#[tauri::command]
+pub fn migration_report<Rt: Runtime>(
+    webview: Webview<Rt>,
+    state: S<'_>,
+    org_id: String,
+) -> R<crate::migration::MigrationReport> {
+    caller(&webview)?;
+    state.migration_report(&org_id)
 }
 
 // ------------------------------------------------------------------------------- automation (milestone 10)

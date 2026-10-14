@@ -46,6 +46,16 @@ export function tauriBackend(): Backend {
       cancel: () => call('cancel_update_download', {}),
       install: () => call('install_update', {}),
     },
+    migration: {
+      plan: (workspaceId, orgId) => call('migration_plan', { workspaceId, orgId }),
+      run: (workspaceId, orgId, adopt, sync, batchSize) =>
+        call(
+          'migration_run',
+          batchSize ? { workspaceId, orgId, adopt, sync, batchSize } : { workspaceId, orgId, adopt, sync },
+        ),
+      rollback: (orgId) => call('migration_rollback', { orgId }),
+      report: (orgId) => call('migration_report', { orgId }),
+    },
     account: {
       get: () => call('get_account', {}),
       setServer: (url) => call('set_cloud_server', { url }),

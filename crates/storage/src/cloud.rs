@@ -133,6 +133,16 @@ impl LocalStore {
         Ok(())
     }
 
+    /// Forgets a local profile's link (the local record and the organization profile both stay). Used when a
+    /// device's link table is reset; the server's identity map restores it (R1).
+    pub fn unlink_org_profile(&self, local: &ProfileId) -> Result<bool, StoreError> {
+        let n = self.w()?.execute(
+            "delete from org_profile_links where local_profile_id = ?1",
+            [local.as_str()],
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn org_links(&self, org_id: Option<&str>) -> Result<Vec<OrgLink>, StoreError> {
         let conn = self.r()?;
         let mut stmt = conn.prepare(

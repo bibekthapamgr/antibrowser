@@ -164,7 +164,8 @@
                     "resources.memory_warning",
                     "automation.allow_debugging",
                     "updates.channel",
-                    "updates.automatic"
+                    "updates.automatic",
+                    "ui.unified_profiles"
                   ]
                 },
                 "value": {},
@@ -3638,7 +3639,8 @@
               "resources.memory_warning",
               "automation.allow_debugging",
               "updates.channel",
-              "updates.automatic"
+              "updates.automatic",
+              "ui.unified_profiles"
             ]
           },
           "value": {},
@@ -18436,6 +18438,580 @@
       },
       "result": {
         "type": "null"
+      }
+    },
+    "migration_plan": {
+      "args": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "orgId"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "workspace_id",
+          "device_id",
+          "manifest_digest",
+          "entries",
+          "counts",
+          "quota",
+          "run"
+        ],
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "workspace_id": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "manifest_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "local_id",
+                "view_key",
+                "name",
+                "state",
+                "cloud_profile_id"
+              ],
+              "properties": {
+                "local_id": {
+                  "type": "string",
+                  "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "view_key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "linked",
+                    "mapped_on_server",
+                    "local_only",
+                    "blocked_running",
+                    "blocked_unclean"
+                  ]
+                },
+                "cloud_profile_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "counts": {
+            "type": "object",
+            "required": [
+              "profiles",
+              "linked",
+              "mapped_on_server",
+              "local_only",
+              "blocked",
+              "adopted",
+              "skipped"
+            ],
+            "properties": {
+              "profiles": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "linked": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "mapped_on_server": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "local_only": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blocked": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "adopted": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "skipped": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "quota": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "profiles_used",
+                  "profiles_allowed"
+                ],
+                "properties": {
+                  "profiles_used": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "profiles_allowed": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "org_id",
+                  "workspace_id",
+                  "manifest_digest",
+                  "state",
+                  "checkpoint",
+                  "counts",
+                  "error_code",
+                  "server_run_id",
+                  "created_at",
+                  "updated_at"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^mgr_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "org_id": {
+                    "type": "string",
+                    "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "workspace_id": {
+                    "type": "string",
+                    "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+                  },
+                  "manifest_digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "state": {
+                    "enum": [
+                      "planned",
+                      "running",
+                      "completed",
+                      "failed",
+                      "rolled_back"
+                    ]
+                  },
+                  "checkpoint": {},
+                  "counts": {},
+                  "error_code": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "server_run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "created_at": {
+                    "type": "string"
+                  },
+                  "updated_at": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "migration_run": {
+      "args": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "orgId",
+          "adopt",
+          "sync"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "adopt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "maxItems": 10000
+          },
+          "sync": {
+            "type": "boolean"
+          },
+          "batchSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "run",
+          "mappings"
+        ],
+        "properties": {
+          "run": {
+            "type": "object",
+            "required": [
+              "id",
+              "org_id",
+              "workspace_id",
+              "manifest_digest",
+              "state",
+              "checkpoint",
+              "counts",
+              "error_code",
+              "server_run_id",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^mgr_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "org_id": {
+                "type": "string",
+                "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "workspace_id": {
+                "type": "string",
+                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "manifest_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "state": {
+                "enum": [
+                  "planned",
+                  "running",
+                  "completed",
+                  "failed",
+                  "rolled_back"
+                ]
+              },
+              "checkpoint": {},
+              "counts": {},
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server_run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              }
+            }
+          },
+          "mappings": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "migration_rollback": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "run",
+          "mappings"
+        ],
+        "properties": {
+          "run": {
+            "type": "object",
+            "required": [
+              "id",
+              "org_id",
+              "workspace_id",
+              "manifest_digest",
+              "state",
+              "checkpoint",
+              "counts",
+              "error_code",
+              "server_run_id",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^mgr_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "org_id": {
+                "type": "string",
+                "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "workspace_id": {
+                "type": "string",
+                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "manifest_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "state": {
+                "enum": [
+                  "planned",
+                  "running",
+                  "completed",
+                  "failed",
+                  "rolled_back"
+                ]
+              },
+              "checkpoint": {},
+              "counts": {},
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server_run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              }
+            }
+          },
+          "mappings": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "migration_report": {
+      "args": {
+        "type": "object",
+        "required": [
+          "orgId"
+        ],
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "run",
+          "mappings"
+        ],
+        "properties": {
+          "run": {
+            "type": "object",
+            "required": [
+              "id",
+              "org_id",
+              "workspace_id",
+              "manifest_digest",
+              "state",
+              "checkpoint",
+              "counts",
+              "error_code",
+              "server_run_id",
+              "created_at",
+              "updated_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^mgr_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "org_id": {
+                "type": "string",
+                "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "workspace_id": {
+                "type": "string",
+                "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "manifest_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "state": {
+                "enum": [
+                  "planned",
+                  "running",
+                  "completed",
+                  "failed",
+                  "rolled_back"
+                ]
+              },
+              "checkpoint": {},
+              "counts": {},
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "server_run_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              }
+            }
+          },
+          "mappings": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     }
   },

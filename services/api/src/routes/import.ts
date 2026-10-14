@@ -57,7 +57,7 @@ export function importRoutes(app: App, deps: Deps): void {
       const outcome = await withTx(deps.pool, access, (c) =>
         runIdempotent(c, { orgId: access.orgId, operation: 'import.run', key, digest }, async () => {
           const plan = await planImport(c, access, req.body, true);
-          await commitImport(c, access, plan);
+          await commitImport(c, access, plan, req.body.device_id);
           return { status: 201, body: plan.result };
         }),
       );
@@ -89,7 +89,7 @@ function validateReferences(body: LocalWorkspaceImport): void {
 interface Plan {
   result: ImportResult;
   newClients: { id: string; name: string; key: string; colour: string | null }[];
-  newProfiles: { id: string; name: string; clientId: string | null; notes: string }[];
+  newProfiles: { id: string; name: string; clientId: string | null; notes: string; localId: string }[];
 }
 
 async function planImport(
@@ -139,16 +139,49 @@ async function planImport(
     plan.result.clients.push({ ref: client.ref, client_id: id, outcome: 'create' });
   }
 
+  // R1: with a device id, local profiles this device adopted before map to their existing workspace profiles.
+  const mapped = new Map<string, string>();
+  if (body.device_id) {
+    const dev = await c.query('select 1 from devices where id = $1 and user_id = $2 and revoked_at is null', [
+      body.device_id,
+      access.userId,
+    ]);
+    if (!dev.rowCount) throw new ApiError('NOT_FOUND', 'Device not found');
+    const { rows } = await c.query<{ local_profile_id: string; cloud_profile_id: string }>(
+      `select m.local_profile_id, m.cloud_profile_id from profile_identity_map m
+         join profiles p on p.org_id = m.org_id and p.id = m.cloud_profile_id and p.deleted_at is null
+        where m.org_id = $1 and m.device_id = $2 and m.local_profile_id = any($3::text[])`,
+      [access.orgId, body.device_id, body.profiles.map((p) => p.local_id)],
+    );
+    for (const r of rows) mapped.set(r.local_profile_id, r.cloud_profile_id);
+  }
   for (const profile of body.profiles) {
+    const existing = mapped.get(profile.local_id);
+    if (existing) {
+      plan.result.profiles.push({ local_id: profile.local_id, profile_id: existing, outcome: 'existing' });
+      continue;
+    }
     const id = assignIds ? newId('profile') : null;
     const clientId = profile.client_ref ? (refToId.get(profile.client_ref) ?? null) : null;
-    if (id) plan.newProfiles.push({ id, name: profile.name, clientId, notes: profile.notes ?? '' });
+    if (id)
+      plan.newProfiles.push({
+        id,
+        name: profile.name,
+        clientId,
+        notes: profile.notes ?? '',
+        localId: profile.local_id,
+      });
     plan.result.profiles.push({ local_id: profile.local_id, profile_id: id, outcome: 'create' });
   }
   return plan;
 }
 
-async function commitImport(c: pg.PoolClient, access: TenantAccess, plan: Plan): Promise<void> {
+async function commitImport(
+  c: pg.PoolClient,
+  access: TenantAccess,
+  plan: Plan,
+  deviceId: string | undefined,
+): Promise<void> {
   if (plan.newClients.length > 0) {
     await c.query(
       `insert into clients (id, org_id, name, name_key, colour, created_by)
@@ -176,6 +209,19 @@ async function commitImport(c: pg.PoolClient, access: TenantAccess, plan: Plan):
         plan.newProfiles.map((x) => x.name),
         plan.newProfiles.map((x) => x.clientId),
         plan.newProfiles.map((x) => x.notes),
+      ],
+    );
+  }
+  if (deviceId && plan.newProfiles.length > 0) {
+    await c.query(
+      `insert into profile_identity_map (org_id, device_id, local_profile_id, cloud_profile_id, created_by)
+       select $1, $2, x.local_id, x.id, $3 from unnest($4::text[], $5::text[]) as x(local_id, id)`,
+      [
+        access.orgId,
+        deviceId,
+        access.userId,
+        plan.newProfiles.map((x) => x.localId),
+        plan.newProfiles.map((x) => x.id),
       ],
     );
   }

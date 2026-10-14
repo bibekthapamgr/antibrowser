@@ -50,6 +50,9 @@ export const ID_PREFIXES = {
   billingAlert: 'alr',
   staffSession: 'stf',
   accessRequest: 'sar',
+  // R1 (ADR-0020): workspace folders and device migration runs.
+  folder: 'fld',
+  migrationRun: 'mgr',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

@@ -118,6 +118,8 @@ pub struct AppState {
     pub(crate) automation: crate::automation::AutomationRuntime,
     /// Signed manager updates (milestone 12).
     pub(crate) updates: crate::app_update::UpdateRuntime,
+    /// R1 tests: the migration "crashes" after this many batches (None: never).
+    pub(crate) migration_fault: std::sync::Mutex<Option<u32>>,
 }
 
 // ----------------------------------------------------------------------------- views returned over IPC
@@ -311,6 +313,7 @@ impl AppState {
             agency: crate::agency::AgencyRuntime::default(),
             automation: crate::automation::AutomationRuntime::new(),
             updates: crate::app_update::UpdateRuntime::new(),
+            migration_fault: std::sync::Mutex::new(None),
         }))
     }
 

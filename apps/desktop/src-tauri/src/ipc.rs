@@ -357,6 +357,23 @@ pub const ORG_IMPORT_EMPTY: IpcError = IpcError::new(
     "ORG_IMPORT_EMPTY",
     "This workspace has no active profiles to copy.",
 );
+// ----------------------------------------------------------------------------- R1 migration (ADR-0020)
+pub const MIGRATION_PROFILE_UNCLEAN: IpcError = IpcError::new(
+    "MIGRATION_PROFILE_UNCLEAN",
+    "This profile's last session did not end cleanly. Open it and close it, then try again.",
+);
+pub const MIGRATION_INTERRUPTED: IpcError = IpcError::new(
+    "MIGRATION_INTERRUPTED",
+    "The migration was interrupted. Run it again to continue where it stopped.",
+);
+pub const MIGRATION_PLAN_LIMIT: IpcError = IpcError::new(
+    "MIGRATION_PLAN_LIMIT",
+    "The workspace's plan does not allow this many profiles. Choose fewer, or change the plan.",
+);
+pub const MIGRATION_NO_RUN: IpcError = IpcError::new(
+    "MIGRATION_NO_RUN",
+    "No migration has been planned for this workspace on this device.",
+);
 
 // ----------------------------------------------------------------------------- encrypted backups and sync (07)
 pub const SYNC_NOT_LINKED: IpcError = IpcError::new(

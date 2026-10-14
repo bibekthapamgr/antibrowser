@@ -14,6 +14,7 @@ pub mod bulk;
 pub mod catalog;
 pub mod cloud;
 pub mod imports;
+pub mod migration;
 pub mod migrations;
 pub mod network;
 pub mod query;

@@ -19,9 +19,9 @@ pub mod state;
 pub use environment::{PrivacyConfig, TextSize, WebRtcPolicy, WindowSize};
 pub use id::{
     ClientId, DeviceId, FilterId, ImportJobId, InvalidClientId, InvalidDeviceId, InvalidFilterId,
-    InvalidImportJobId, InvalidNetworkCheckId, InvalidProfileId, InvalidProxyId, InvalidTagId,
-    InvalidTemplateId, InvalidWorkspaceId, NetworkCheckId, ProfileId, ProxyId, TagId, TemplateId,
-    WorkspaceId, random_hex,
+    InvalidImportJobId, InvalidMigrationRunId, InvalidNetworkCheckId, InvalidProfileId,
+    InvalidProxyId, InvalidTagId, InvalidTemplateId, InvalidWorkspaceId, MigrationRunId,
+    NetworkCheckId, ProfileId, ProxyId, TagId, TemplateId, WorkspaceId, random_hex,
 };
 pub use inspect::{ProcRecord, ProcessInfo, ProcessInspector, SystemInspector};
 pub use launch::{

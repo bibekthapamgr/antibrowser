@@ -66,7 +66,7 @@ struct Access {
 }
 
 pub struct Cloud {
-    http: Http,
+    pub(crate) http: Http,
     pending: Mutex<Option<Pending>>,
     access: Mutex<Option<Access>>,
     /// One refresh at a time: two concurrent refreshes of a rotating token would end the session.
@@ -140,7 +140,7 @@ pub struct OrgImportView {
 }
 
 /// Why an authenticated request could not be made.
-enum NoAccess {
+pub(crate) enum NoAccess {
     Offline,
     SignedOut,
     Unavailable,
@@ -159,7 +159,7 @@ impl From<SignInError> for IpcError {
     }
 }
 
-fn http_err(e: HttpError) -> IpcError {
+pub(crate) fn http_err(e: HttpError) -> IpcError {
     match e {
         HttpError::Offline => ipc::CLOUD_OFFLINE,
         HttpError::Insecure | HttpError::BadUrl => ipc::CLOUD_BAD_SERVER,
@@ -184,7 +184,7 @@ pub fn normalize_server(raw: &str) -> Result<String, IpcError> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-fn api_url(server: &str, path_and_query: &str) -> Result<Url, IpcError> {
+pub(crate) fn api_url(server: &str, path_and_query: &str) -> Result<Url, IpcError> {
     Url::parse(&format!("{server}{path_and_query}")).map_err(|_| ipc::CLOUD_BAD_SERVER)
 }
 
@@ -203,7 +203,7 @@ fn api_code(body: &Value) -> &str {
 }
 
 impl AppState {
-    fn cloud_status(&self) -> SessionStatus {
+    pub(crate) fn cloud_status(&self) -> SessionStatus {
         self.cloud
             .status
             .lock()
@@ -535,7 +535,7 @@ impl AppState {
     }
 
     /// A valid access token, refreshing (serialized) when needed or when `force`d after a 401.
-    fn access_token(&self, server: &str, force: bool) -> Result<String, NoAccess> {
+    pub(crate) fn access_token(&self, server: &str, force: bool) -> Result<String, NoAccess> {
         let _one_at_a_time = self
             .cloud
             .refresh_lock

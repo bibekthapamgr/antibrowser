@@ -41,6 +41,13 @@ struct World {
     generation: u32,
     enrolled_device: Option<String>,
     import_keys: Vec<String>,
+    /// R1: the server's profile identity map for the enrolled device (local id -> organization profile id).
+    identity_map: HashMap<String, String>,
+    /// Idempotency key -> the first answer (replayed as the real API does).
+    import_answers: HashMap<String, Value>,
+    migration_runs: Vec<Value>,
+    profile_limit: Option<u64>,
+    created: u32,
 }
 
 struct Mock {
@@ -279,6 +286,109 @@ fn route(req: &Req, base: &str, w: &mut World) -> (u16, Value) {
             200,
             json!({ "items": [{ "kind": "organization", "org_id": ORG, "name": "Acme", "role": "owner", "profiles": 2 }] }),
         ),
+        ("POST", p)
+            if p == format!("/v1/orgs/{ORG}/local-import")
+                && json_body["device_id"].is_string() =>
+        {
+            // R1: identity-mapped import (device_id given): mapped profiles come back as "existing".
+            let dry = json_body["dry_run"].as_bool().unwrap_or(true);
+            if json_body["device_id"].as_str() != w.enrolled_device.as_deref() {
+                return (
+                    403,
+                    json!({ "code": "FORBIDDEN", "message": "not this device" }),
+                );
+            }
+            let key = req
+                .headers
+                .get("idempotency-key")
+                .cloned()
+                .unwrap_or_default();
+            if !dry {
+                if let Some(answer) = w.import_answers.get(&key) {
+                    return (201, answer.clone());
+                }
+                w.import_keys.push(key.clone());
+            }
+            let incoming: Vec<Value> = json_body["profiles"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let new_count = incoming
+                .iter()
+                .filter(|p| {
+                    !w.identity_map
+                        .contains_key(p["local_id"].as_str().unwrap_or(""))
+                })
+                .count() as u64;
+            if let Some(limit) = w.profile_limit
+                && !dry
+                && w.identity_map.len() as u64 + new_count > limit
+            {
+                return (
+                    402,
+                    json!({ "code": "PLAN_LIMIT_REACHED", "message": "profiles" }),
+                );
+            }
+            let mut profiles = Vec::new();
+            for p in &incoming {
+                let local = p["local_id"].as_str().unwrap_or_default().to_owned();
+                if let Some(cloud) = w.identity_map.get(&local) {
+                    profiles.push(
+                        json!({ "local_id": local, "profile_id": cloud, "outcome": "existing" }),
+                    );
+                } else if dry {
+                    profiles.push(
+                        json!({ "local_id": local, "profile_id": null, "outcome": "create" }),
+                    );
+                } else {
+                    w.created += 1;
+                    let cloud = format!("prf_01J9ZSEED0M{:0>15}", w.created);
+                    w.identity_map.insert(local.clone(), cloud.clone());
+                    profiles.push(
+                        json!({ "local_id": local, "profile_id": cloud, "outcome": "create" }),
+                    );
+                }
+            }
+            let answer = json!({ "dry_run": dry, "clients": [], "profiles": profiles });
+            if !dry {
+                w.import_answers.insert(key, answer.clone());
+            }
+            (if dry { 200 } else { 201 }, answer)
+        }
+        ("POST", p) if p == format!("/v1/orgs/{ORG}/migration-runs") => {
+            let digest = json_body["manifest_digest"].clone();
+            let existing = w
+                .migration_runs
+                .iter()
+                .position(|r| r["manifest_digest"] == digest);
+            let id = existing
+                .map(|i| w.migration_runs[i]["id"].clone())
+                .unwrap_or_else(|| {
+                    json!(format!(
+                        "mgr_01J9ZSEED0G{:0>15}",
+                        w.migration_runs.len() + 1
+                    ))
+                });
+            let mut rec = json_body.clone();
+            rec["id"] = id;
+            match existing {
+                Some(i) => {
+                    w.migration_runs[i] = rec.clone();
+                    (200, rec)
+                }
+                None => {
+                    w.migration_runs.push(rec.clone());
+                    (201, rec)
+                }
+            }
+        }
+        ("GET", p) if p == format!("/v1/orgs/{ORG}/billing/usage") => (
+            200,
+            json!({ "current": { "profiles": w.identity_map.len() }, "limits": { "profiles": w.profile_limit } }),
+        ),
+        ("PUT", p) if p == format!("/v1/orgs/{ORG}/feature-settings") => {
+            (200, json!({ "settings": [] }))
+        }
         ("POST", p) if p == format!("/v1/orgs/{ORG}/local-import") => {
             let dry = json_body["dry_run"].as_bool().unwrap_or(true);
             if !dry {
@@ -827,4 +937,311 @@ fn copies_a_local_workspace_into_an_organization_after_a_preview() {
         json!({ "workspaceId": workspace, "orgId": "acme", "dryRun": true }),
     );
     assert_eq!(code(&refused).as_deref(), Some("INVALID_ARGUMENT"));
+}
+
+// ----------------------------------------------------------------------------- R1: migration (ADR-0020)
+fn migration_fixture(names: &[&str]) -> (Fixture, Mock, String, Vec<String>) {
+    let f = fixture();
+    keychain(&f);
+    ok(invoke(&f, "create_workspace", json!({ "name": "Mine" })));
+    let ids: Vec<String> = names
+        .iter()
+        .map(|n| {
+            ok(invoke(&f, "create_profile", json!({ "name": n })))["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    let workspace = ok(invoke(&f, "get_app_state", json!({})))["active_workspace_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let mock = Mock::start();
+    connect(&f, &mock);
+    browser_round_trip(&f, &mock, false, None);
+    (f, mock, workspace, ids)
+}
+
+fn plan(f: &Fixture, ws: &str) -> Value {
+    ok(invoke(
+        f,
+        "migration_plan",
+        json!({ "workspaceId": ws, "orgId": ORG }),
+    ))
+}
+
+fn run(f: &Fixture, ws: &str, adopt: &[String], sync: bool, batch: u32) -> Result<Value, Value> {
+    invoke(
+        f,
+        "migration_run",
+        json!({ "workspaceId": ws, "orgId": ORG, "adopt": adopt, "sync": sync, "batchSize": batch }),
+    )
+}
+
+fn entry_states(p: &Value) -> Vec<(String, String)> {
+    p["entries"]
+        .as_array()
+        .map(|es| {
+            es.iter()
+                .map(|e| {
+                    (
+                        e["name"].as_str().unwrap_or_default().to_owned(),
+                        e["state"].as_str().unwrap_or_default().to_owned(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn migration_plan_is_a_dry_run_that_keeps_linked_identities_and_blocks_unclean_profiles() {
+    let (f, mock, ws, ids) = migration_fixture(&["Linked", "Local", "Unclean", "Open"]);
+    // A profile linked in milestone 07 keeps its workspace id.
+    f.state
+        .store()
+        .unwrap_or_else(|e| panic!("{e:?}"))
+        .link_org_profiles(
+            ORG,
+            &[(
+                pb_runtime::ProfileId::parse(&ids[0]).unwrap_or_else(|e| panic!("{e:?}")),
+                "prf_01J9ZSEED0LINKED0000000000".to_owned(),
+            )],
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    // One whose last session did not end cleanly; one that is open right now.
+    {
+        use pb_storage::runs::{RunOutcome, StartIdentity};
+        let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+        let pid = pb_runtime::ProfileId::parse(&ids[2]).unwrap_or_else(|e| panic!("{e:?}"));
+        let run = store
+            .begin_run(
+                &pid,
+                4242,
+                &StartIdentity {
+                    start_time: None,
+                    exe: None,
+                },
+                None,
+                pb_runtime::RunState::Running,
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        store
+            .end_run(
+                &run,
+                RunOutcome::Crashed,
+                Some(1),
+                pb_runtime::RunState::Stopped,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
+    }
+    let op = ok(invoke(&f, "launch_profile", json!({ "profileId": ids[3] })));
+    assert_eq!(
+        wait_op(&f, &op),
+        pb_desktop_lib::operations::OpStatus::Succeeded
+    );
+
+    let p = plan(&f, &ws);
+    assert_eq!(
+        entry_states(&p),
+        vec![
+            ("Linked".into(), "linked".into()),
+            ("Local".into(), "local_only".into()),
+            ("Unclean".into(), "blocked_unclean".into()),
+            ("Open".into(), "blocked_running".into()),
+        ]
+    );
+    assert_eq!(
+        p["counts"],
+        json!({ "profiles": 4, "linked": 1, "mapped_on_server": 0, "local_only": 1, "blocked": 2, "adopted": 0, "skipped": 0 })
+    );
+    assert_eq!(
+        p["entries"][0]["view_key"],
+        "prf_01J9ZSEED0LINKED0000000000"
+    );
+    assert_eq!(p["entries"][1]["view_key"], format!("local:{}", ids[1]));
+    assert_eq!(p["run"]["state"], "planned");
+    assert_eq!(p["manifest_digest"].as_str().map(str::len), Some(64));
+    // Planning changes nothing: only dry runs reached the server, no mapping exists, planning again is the same run.
+    assert!(mock.world().import_keys.is_empty());
+    assert!(mock.world().identity_map.is_empty());
+    assert_eq!(plan(&f, &ws)["run"]["id"], p["run"]["id"]);
+    // The server has the run too, with counts only.
+    let server = mock.world().migration_runs.clone();
+    assert_eq!(server.len(), 1);
+    assert!(!server[0].to_string().contains("Unclean"));
+
+    // Adopting a blocked profile is refused before anything happens.
+    assert_eq!(
+        code(&run(&f, &ws, &[ids[2].clone()], false, 10)).as_deref(),
+        Some("MIGRATION_PROFILE_UNCLEAN")
+    );
+    assert_eq!(
+        code(&run(&f, &ws, &[ids[3].clone()], false, 10)).as_deref(),
+        Some("PROFILE_RUNNING")
+    );
+    assert!(mock.world().import_keys.is_empty());
+}
+
+#[test]
+fn migration_adopts_only_opted_in_profiles_without_uploading_and_runs_twice_identically() {
+    let (f, mock, ws, ids) = migration_fixture(&["A", "B", "C"]);
+    let p = plan(&f, &ws);
+    assert_eq!(p["counts"]["local_only"], 3);
+
+    // Opt in to two of three; sync not chosen.
+    let adopt = vec![ids[0].clone(), ids[2].clone()];
+    let r = ok(run(&f, &ws, &adopt, false, 10));
+    assert_eq!(r["run"]["state"], "completed");
+    assert_eq!(r["run"]["counts"]["adopted"], 2);
+    assert_eq!(r["run"]["counts"]["skipped"], 1);
+    let mappings = r["mappings"].clone();
+    assert_eq!(mappings.as_object().map(serde_json::Map::len), Some(2));
+    assert!(mappings.get(&ids[1]).is_none());
+    // Metadata only: nothing was uploaded and no backup was turned on.
+    let log = mock.log.lock().map(|l| l.clone()).unwrap_or_default();
+    assert!(
+        log.iter()
+            .all(|r| !r.path.contains("snapshot") && !r.path.contains("upload"))
+    );
+    let links = f.state.org_links(Some(ORG)).unwrap_or_default();
+    assert_eq!(links.len(), 2);
+    let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    for l in &links {
+        let st = store
+            .sync_link(&l.local_profile_id)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(
+            st.is_none_or(|s| !s.auto_backup),
+            "no backup without opt-in"
+        );
+    }
+    // The same cloud ids on both sides.
+    let server_map = mock.world().identity_map.clone();
+    for l in &links {
+        assert_eq!(
+            server_map.get(l.local_profile_id.as_str()),
+            Some(&l.org_profile_id)
+        );
+    }
+
+    // Twice: the completed run is returned as it is; a fresh plan finds nothing new to adopt; counts and mappings
+    // are identical and no further import was committed.
+    let again = ok(run(&f, &ws, &adopt, false, 10));
+    assert_eq!(again["run"]["id"], r["run"]["id"]);
+    assert_eq!(again["mappings"], mappings);
+    let keys_before = mock.world().import_keys.len();
+    let p2 = plan(&f, &ws);
+    assert_eq!(p2["counts"]["linked"], 2);
+    assert_eq!(p2["counts"]["local_only"], 1);
+    assert_eq!(p2["run"]["id"], r["run"]["id"], "the same manifest is the same run");
+    let r2 = ok(run(&f, &ws, &adopt, false, 10));
+    assert_eq!(r2["run"]["state"], "completed");
+    assert_eq!(r2["run"]["counts"], r["run"]["counts"]);
+    assert_eq!(r2["mappings"], mappings);
+    assert_eq!(mock.world().import_keys.len(), keys_before);
+    assert_eq!(mock.world().identity_map.len(), 2);
+    assert_eq!(
+        ok(invoke(&f, "migration_report", json!({ "orgId": ORG })))["mappings"],
+        mappings
+    );
+
+    // Rollback turns the unified view off here and for the workspace; the mapping stays.
+    let rb = ok(invoke(&f, "migration_rollback", json!({ "orgId": ORG })));
+    assert_eq!(rb["run"]["state"], "rolled_back");
+    assert_eq!(rb["mappings"], mappings);
+    assert_eq!(
+        mock.requests("PUT", &format!("/v1/orgs/{ORG}/feature-settings"))
+            .len(),
+        1
+    );
+    let s = ok(invoke(&f, "get_app_state", json!({})));
+    let unified = s["settings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|v| v["key"] == "ui.unified_profiles")
+        .cloned();
+    assert_eq!(unified.map(|v| v["value"].clone()), Some(json!(false)));
+    assert_eq!(f.state.org_links(Some(ORG)).unwrap_or_default().len(), 2);
+}
+
+#[test]
+fn migration_resumes_after_a_crash_at_every_checkpoint_without_duplicating() {
+    for crash_after in 1..=3u32 {
+        let (f, mock, ws, ids) = migration_fixture(&["P1", "P2", "P3"]);
+        let adopt = ids.clone();
+        plan(&f, &ws);
+        f.state.set_migration_fault(Some(crash_after));
+        let interrupted = run(&f, &ws, &adopt, false, 1);
+        assert_eq!(code(&interrupted).as_deref(), Some("MIGRATION_INTERRUPTED"));
+        let local = f.state.org_links(Some(ORG)).unwrap_or_default();
+        assert_eq!(
+            local.len() as u32,
+            crash_after,
+            "links up to the checkpoint"
+        );
+        assert_eq!(mock.world().identity_map.len() as u32, crash_after);
+        let p = plan(&f, &ws);
+        assert_eq!(p["run"]["state"], "running");
+        assert_eq!(p["run"]["checkpoint"]["batches_done"], crash_after);
+
+        // Retry: resumes after the checkpoint, the rest is created exactly once.
+        let r = ok(run(&f, &ws, &adopt, false, 1));
+        assert_eq!(r["run"]["state"], "completed");
+        assert_eq!(r["run"]["counts"]["adopted"], 3);
+        assert_eq!(mock.world().identity_map.len(), 3);
+        assert_eq!(mock.world().created, 3, "no profile created twice");
+        let keys = mock.world().import_keys.clone();
+        assert_eq!(keys.len(), 3);
+        let mut uniq = keys.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 3);
+        let links = f.state.org_links(Some(ORG)).unwrap_or_default();
+        assert_eq!(links.len(), 3);
+        let r2 = ok(run(&f, &ws, &adopt, false, 1));
+        assert_eq!(r2["mappings"], r["mappings"]);
+    }
+}
+
+#[test]
+fn migration_respects_the_workspace_quota_and_a_reinstalled_device_restores_links() {
+    let (f, mock, ws, ids) = migration_fixture(&["Q1", "Q2", "Q3"]);
+    mock.world().profile_limit = Some(2);
+    let p = plan(&f, &ws);
+    assert_eq!(
+        p["quota"],
+        json!({ "profiles_used": 0, "profiles_allowed": 2 })
+    );
+    let refused = run(&f, &ws, &ids, false, 10);
+    assert_eq!(code(&refused).as_deref(), Some("MIGRATION_PLAN_LIMIT"));
+    assert!(mock.world().identity_map.is_empty());
+    assert_eq!(plan(&f, &ws)["run"]["state"], "failed");
+    assert_eq!(plan(&f, &ws)["run"]["error_code"], "MIGRATION_PLAN_LIMIT");
+    let r = ok(run(&f, &ws, &ids[..2], false, 10));
+    assert_eq!(r["run"]["counts"]["adopted"], 2);
+
+    // The device loses its links (a reinstall keeps the device id): the plan shows them as mapped on the server
+    // and the run restores them without creating anything.
+    let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    for id in &ids[..2] {
+        store
+            .unlink_org_profile(
+                &pb_runtime::ProfileId::parse(id).unwrap_or_else(|e| panic!("{e:?}")),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
+    }
+    assert!(f.state.org_links(Some(ORG)).unwrap_or_default().is_empty());
+    let p = plan(&f, &ws);
+    assert_eq!(p["counts"]["mapped_on_server"], 2);
+    assert_eq!(p["counts"]["local_only"], 1);
+    let created_before = mock.world().created;
+    let r = ok(run(&f, &ws, &[], false, 10));
+    assert_eq!(r["run"]["state"], "completed");
+    assert_eq!(r["mappings"].as_object().map(serde_json::Map::len), Some(2));
+    assert_eq!(mock.world().created, created_before);
+    assert_eq!(r["mappings"][&ids[0]], mock.world().identity_map[&ids[0]]);
 }

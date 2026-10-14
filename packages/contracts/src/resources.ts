@@ -59,6 +59,11 @@ export const PERMISSIONS = [
   'tokens.manage',
   /** Webhook endpoints, their secrets and deliveries. */
   'webhooks.manage',
+  // R1 (ADR-0020): folders organize a workspace's profiles; owners and admins manage them. Reading them needs only
+  // profile.read. Folders are not a grant scope.
+  'folders.manage',
+  /** Per-workspace feature settings (the new UI, optional modules). */
+  'features.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -576,6 +581,11 @@ export const ProfileExport = Type.Object(
 export const LocalWorkspaceImport = Type.Object(
   {
     dry_run: Type.Boolean(),
+    /**
+     * R1: the importing device. With it, each local profile maps to at most one workspace profile (the server's
+     * profile identity map): importing the same local profile again returns the existing mapping instead of a copy.
+     */
+    device_id: Type.Optional(Id('dev')),
     clients: Type.Array(
       Type.Object(
         {
@@ -624,9 +634,10 @@ export const LocalWorkspaceImportResult = Type.Object(
         {
           local_id: Id('prf'),
           profile_id: Type.Union([Id('prf'), Type.Null()]),
-          outcome: Type.Literal('create', {
+          outcome: Type.Enum(['create', 'existing'], {
             description:
-              'Organization profiles always get a new server id; the device keeps its local record.',
+              'create: a new organization profile (always a new server id; the device keeps its local record). ' +
+              'existing (R1, with device_id): this local profile was already adopted by this device; its mapping.',
           }),
         },
         { additionalProperties: false },

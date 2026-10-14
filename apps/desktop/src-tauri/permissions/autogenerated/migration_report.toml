@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-migration-report"
+description = "Enables the migration_report command without any pre-configured scope."
+commands.allow = ["migration_report"]
+
+[[permission]]
+identifier = "deny-migration-report"
+description = "Denies the migration_report command without any pre-configured scope."
+commands.deny = ["migration_report"]

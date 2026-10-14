@@ -19,6 +19,7 @@ pub mod external;
 pub mod ipc;
 pub mod lifecycle;
 pub mod manage;
+pub mod migration;
 pub mod network;
 pub mod operations;
 pub mod recovery;
@@ -144,6 +145,10 @@ pub fn handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + 
         commands::automation_stop_job,
         commands::automation_set_debugging,
         commands::automation_screenshot,
+        commands::migration_plan,
+        commands::migration_run,
+        commands::migration_rollback,
+        commands::migration_report,
         commands::billing_open_checkout,
         commands::billing_open_portal,
         commands::billing_open_invoice,
