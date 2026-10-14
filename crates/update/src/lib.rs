@@ -10,6 +10,7 @@
 //!
 //! There is no way to point the manager at an arbitrary executable in release builds.
 
+pub mod app;
 pub mod download;
 pub mod install;
 

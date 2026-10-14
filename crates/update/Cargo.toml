@@ -17,9 +17,16 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 hex.workspace = true
 ed25519-dalek = "3"
 ureq = { version = "3.4", default-features = false, features = ["rustls", "platform-verifier"] }
+# Manager updates (milestone 12): Tauri-format (minisign) signatures, semver ordering, macOS bundle archives.
+minisign-verify = "0.3"
+semver = "1"
+base64 = "0.22"
+flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
+minisign = "0.10"
 ed25519-dalek = "3"
 
 [lints]
