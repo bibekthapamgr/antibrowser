@@ -13,6 +13,9 @@
 #      writes a report to /var/lib/pb-backup/drills/, then stops the cluster and deletes every restored file.
 #
 # Usage (as root):  bash restore-drill.sh [--no-seed]     (--no-seed: do not create fixture snapshots first)
+#                   bash restore-drill.sh --last          (the newest drill report)
+# The drill runs as a background service (pb-restore-drill): a dropped SSH connection does not stop it. Running the
+# command again while it runs follows it instead of starting another.
 set -Eeuo pipefail
 trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 cd /
@@ -46,11 +49,60 @@ now() { date +%s.%N; }
 elapsed() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.0f", b - a }'; }
 
 cleanup() {
+  # A restore left running by an earlier, interrupted drill would keep writing here (and hold pgBackRest's lock).
+  pkill -f -- "--pg1-path=$DRILL/data" 2>/dev/null && sleep 2 || true
   if [[ -f $DRILL/data/postmaster.pid ]]; then
     as_pg "$PG_BIN/pg_ctl" -D "$DRILL/data" -m immediate -w stop >/dev/null 2>&1 || true
   fi
   rm -rf "$DRILL"
 }
+
+# The newest drill report (optionally only one written after an epoch time); 0 when it passed.
+show_last() {
+  local since=${1:-0} f
+  f=$(ls -t "$STATE_DIR"/drills/*.json 2>/dev/null | head -1 || true)
+  if [[ -z $f ]] || (( $(stat -c %Y "$f") < since )); then
+    echo "    no drill report from this run (the lines above say why)"
+    return 1
+  fi
+  "$NODE" -e '
+    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const pass = r.result === "pass";
+    console.log(`    ${pass ? "passed" : "FAILED"}: drill of ${r.drill_started_at}, recovery point ${r.recovery_point_seconds} s, ` +
+      `recovery time ${r.recovery_time_seconds} s, tenants ${(r.tenants || []).join(", ")}`);
+    console.log(`    report: ${process.argv[1]}`);
+    process.exit(pass ? 0 : 1);' "$f"
+}
+
+UNIT=pb-restore-drill
+if [[ ${1:-} == --last ]]; then
+  show_last
+  exit $?
+fi
+if [[ -z ${PB_DRILL_IN_UNIT:-} ]]; then
+  # Interactive start: run the drill as a service and follow its output until it ends.
+  [[ $EUID -eq 0 ]] || die "run as root"
+  started=$(date +%s)
+  if systemctl is-active --quiet "$UNIT"; then
+    echo "    a restore drill is already running: following it (Ctrl+C stops following, not the drill)"
+    started=$(date -d "$(systemctl show -p ActiveEnterTimestamp --value "$UNIT")" +%s 2>/dev/null || date +%s)
+  else
+    systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+    systemd-run --unit="$UNIT" --collect --quiet --setenv=PB_DRILL_IN_UNIT=1 /bin/bash "$(readlink -f "$0")" "$@"
+    echo "    the drill runs as a background service ($UNIT): if the SSH connection drops, it continues."
+    echo "    Reconnect and run this command again to follow it, or see the result with: bash $0 --last"
+  fi
+  journalctl -a -o cat -f -u "$UNIT" --since "$(date -d "@$started" '+%Y-%m-%d %H:%M:%S')" &
+  follow=$!
+  sleep 2
+  while systemctl is-active --quiet "$UNIT"; do sleep 2; done
+  sleep 2
+  kill "$follow" 2>/dev/null || true
+  wait "$follow" 2>/dev/null || true
+  echo
+  show_last "$started" && exit 0
+  exit 1
+fi
 
 step "Restore drill"
 [[ $EUID -eq 0 ]] || die "run as root"
