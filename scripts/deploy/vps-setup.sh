@@ -412,9 +412,14 @@ delete table inet pb_egress
 table inet pb_egress {
   counter blocked {
   }
+  # Only packets from a socket of this user are judged. Packets without one (the kernel's own ICMP errors and resets,
+  # including the refusals below on a server whose own address is private) pass, as does every other user's traffic.
   chain output {
     type filter hook output priority 0; policy accept;
-    meta skuid != $app_uid accept
+    meta skuid $app_uid jump app_user
+  }
+  chain app_user {
+    ct state established,related accept
 $dns4
 $dns6
     ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } counter name "blocked" reject with icmpx type admin-prohibited

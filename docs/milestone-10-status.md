@@ -108,7 +108,9 @@ SSH tunnel; a computer enrolled from the desktop polls the API through it.
 - The worker's egress firewall first used systemd's `IPAddressDeny`. On the AlmaLinux 8 test server the setup reported
   that it was not applied: RHEL 8's default cgroup v1 accepts the setting but cannot enforce it (CI's Ubuntu VM could).
   It is now an nftables table for the app user, and the setup checks enforcement (a refused connection) instead of
-  reading the configuration back.
+  reading the configuration back. The first version also judged packets without a socket, so on a server whose own
+  address is private (CI's VM) the refusal's own ICMP error was refused and connections hung instead of failing; only
+  the app user's sockets are judged now (reproduced and fixed with a private source address).
 
 ## Known limitations
 - No website-changing step (by design for v1); the reconciliation path is built but not exercised by a real step.
