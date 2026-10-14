@@ -66,7 +66,18 @@ client 1, DevTools crate 9 unit + 3 real-Chromium, launch 1, storage 1, window a
 18 (11 webhooks); contracts 24 (shared approved-site vectors, SSRF vectors); config 8; SDK 8 + the Playwright
 compatibility test; UI unit 30; UI end-to-end 169 (4 new flows and 4 new screens in light and dark with axe).
 
-CI: _pending — filled in with the run ids once the dispatched runs finish._
+CI: full run green on Windows x64, macOS arm64 and Linux at `a6b3a43`
+([ci 38496717050](https://github.com/bibekthapamgr/antibrowser/actions/runs/38496717050): fmt, clippy, all Rust tests per
+OS including the desktop automation tests and the DevTools pipe tests against Chromium's headless shell, the
+Playwright compatibility test through the broker, TypeScript + PostgreSQL 18 with the automation, role-matrix and
+cross-tenant suites, sync end to end now with the agent client against the real API, UI e2e with axe, license
+inventory, secret scan with the new token rules). The real-browser job through the app's launcher passed on Windows
+and macOS with upstream stable Chrome for Testing 155.0.8059.79 in
+[runtime pipeline 38494070918](https://github.com/bibekthapamgr/antibrowser/actions/runs/38494070918) (Linux: every
+step but the screenshot, see limitations; cross-OS restore matrix green). Installers in
+[desktop internal build 38494073415](https://github.com/bibekthapamgr/antibrowser/actions/runs/38494073415) (at
+`f0f1c43`; later commits changed tests, CI scripts and docs only). Test server update path in
+[deploy scripts 38496718767](https://github.com/bibekthapamgr/antibrowser/actions/runs/38496718767).
 
 ## Test server
 `vps-setup.sh` changed (the worker's egress firewall), so the update runs **twice**: the first run copies the new
@@ -89,6 +100,8 @@ SSH tunnel; a computer enrolled from the desktop polls the API through it.
   once more, and job windows keep rendering when covered (`--disable-backgrounding-occluded-windows`).
 - The real-browser job test waited for the test page's own report, which the job can close before it is sent
   (Windows); it now checks that the browser requested the page.
+- A failed download of the headless shell failed the macOS job before its tests ran; the three CI jobs that need it now
+  share a script that retries.
 
 ## Known limitations
 - No website-changing step (by design for v1); the reconciliation path is built but not exercised by a real step.
