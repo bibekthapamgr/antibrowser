@@ -17,8 +17,10 @@ in the linked documents; this page is the entry point.
 
 ## Result
 **Gate met for this milestone: no open critical or high finding.**
-- 1 medium finding (D1, custody of the signing key against a GitHub admin-account takeover) is tracked. It must be
-  resolved before the paid launch; the owner actions are listed.
+- 2 medium findings are tracked; both must be resolved before the paid launch:
+  - D1: custody of the signing key against a GitHub admin-account takeover (owner actions are listed);
+  - S1: staff sign-in does not yet enforce a second factor (create staff accounts with `--otp` until the API
+    enforces it).
 - 10 of 12 low findings are fixed and verified by tests; 2 are tracked with owners (T3, C-L4).
 - A third-party penetration test is still required before the paid launch. The reviews here were independent of the
   code's authors but AI-assisted ([findings](findings.md#how-the-review-was-done)).
@@ -81,10 +83,12 @@ keep the report from `/var/lib/pb-backup/drills/`.
 ## Residual risks and owner actions before the paid launch
 1. **D1:** protect the signing key. Second reviewer with "prevent self-review", no admin bypass, reviews for
    workflow changes, hardware-key 2FA. Preferably offline or hardware signing.
-2. **Third-party penetration test** and cryptography review. Record the results in the findings register.
-3. **OS code signing** (Windows certificate, Apple Developer ID) when affordable. Until then it is disclosed in the
+2. **S1:** enforce a second factor for staff sign-in in the API. Until then, create every staff account with
+   `--otp`.
+3. **Third-party penetration test** and cryptography review. Record the results in the findings register.
+4. **OS code signing** (Windows certificate, Apple Developer ID) when affordable. Until then it is disclosed in the
    limitations.
-4. **T3** (membership re-check in row-level security) and **C-L4** (per-backup local keys), planned for
+5. **T3** (membership re-check in row-level security) and **C-L4** (per-backup local keys), planned for
    milestone 13.
-5. Name a **second person** for incidents, with access to the offline kit.
-6. Rehearse a single-organization restore (DR runbook, scenario 3) and a SEV-1 tabletop.
+6. Name a **second person** for incidents, with access to the offline kit.
+7. Rehearse a single-organization restore (DR runbook, scenario 3) and a SEV-1 tabletop.

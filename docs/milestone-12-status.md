@@ -30,7 +30,7 @@ Owner decisions (14 October 2026):
 | Required | Implemented |
 |---|---|
 | Threat model covering manager IPC, browser boundary, local secrets, tenant access, object downloads, extensions, updater, automation, billing, support console; session theft, cross-tenant, supply chain | [threat-model.md](security/threat-model.md): every boundary with its defence, the test that proves it and the residual risk, plus three cross-cutting scenarios |
-| Independent review of tenant authorization, cryptography and the desktop boundary; severity, owner, remediation | Three reviewers who had not seen the code, each limited to one area. 0 critical, 0 high, 1 medium (tracked, before paid launch), 12 low (10 fixed and tested, 2 tracked). [findings.md](security/findings.md). A third-party test is still required before the paid launch. |
+| Independent review of tenant authorization, cryptography and the desktop boundary; severity, owner, remediation | Three reviewers who had not seen the code, each limited to one area. 0 critical, 0 high, 2 medium (tracked, before paid launch: signing-key custody D1, staff second factor S1), 12 low (10 fixed and tested, 2 tracked). [findings.md](security/findings.md). A third-party test is still required before the paid launch. |
 | Signed desktop and runtime manifests; OS signing; checksums; SBOM; provenance; keys in restricted infrastructure | **Manifests:** signed channel manifests and per-artifact signatures bound to version and file; the runtime manifest Ed25519-signed (milestone 03). **Supply chain:** `SHA256SUMS`, CycloneDX SBOM and build-provenance attestations per release; an SBOM per commit in CI. **Keys:** the release key only in the protected `release` environment, and build jobs hold no secrets. **OS signing:** not yet (owner decision); disclosed; the pipeline is ready. |
 | dev / canary / stable; interrupted updates, wrong signatures, stale-manifest replay; anti-rollback | **Channels and replay:** three channels; increasing sequence; manifests valid 30 days (the app refuses more than 45); weekly re-signing; never an older version. **Downloads:** resumable and verified for size, then SHA-256, then signature, and again before installing. **Install:** only with profiles closed. **Tests:** `crates/update` (35) and `tests/updates.rs` (9). |
 | Runtime upgrades staged against compatibility fixtures; pre-migration snapshot; recovery to a compatible snapshot | **Before the upgrade:** a sealed copy kept 90 days, made before the first launch on a newer Chromium major. **Recovery:** "Restore the copy made before the upgrade"; a copy written by a newer browser is refused; revoked runtimes are neither installed nor opened. **Staging:** the runtime pipeline opens an old-runtime profile with the new runtime. |
@@ -85,16 +85,20 @@ Owner decisions (14 October 2026):
      secret);
    - create the `release` environment with the two secrets.
 7. **Publish the first release:** `release` → canary → install 0.12.0 by hand once → test → `promote` to stable.
-8. **Protect the key (D1):** before the paid launch, add a second reviewer with "prevent self-review", turn off
+8. **Staff second factor (S1):** for each staff account run `bash /root/keycloak-setup.sh reset-password EMAIL --otp`.
+   This issues a new temporary password and requires an authenticator app at the next sign-in; from then on Keycloak
+   asks for a one-time code at every sign-in.
+9. **Protect the key (D1):** before the paid launch, add a second reviewer with "prevent self-review", turn off
    admin bypass, require reviews for workflow changes, and use hardware-key 2FA.
-9. **On GitHub:** *Settings → Code security → Private vulnerability reporting → Enable* (named in SECURITY.md).
-10. **Optional:** set `MIN_DESKTOP_VERSION=0.12.0` in `/etc/project-browser/api.env` once everyone has 0.12, then
+10. **On GitHub:** *Settings → Code security → Private vulnerability reporting → Enable* (named in SECURITY.md).
+11. **Optional:** set `MIN_DESKTOP_VERSION=0.12.0` in `/etc/project-browser/api.env` once everyone has 0.12, then
     `systemctl restart pb-api`.
 
 ## Known limits
 - **First installs are not OS-signed:** Windows warns, and macOS needs right-click → Open. Updates are verified by
   the app.
-- **D1 is open until the owner actions are done.** T3 and C-L4 are tracked for milestone 13.
+- **D1 and S1 are open until the owner actions are done** (S1 also needs API enforcement before the paid launch).
+  T3 and C-L4 are tracked for milestone 13.
 - **No one-click restore for a single organization.** The DR runbook describes the manual procedure. It needs
   rehearsal before the paid launch.
 - **Recent snapshots may be missing after a total server loss:** those uploaded within 10 minutes before it need

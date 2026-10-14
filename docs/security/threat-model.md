@@ -134,6 +134,9 @@ disclosed, and every update is still signature-checked.
 | Audit tampering | Append-only triggers, hash chain, head out of the application's reach, separator constraint (C-L3), exports that verify independently. | `security.test.ts` |
 | Console token theft | 30-minute staff tokens, memory only, own OIDC client with PKCE, recent sign-in at sign-in, strict CSP, no framing. | `support.test.ts`, console e2e |
 
+Residual: S1 (medium). The API does not yet require a second factor for staff sign-in. Until it does, staff accounts
+are created with `--otp`, so Keycloak asks for a one-time code.
+
 ### 11. Server and recovery
 
 | Threat | Defence | Evidence |
