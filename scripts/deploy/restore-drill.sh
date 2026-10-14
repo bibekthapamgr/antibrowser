@@ -97,7 +97,8 @@ RESTORE_START=$(now)
 install -d -m 711 -o root -g root "$DRILL"
 install -d -m 700 -o postgres -g postgres "$DRILL/data"
 install -d -m 750 -o postgres -g "$APP_USER" "$DRILL/run"
-install -d -m 750 -o pb-backup -g "$APP_USER" "$DRILL/objects"
+# setgid: everything rclone (as pb-backup) creates inside takes the pb group, so the checks (as pb) can read it.
+install -d -m 2750 -o pb-backup -g "$APP_USER" "$DRILL/objects"
 as_pg pgbackrest --stanza=$STANZA --pg1-path="$DRILL/data" --archive-mode=off --log-level-console=warn restore
 cat > "$DRILL/postgresql.conf" <<EOF
 # Restore drill: isolated (no network listener, no log archiving), small, temporary.
@@ -165,6 +166,15 @@ OUT=$STATE_DIR/drills/$(date -u +%Y%m%dT%H%M%SZ).json
 chmod 640 "$OUT"
 cleanup
 trap - EXIT
-[[ $CHECK == pass ]] || die "the restore checks failed (report: $OUT)"
+if [[ $CHECK != pass ]]; then
+  "$NODE" -e '
+    let r = null; try { r = JSON.parse(process.argv[1]); } catch {}
+    if (!r) { console.error("    the checker printed no report (its error is above)"); process.exit(0); }
+    for (const t of r.tenants || []) if (t.object !== "ok" || t.key !== "ok")
+      console.error(`    FAILED ${t.org_id} snapshot ${t.snapshot_id}: object ${t.object}; key ${t.key}`);
+    for (const i of r.isolation || []) if (!i.ok) console.error(`    FAILED isolation: ${i.name}`);
+    if (r.marker_found === false) console.error("    FAILED the recovery marker is missing");' "$REPORT" >&2
+  die "the restore checks failed (report: $OUT)"
+fi
 ok "restore drill passed: recovery point ${RPO} s before the restore began (target 15 min), recovery time ${RTO} s (target 4 h)"
 ok "report: $OUT  |  the isolated cluster and every restored file were deleted"
