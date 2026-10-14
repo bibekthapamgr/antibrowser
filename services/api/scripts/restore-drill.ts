@@ -28,7 +28,13 @@ if (!config.kms) throw new Error('KMS_LOCAL_KEY_FILE is not configured');
 const kms = localKeyProvider(config.kms);
 
 const connect = async (user: string) => {
-  const c = new pg.Client({ host: socket, port, database: db, user, options: '-c TimeZone=UTC' });
+  const c = new pg.Client({
+    host: socket,
+    port,
+    database: db,
+    user,
+    options: '-c search_path=app -c TimeZone=UTC',
+  });
   await c.connect();
   return c;
 };
