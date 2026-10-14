@@ -95,6 +95,8 @@ export interface AppConfig {
     automaticTax: boolean;
     /** The owner's data retention policy after cancellation, if decided (null: kept until an owner deletes it). */
     retentionDays: number | null;
+    /** The provider's customer portal configuration to use (bpc_…); null: the account's default. */
+    portalConfiguration: string | null;
   };
   /** The internal support console (milestone 11): static files served at /console/ and its own OIDC client. */
   console: { dir: string | null; oidcClientId: string | null };
@@ -319,12 +321,17 @@ function loadBilling(
   if (retention !== null && (!Number.isInteger(retention) || retention < 30 || retention > 3650)) {
     problems.push('BILLING_RETENTION_DAYS must be an integer between 30 and 3650');
   }
+  const portal = env.STRIPE_PORTAL_CONFIGURATION || null;
+  if (portal !== null && !/^bpc_[A-Za-z0-9]{8,64}$/.test(portal)) {
+    problems.push('STRIPE_PORTAL_CONFIGURATION must be a bpc_… id');
+  }
   return {
     stripe,
     prices,
     returnUrl,
     automaticTax: env.BILLING_AUTOMATIC_TAX === 'true',
     retentionDays: retention,
+    portalConfiguration: portal,
   };
 }
 

@@ -5,7 +5,21 @@
  * stripe-mock checks request shapes and returns fixture objects; it keeps no state, so behaviour is tested against the
  * fake in billing.test.ts and, with real test keys, in stripe-sandbox.test.ts.
  */
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { latestPlan, type PlanDefinition } from '@pb/contracts/billing';
 import { describe, expect, it } from 'vitest';
+import {
+  ensurePortalConfiguration,
+  lookupKey,
+  minorUnits,
+  productId,
+  StripeSetupError,
+  setupStripe,
+  stripeCaller,
+  writeEnvValues,
+} from '../scripts/stripe-setup.ts';
 import { createStripe, formEncode, StripeError } from '../src/billing/stripe.ts';
 
 const base = process.env.STRIPE_MOCK_URL;
@@ -74,5 +88,92 @@ describe('form encoding', () => {
     ).toBe(
       'a=x%20y&metadata%5Borg_id%5D=org_1&line_items%5B0%5D%5Bprice%5D=p&line_items%5B0%5D%5Bquantity%5D=1',
     );
+  });
+});
+
+describe.runIf(Boolean(base))('Stripe test-mode setup script against stripe-mock', () => {
+  it('creates products, prices and the portal configuration with parameters Stripe accepts', async () => {
+    const call = stripeCaller(key, base ?? '');
+    const plan = latestPlan('team') as PlanDefinition;
+    // stripe-mock answers every lookup with a fixture, so the create calls are exercised directly.
+    const made = await call('POST', '/v1/products', {
+      id: productId(plan),
+      name: 'Project Browser Team',
+      description: plan.description,
+      metadata: { pb_plan: plan.id },
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    const price = await call('POST', '/v1/prices', {
+      product: productId(plan),
+      currency: 'usd',
+      unit_amount: 4900,
+      recurring: { interval: 'month' },
+      lookup_key: lookupKey(plan, 'usd', 'month', 4900),
+      metadata: { pb_plan: 'team@1' },
+    });
+    expect(price.status, JSON.stringify(price.body)).toBe(200);
+    expect((await call('GET', '/v1/prices', { lookup_keys: ['x'], active: true, limit: 1 })).status).toBe(
+      200,
+    );
+    const portal = await ensurePortalConfiguration(
+      (m, p, params, k) =>
+        // Never "found" in stripe-mock's fixture list, so the configuration is created.
+        m === 'GET' ? Promise.resolve({ status: 200, body: { data: [] } }) : call(m, p, params, k),
+      [{ product: 'prod_1Mock', price: 'price_1Mock' }],
+    );
+    expect(portal).toMatch(/^bpc_/);
+    const session = await createStripe({ secretKey: key, apiBase: base ?? '' }).createPortalSession({
+      customer: 'cus_1Mock',
+      returnUrl: 'https://example.com/v1/billing/return',
+      configuration: portal,
+    });
+    expect(session).toMatch(/^https:\/\//);
+  });
+});
+
+describe('Stripe test-mode setup script', () => {
+  it('turns amounts into minor units of the currency', () => {
+    expect(minorUnits('49', 'usd')).toBe(4900);
+    expect(minorUnits('49.5', 'usd')).toBe(4950);
+    expect(minorUnits('1900', 'jpy')).toBe(1900);
+    expect(() => minorUnits('49.999', 'usd')).toThrow(StripeSetupError);
+    expect(() => minorUnits('0', 'usd')).toThrow(StripeSetupError);
+    expect(() => minorUnits('-5', 'usd')).toThrow(StripeSetupError);
+  });
+
+  it('refuses live keys and plans that are not sold', async () => {
+    const live = `sk_${'live'}_abcdefgh`;
+    await expect(
+      setupStripe({
+        key: live,
+        apiBase: 'http://127.0.0.1:1',
+        currency: 'usd',
+        interval: 'month',
+        amounts: {},
+      }),
+    ).rejects.toThrow(/test-mode keys only/);
+    await expect(
+      setupStripe({
+        key: `sk_${'test'}_abcdefgh`,
+        apiBase: 'http://127.0.0.1:1',
+        currency: 'usd',
+        interval: 'month',
+        amounts: { internal: 100 },
+      }),
+    ).rejects.toThrow(/not a purchasable plan/);
+  });
+
+  it('updates the settings file in place and keeps the rest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pb-billing-env-'));
+    const file = join(dir, 'billing.env');
+    writeFileSync(file, '# comment\nSTRIPE_SECRET_KEY=kept\n# STRIPE_PORTAL_CONFIGURATION=\n');
+    writeEnvValues(file, {
+      BILLING_STRIPE_PRICES: `'{"team@1":"price_1"}'`,
+      STRIPE_PORTAL_CONFIGURATION: 'bpc_123456789',
+    });
+    expect(readFileSync(file, 'utf8')).toBe(
+      `# comment\nSTRIPE_SECRET_KEY=kept\nSTRIPE_PORTAL_CONFIGURATION=bpc_123456789\nBILLING_STRIPE_PRICES='{"team@1":"price_1"}'\n`,
+    );
+    rmSync(dir, { recursive: true, force: true });
   });
 });

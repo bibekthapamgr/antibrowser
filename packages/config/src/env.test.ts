@@ -186,5 +186,10 @@ describe('billing configuration (milestone 11)', () => {
     );
     expect(() => loadConfig({ ...dev, BILLING_STRIPE_PRICES: '[1]' })).toThrow(/JSON object/);
     expect(() => loadConfig({ ...dev, BILLING_RETENTION_DAYS: '7' })).toThrow(/RETENTION/);
+    expect(loadConfig(dev).billing.portalConfiguration).toBeNull();
+    expect(
+      loadConfig({ ...dev, STRIPE_PORTAL_CONFIGURATION: 'bpc_1AbCdEfGh' }).billing.portalConfiguration,
+    ).toBe('bpc_1AbCdEfGh');
+    expect(() => loadConfig({ ...dev, STRIPE_PORTAL_CONFIGURATION: 'https://x' })).toThrow(/bpc_/);
   });
 });

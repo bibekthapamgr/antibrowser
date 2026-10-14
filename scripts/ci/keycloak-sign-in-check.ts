@@ -8,12 +8,17 @@
  * Env: PB_API (default http://127.0.0.1:8080), PB_EMAIL, PB_PASSWORD, PB_NEW_PASSWORD (needed when the password is
  * temporary), PB_EXPECT_PASSWORD_CHANGE (1/0, optional), PB_HEADER_FILE (optional: the API access token as an
  * `authorization` header line, mode 0600, for later checks). Passwords and tokens are never printed.
+ *
+ * Milestone 11, PB_CONSOLE=1: the same as the support console page does it instead — /v1/support/auth/config, its own
+ * client, redirect to <API>/console/, max_age, the code exchange from the console's origin (CORS must allow exactly
+ * it), then POST /v1/support/sessions. PB_EXPECT_STAFF=0 expects the refusal of a non-staff account, 1 a staff session.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 
-const REDIRECT = 'projectbrowser://auth/callback';
 const api = process.env.PB_API ?? 'http://127.0.0.1:8080';
+const consoleMode = process.env.PB_CONSOLE === '1';
+const REDIRECT = consoleMode ? `${new URL(api).origin}/console/` : 'projectbrowser://auth/callback';
 const email = need('PB_EMAIL');
 const password = need('PB_PASSWORD');
 const newPassword = process.env.PB_NEW_PASSWORD ?? '';
@@ -78,15 +83,18 @@ function findForm(html: string): Form | null {
 }
 
 // ------------------------------------------------------------------ what the desktop does
-const configRes = await fetch(`${api}/v1/auth/config`);
-if (!configRes.ok) fail(`GET /v1/auth/config answered ${configRes.status}`);
+const configPath = consoleMode ? '/v1/support/auth/config' : '/v1/auth/config';
+const configRes = await fetch(`${api}${configPath}`);
+if (!configRes.ok) fail(`GET ${configPath} answered ${configRes.status}`);
 const config = (await configRes.json()) as {
   issuer: string;
   client_id: string;
-  redirect_uri: string;
+  redirect_uri?: string;
   scopes: string[];
 };
-if (config.redirect_uri !== REDIRECT || !config.scopes.includes('openid')) fail('unexpected /v1/auth/config');
+if ((!consoleMode && config.redirect_uri !== REDIRECT) || !config.scopes.includes('openid')) {
+  fail(`unexpected ${configPath}`);
+}
 ok(`API sign-in configuration: ${config.issuer}, client ${config.client_id}`);
 
 const discovery = (await (await fetch(`${config.issuer}/.well-known/openid-configuration`)).json()) as {
@@ -111,6 +119,7 @@ auth.search = new URLSearchParams({
   nonce,
   code_challenge: createHash('sha256').update(verifier).digest('base64url'),
   code_challenge_method: 'S256',
+  ...(consoleMode ? { max_age: '600' } : {}),
 }).toString();
 
 let res = await browse(auth.toString());
@@ -159,9 +168,14 @@ if (expectChange === '1' && !pages.includes('new password')) fail('expected to r
 if (expectChange === '0' && pages.includes('new password')) fail('was asked for a new password again');
 ok(`provider pages: ${pages.join(' -> ')} -> ${REDIRECT} (state and iss match)`);
 
+const consoleOrigin = new URL(api).origin;
 const token = await fetch(discovery.token_endpoint, {
   method: 'POST',
-  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  headers: {
+    'content-type': 'application/x-www-form-urlencoded',
+    // The console page calls the token endpoint from its own origin; the desktop is not a browser page.
+    ...(consoleMode ? { origin: consoleOrigin } : {}),
+  },
   body: new URLSearchParams({
     grant_type: 'authorization_code',
     code: callback.searchParams.get('code') ?? '',
@@ -174,6 +188,42 @@ if (token.status !== 200) fail(`code exchange answered ${token.status}`);
 const { id_token } = (await token.json()) as { id_token?: string };
 if (!id_token) fail('no ID token');
 ok('code exchanged with the PKCE verifier');
+
+if (consoleMode) {
+  if (token.headers.get('access-control-allow-origin') !== consoleOrigin) {
+    fail(`the provider does not allow the console origin ${consoleOrigin} (CORS) on its token endpoint`);
+  }
+  ok(`token endpoint allows the console page's origin ${consoleOrigin} (CORS)`);
+  const staff = await fetch(`${api}/v1/support/sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id_token, nonce }),
+  });
+  const body = (await staff.json()) as {
+    access_token?: string;
+    staff?: { roles: string[] };
+    safe_details?: { reason?: string };
+  };
+  if (process.env.PB_EXPECT_STAFF === '0') {
+    if (staff.status !== 401 || body.safe_details?.reason !== 'not_staff') {
+      fail(`a non-staff account was not refused (HTTP ${staff.status})`);
+    }
+    ok(`support console: ${email} is refused until a staff role is given on the server`);
+    process.exit(0);
+  }
+  if (staff.status !== 201 || !body.access_token) fail(`POST /v1/support/sessions answered ${staff.status}`);
+  const headers = { authorization: `Bearer ${body.access_token}` };
+  const alerts = await fetch(`${api}/v1/support/alerts`, { headers });
+  if (alerts.status !== 200) fail(`GET /v1/support/alerts answered ${alerts.status}`);
+  const meWithStaff = await fetch(`${api}/v1/me`, { headers });
+  if (meWithStaff.status !== 401)
+    fail(`a staff token reached an organization route (HTTP ${meWithStaff.status})`);
+  await fetch(`${api}/v1/support/sign-out`, { method: 'POST', headers });
+  ok(
+    `support console: staff session (${body.staff?.roles.join(', ')}), alerts 200, organization routes refused`,
+  );
+  process.exit(0);
+}
 
 const enroll = await fetch(`${api}/v1/devices`, {
   method: 'POST',

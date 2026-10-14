@@ -14,6 +14,9 @@
 #      snapshot round trip (upload, verification by the worker, restore).
 #   6. Keeps the pb user's processes (API, worker) away from private networks with an nftables table of its own
 #      (outbound only; proven with a refused test connection), so webhook deliveries cannot reach internal addresses.
+#   7. Builds the internal support console (served by the API at /console/) and, once you have put a Stripe TEST key
+#      into /etc/project-browser/billing.env, installs the Stripe CLI (pinned, SHA-256 verified) as a forwarder of
+#      Stripe's test-mode events to the API, so this tunnel-only server needs no public webhook address.
 #
 # It never opens firewall ports, never changes SSH settings, never touches other firewall rules and never exposes
 # PostgreSQL, the storage or the API publicly. Access them through an SSH tunnel (printed at the end).
@@ -181,6 +184,14 @@ fi
 ok "$(as_pb git -C "$APP_DIR" log -1 --format='%h %s')"
 as_pb bash -c "cd '$APP_DIR' && pnpm install --frozen-lockfile --reporter=silent"
 ok "dependencies installed (pnpm $(as_pb bash -c "cd '$APP_DIR' && pnpm --version"))"
+# Milestone 11: the internal support console, static files the API serves at /console/ (CONSOLE_DIR).
+CONSOLE_DIR=$APP_DIR/apps/web-admin/dist
+if as_pb bash -c "cd '$APP_DIR' && pnpm --filter @pb/web-admin build" > /tmp/pb-console-build.log 2>&1; then
+  ok "support console built ($CONSOLE_DIR; the API serves it at /console/)"
+else
+  tail -20 /tmp/pb-console-build.log
+  die "the support console did not build; full log: /tmp/pb-console-build.log"
+fi
 
 # ----------------------------------------------------------------------------- snapshot storage + root key (07)
 step "Snapshot storage (SeaweedFS) and the backup root key"
@@ -306,6 +317,7 @@ OBJECT_STORE_ACCESS_KEY_ID=$S3_KEY
 OBJECT_STORE_SECRET_ACCESS_KEY=$S3_SECRET
 OBJECT_STORE_FORCE_PATH_STYLE=true
 KMS_LOCAL_KEY_FILE=$KMS_FILE
+CONSOLE_DIR=$CONSOLE_DIR
 EOF
 umask 022
 chown root:"$APP_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
@@ -333,6 +345,129 @@ if [[ $RUN_TESTS == 1 ]]; then
   fi
 fi
 
+# ----------------------------------------------------------------------------- billing (milestone 11)
+step "Billing (Stripe test mode)"
+# Your settings live in billing.env (written once, never overwritten). The webhook signing secret is not yours to copy:
+# the Stripe CLI forwarder provides it (stripe-webhook.env, re-read on every run). Keys never appear on a command line.
+BILLING_ENV=$ENV_DIR/billing.env
+HOOK_ENV=$ENV_DIR/stripe-webhook.env
+CLI_ENV=$ENV_DIR/stripe-cli.env
+STRIPE_USER=pb-stripe
+STRIPE_HOME=/var/lib/pb-stripe
+STRIPE_CLI_VERSION=1.52.2
+case "$NODE_ARCH" in  # SHA-256 from stripe-linux-checksums.txt of the v1.52.2 release (github.com/stripe/stripe-cli)
+  x64)   STRIPE_ASSET=linux_x86_64; STRIPE_SHA256=a0b7951c47479931384f5a1ff535f5b5ca4aaa0628b5d1ffad02abf84abb36ed ;;
+  arm64) STRIPE_ASSET=linux_arm64;  STRIPE_SHA256=83cc7f95fa83f1f36109b161a8cfcf9aa9321b6f2709488187d05891711e4d8c ;;
+esac
+STRIPE_EVENTS=customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused,customer.subscription.resumed,checkout.session.completed,checkout.session.async_payment_succeeded,invoice.paid,invoice.payment_failed,invoice.payment_succeeded,invoice.finalized,invoice.updated,invoice.voided,invoice.marked_uncollectible,charge.refunded,charge.dispute.created
+if [[ ! -f $BILLING_ENV ]]; then
+  (umask 027; cat > "$BILLING_ENV" <<'BILLING'
+# Billing settings (milestone 11). Written once by vps-setup.sh; from then on this file is YOURS and never overwritten.
+# This test server accepts Stripe TEST-mode keys only. After any change, run vps-setup.sh again.
+#
+# 1. Your Stripe test secret key: Stripe Dashboard -> Developers -> API keys, with "Test mode" on (sk_test_...).
+#    Type it here on the server (e.g. with nano). Never paste it into a chat or a ticket.
+STRIPE_SECRET_KEY=
+#
+# 2. Products, prices and the customer portal, with YOUR prices (no defaults; amounts in dollars), as root:
+#      /opt/node/bin/node --env-file=/etc/project-browser/billing.env \
+#        /home/pb/antibrowser/services/api/scripts/stripe-setup.ts \
+#        --price starter=AMOUNT --price team=AMOUNT --price agency=AMOUNT --write /etc/project-browser/billing.env
+#    It fills in these two lines:
+BILLING_STRIPE_PRICES=
+STRIPE_PORTAL_CONFIGURATION=
+#
+# Optional: let Stripe calculate tax (only after your tax registrations are set up in Stripe).
+BILLING_AUTOMATIC_TAX=false
+# Optional: days customer data is kept after cancellation (30-3650); empty = kept until an owner deletes it.
+BILLING_RETENTION_DAYS=
+#
+# The webhook signing secret does not go here: the Stripe CLI forwarder provides it (stripe-webhook.env).
+BILLING
+  )
+  ok "created $BILLING_ENV (yours to fill in; never overwritten)"
+fi
+chown root:"$APP_USER" "$BILLING_ENV"; chmod 640 "$BILLING_ENV"
+stripe_key=$(sed -nE "s/^STRIPE_SECRET_KEY=['\"]?([^'\" ]*)['\"]?[[:space:]]*$/\1/p" "$BILLING_ENV" | tail -1)
+BILLING_ON=0
+if [[ -z $stripe_key ]]; then
+  if [[ -f /etc/systemd/system/pb-stripe-listen.service ]]; then
+    systemctl disable -q --now pb-stripe-listen 2>/dev/null || true
+    rm -f /etc/systemd/system/pb-stripe-listen.service
+  fi
+  rm -f "$HOOK_ENV" "$CLI_ENV"
+  ok "billing not set up yet: put your Stripe TEST key into $BILLING_ENV, then run this script again"
+elif [[ ! $stripe_key =~ ^(sk|rk)_test_[A-Za-z0-9]{8,}$ ]]; then
+  die "$BILLING_ENV: this test server accepts a Stripe TEST secret key only (sk_test_... or rk_test_...)"
+else
+  STRIPE_DIR=/opt/stripe-cli/$STRIPE_CLI_VERSION
+  if [[ ! -x $STRIPE_DIR/stripe ]]; then
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/stripe.tgz" \
+      "https://github.com/stripe/stripe-cli/releases/download/v$STRIPE_CLI_VERSION/stripe_${STRIPE_CLI_VERSION}_${STRIPE_ASSET}.tar.gz"
+    echo "$STRIPE_SHA256  $tmp/stripe.tgz" | sha256sum -c --quiet - || die "the Stripe CLI download does not match its pinned SHA-256"
+    install -d -m 755 "$STRIPE_DIR"
+    tar -xzf "$tmp/stripe.tgz" -C "$STRIPE_DIR" stripe
+    chown root:root "$STRIPE_DIR/stripe"; chmod 755 "$STRIPE_DIR/stripe"
+    rm -rf "$tmp"
+  fi
+  ln -sfn "$STRIPE_DIR" /opt/stripe-cli/current
+  ok "Stripe CLI $STRIPE_CLI_VERSION ($STRIPE_ASSET, SHA-256 verified)"
+  id "$STRIPE_USER" >/dev/null 2>&1 \
+    || useradd --system --home-dir "$STRIPE_HOME" --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$STRIPE_USER"
+  install -d -m 700 -o "$STRIPE_USER" -g "$STRIPE_USER" "$STRIPE_HOME"
+  (umask 027; printf 'STRIPE_API_KEY=%s\nSTRIPE_CLI_TELEMETRY_OPTOUT=1\n' "$stripe_key" > "$CLI_ENV")
+  chown root:"$STRIPE_USER" "$CLI_ENV"; chmod 640 "$CLI_ENV"
+  # The forwarder's signing secret (the same for this account and key; re-read on every run). Read from a file inside
+  # the command, so the key is never an argument other users could see.
+  hook_secret=$(runuser -u "$STRIPE_USER" -- env HOME="$STRIPE_HOME" bash -c \
+    "set -a; . '$CLI_ENV'; exec /opt/stripe-cli/current/stripe listen --print-secret --skip-update" 2>/dev/null || true)
+  [[ $hook_secret =~ ^whsec_[A-Za-z0-9]{16,}$ ]] \
+    || die "Stripe did not accept the key in $BILLING_ENV (could not get a webhook signing secret); check it in the Stripe Dashboard (test mode)"
+  (umask 027; printf '# Written by vps-setup.sh from the Stripe CLI forwarder; re-written on every run.\nSTRIPE_WEBHOOK_SECRETS=%s\n' \
+    "$hook_secret" > "$HOOK_ENV")
+  chown root:"$APP_USER" "$HOOK_ENV"; chmod 640 "$HOOK_ENV"
+  # The CLI prints the signing secret when it connects; it is masked before anything reaches the journal.
+  cat > /etc/systemd/system/pb-stripe-listen.service <<UNIT
+[Unit]
+Description=Project Browser: forwards Stripe test-mode events to the API (Stripe CLI)
+After=network-online.target pb-api.service
+Wants=network-online.target pb-api.service
+PartOf=pb-api.service
+
+[Service]
+Type=simple
+User=$STRIPE_USER
+Group=$STRIPE_USER
+Environment=HOME=$STRIPE_HOME
+EnvironmentFile=$CLI_ENV
+ExecStart=/bin/bash -c 'set -o pipefail; /opt/stripe-cli/current/stripe listen --skip-update --events $STRIPE_EVENTS --forward-to http://127.0.0.1:$API_PORT/v1/webhooks/billing 2>&1 | sed -u -E "s/whsec_[A-Za-z0-9]+/whsec_[redacted]/g"'
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ReadWritePaths=$STRIPE_HOME
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  BILLING_ON=1
+  prices=$(sed -nE "s/^BILLING_STRIPE_PRICES=['\"]?(\{.*\})['\"]?[[:space:]]*$/\1/p" "$BILLING_ENV" | tail -1)
+  ok "Stripe test mode: key accepted, events forwarded to the API by pb-stripe-listen"
+  [[ -n $prices ]] || warn "no prices yet: run stripe-setup.ts with your amounts (see $BILLING_ENV), then this script again"
+fi
+
 # ----------------------------------------------------------------------------- services
 step "Services (systemd)"
 if ! systemctl is-active --quiet pb-api && port_in_use "$API_PORT"; then
@@ -353,6 +488,8 @@ User=$APP_USER
 Group=$APP_USER
 WorkingDirectory=$3
 EnvironmentFile=$ENV_FILE
+EnvironmentFile=-$ENV_DIR/billing.env
+EnvironmentFile=-$ENV_DIR/stripe-webhook.env
 ExecStart=$NODE_ROOT/bin/node $4
 Restart=on-failure
 RestartSec=3
@@ -465,6 +602,13 @@ systemctl daemon-reload
 systemctl enable -q pb-api pb-worker
 systemctl restart pb-api pb-worker
 ok "pb-api and pb-worker enabled and restarted"
+LISTEN_SINCE=$(date '+%Y-%m-%d %H:%M:%S')
+if (( BILLING_ON )); then
+  systemctl daemon-reload
+  systemctl enable -q pb-stripe-listen
+  systemctl restart pb-stripe-listen
+  ok "pb-stripe-listen enabled and restarted"
+fi
 if (( EGRESS_OK )); then
   ok "worker egress: private, link-local and CGNAT networks refused to user $APP_USER (nftables; test connection refused)"
 else
@@ -491,6 +635,24 @@ else
   tail -5 /tmp/pb-snapshot-smoke.log; journalctl -u pb-worker -n 20 --no-pager
   die "the snapshot round trip failed"
 fi
+console_csp=$(curl -fsS -D - -o /dev/null "http://127.0.0.1:$API_PORT/console/" | tr -d '\r' | sed -n 's/^content-security-policy: //Ip')
+[[ $console_csp == *"script-src 'self'"* && $console_csp == *"frame-ancestors 'none'"* ]] \
+  && ok "support console served at /console/ with its Content-Security-Policy" \
+  || die "the support console is not served at /console/ (or without its CSP)"
+if (( BILLING_ON )); then
+  for _ in $(seq 1 30); do
+    journalctl -u pb-stripe-listen --since "$LISTEN_SINCE" --no-pager 2>/dev/null | grep -q 'Ready!' && break; sleep 1
+  done
+  if journalctl -u pb-stripe-listen --since "$LISTEN_SINCE" --no-pager 2>/dev/null | grep -q 'Ready!'; then
+    ok "Stripe events forwarder connected (journalctl -u pb-stripe-listen)"
+  else
+    journalctl -u pb-stripe-listen -n 20 --no-pager
+    die "the Stripe events forwarder did not connect"
+  fi
+  if journalctl -u pb-stripe-listen --no-pager 2>/dev/null | grep -qE 'whsec_[A-Za-z0-9]{8}'; then
+    die "the webhook signing secret reached the journal (it should be masked)"
+  fi
+fi
 pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT|${STORE_PORTS// /|})\$" | grep -vE '^(127\.0\.0\.1|\[::1\]):' || true)
 [[ -z $pub ]] && ok "PostgreSQL, storage and API listen on localhost only" || die "something listens publicly: $pub"
 
@@ -514,6 +676,9 @@ cat <<EOF
     Fixture token (on this server):
       runuser -u pb -- bash -c "cd $APP_DIR && /opt/node/bin/node --env-file=$ENV_FILE services/api/scripts/dev-token.ts acmeOwner"
     Backups:   encrypted snapshots are stored on 127.0.0.1:$S3_PORT (the tunnel above carries it)
+    Console:   http://127.0.0.1:$API_PORT/console/ (staff only; needs keycloak-setup.sh and a staff role:
+               runuser -u pb -- bash -c "cd $APP_DIR/services/api && /opt/node/bin/node --env-file=$ENV_FILE scripts/staff.ts add you@example.com --roles support_lead,billing_admin")
+    Billing:   $BILLING_ENV (yours; Stripe TEST key and prices)  |  forwarder: journalctl -u pb-stripe-listen -f
     Root key:  $KMS_FILE   |  bash $APP_DIR/scripts/deploy/root-key.sh status
 EOF
 if [[ $NEW_ROOT_KEY == 1 ]]; then

@@ -75,6 +75,8 @@ export interface BillingDeps {
   returnUrl: string;
   automaticTax: boolean;
   retentionDays: number | null;
+  /** Customer portal configuration (bpc_…), or null for the account's default. */
+  portalConfiguration: string | null;
   webhookSecrets: readonly string[];
   livemode: boolean;
   /** Display prices read from the provider (not entitlement data; an hour old at most). */
@@ -197,6 +199,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       returnUrl: config.billing.returnUrl,
       automaticTax: config.billing.automaticTax,
       retentionDays: config.billing.retentionDays,
+      portalConfiguration: config.billing.portalConfiguration,
       webhookSecrets: stripeCfg?.webhookSecrets ?? [],
       livemode: stripeCfg?.livemode ?? false,
       priceCache: new Map(),

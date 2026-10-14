@@ -279,6 +279,7 @@ export function billingRoutes(app: App, deps: Deps): void {
         const url = await stripe.createPortalSession({
           customer,
           returnUrl: `${deps.billing.returnUrl}?result=portal`,
+          configuration: deps.billing.portalConfiguration,
         });
         await withTx(deps.pool, access, (c) =>
           audit(c, changeEntry(access, 'billing.portal_opened', 'organization', access.orgId)),

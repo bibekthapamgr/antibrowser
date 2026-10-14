@@ -12,6 +12,9 @@
 #      must be replaced at the first sign-in.
 #   5. Connects the API: /etc/project-browser/oidc.env (issuer, client, a persistent session-signing key) plus a
 #      systemd drop-in for pb-api. vps-setup.sh never touches either, so later updates keep sign-in working.
+#   6. Milestone 11: the support console's own public client `project-browser-console` (Authorization Code + PKCE
+#      S256 from the console page at http://127.0.0.1:<API port>/console/, that origin only for the token endpoint).
+#      Staff roles are not given here: see services/api/scripts/staff.ts.
 #
 # Usage (as root):
 #   bash keycloak-setup.sh --owner-email you@example.com [--otp]   install or update; creates your account
@@ -38,6 +41,9 @@ KC_BASE=http://127.0.0.1:$KC_PORT
 REALM=project-browser
 CLIENT_ID=project-browser-desktop
 REDIRECT=projectbrowser://auth/callback
+CONSOLE_CLIENT_ID=project-browser-console
+CONSOLE_ORIGIN=http://127.0.0.1:$API_PORT
+CONSOLE_REDIRECT=$CONSOLE_ORIGIN/console/
 ISSUER=$KC_BASE/realms/$REALM
 UNIT=/etc/systemd/system/keycloak.service
 ENV_DIR=/etc/project-browser
@@ -467,6 +473,30 @@ else
 fi
 ok "public client, Authorization Code + PKCE (S256) only, redirect $REDIRECT only"
 
+# Milestone 11: the support console signs staff in from its page in the browser, so its token endpoint calls come from
+# the console's origin (CORS for exactly that origin). Enforced on every run like the desktop client.
+C=$CONSOLE_CLIENT_ID U=$CONSOLE_REDIRECT O=$CONSOLE_ORIGIN mkjson '({ clientId: e.C,
+    name: "Project Browser support console", enabled: true,
+    protocol: "openid-connect", publicClient: true, standardFlowEnabled: true, implicitFlowEnabled: false,
+    directAccessGrantsEnabled: false, serviceAccountsEnabled: false, consentRequired: false,
+    frontchannelLogout: false, redirectUris: [e.U], webOrigins: [e.O],
+    attributes: { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "",
+                  "oauth2.device.authorization.grant.enabled": "false", "oidc.ciba.grant.enabled": "false" } })' \
+  > "$WORK/console-client.json"
+kc_call GET "/$REALM/clients" -G --data-urlencode "clientId=$CONSOLE_CLIENT_ID"
+[[ $KC_STATUS == 200 ]] || die "console client lookup failed ($KC_STATUS)"
+console_uuid=$(js 'd.length ? d[0].id : ""' < "$WORK/body")
+if [[ -z $console_uuid ]]; then
+  kc_call POST "/$REALM/clients" --data-binary @"$WORK/console-client.json"
+  [[ $KC_STATUS == 201 ]] || die "could not create the console client ($KC_STATUS): $(<"$WORK/body")"
+  ok "client '$CONSOLE_CLIENT_ID' created"
+else
+  kc_call PUT "/$REALM/clients/$console_uuid" --data-binary @"$WORK/console-client.json"
+  [[ $KC_STATUS == 204 ]] || die "could not update the console client ($KC_STATUS): $(<"$WORK/body")"
+  ok "client '$CONSOLE_CLIENT_ID' checked"
+fi
+ok "support console client: PKCE (S256) only, redirect $CONSOLE_REDIRECT only, browser origin $CONSOLE_ORIGIN only"
+
 if [[ -n $EMAIL ]]; then
   create_user "$EMAIL"
   if [[ $USER_RESULT == created ]]; then
@@ -491,6 +521,7 @@ env_text=$(cat <<EOF
 # vps-setup.sh does not touch this file. The session-signing key is kept across runs, so restarts keep sessions.
 OIDC_ISSUER=$ISSUER
 OIDC_CLIENT_ID=$CLIENT_ID
+OIDC_CONSOLE_CLIENT_ID=$CONSOLE_CLIENT_ID
 SESSION_SIGNING_KEY='$key'
 EOF
 )
@@ -527,6 +558,9 @@ cfg=$(curl -fsS "$api/auth/config") || { journalctl -u pb-api -n 30 --no-pager; 
 [[ $(js 'd.issuer' <<<"$cfg") == "$ISSUER" && $(js 'd.client_id' <<<"$cfg") == "$CLIENT_ID" ]] \
   || die "the API reports another sign-in configuration: $cfg"
 ok "the API offers sign-in through $ISSUER ($OIDC_ENV, root only)"
+ccfg=$(curl -fsS "$api/support/auth/config") || die "the API does not offer the support console sign-in ($api/support/auth/config)"
+[[ $(js 'd.client_id' <<<"$ccfg") == "$CONSOLE_CLIENT_ID" ]] || die "the API reports another console client: $ccfg"
+ok "the support console signs in with '$CONSOLE_CLIENT_ID' ($CONSOLE_REDIRECT)"
 
 # ----------------------------------------------------------------------------- checks
 step "Checks"
@@ -549,6 +583,13 @@ read -r code loc <<<"$(auth_try "$q&redirect_uri=$cb")"
 read -r code _ <<<"$(auth_try "$q&redirect_uri=https%3A%2F%2Fexample.invalid%2Fcallback&$pkce")"
 [[ $code == 400 ]] || die "Keycloak accepts an unregistered redirect address (HTTP $code)"
 ok "the sign-in page opens; requests without PKCE or with another redirect address are refused"
+cq="response_type=code&client_id=$CONSOLE_CLIENT_ID&scope=openid&state=check&nonce=check&max_age=600"
+console_cb=$("$NODE" -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$CONSOLE_REDIRECT")
+read -r code _ <<<"$(auth_try "$cq&redirect_uri=$console_cb&$pkce")"
+[[ $code == 200 ]] || die "the support console sign-in page does not open (HTTP $code)"
+read -r code _ <<<"$(auth_try "$cq&redirect_uri=$cb&$pkce")"
+[[ $code == 400 ]] || die "the console client accepts the desktop's redirect address (HTTP $code)"
+ok "the console sign-in page opens; the console client refuses other redirect addresses"
 pids=$(pgrep -d'|' -u "$KC_USER" || true)
 [[ -n $pids ]] || die "no Keycloak process is running"
 listening=$(ss -ltnpH | { grep -E "pid=($pids)," || true; } | awk '{print $4}' | sort -u | tr '\n' ' ')
@@ -563,7 +604,9 @@ ok "Keycloak uses about $rss MB of memory now"
 step "Done"
 cat <<EOF
     Keycloak:  $KC_HOME   |   systemctl status keycloak   |   logs: journalctl -u keycloak -f
-    Sign-in:   $ISSUER (client $CLIENT_ID)
+    Sign-in:   $ISSUER (client $CLIENT_ID; support console: $CONSOLE_CLIENT_ID)
+    Console:   $CONSOLE_REDIRECT through the tunnel. Staff roles (the person signs in once first, e.g. on the console):
+               runuser -u pb -- bash -c "cd /home/pb/antibrowser/services/api && /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts add you@example.com --roles support_lead,billing_admin"
     Admin:     http://127.0.0.1:$KC_PORT/admin/ (through the tunnel), user '$KC_ADMIN_USER', password: cat $ADMIN_FILE
     Accounts:  bash $SELF add-user someone@example.com
                bash $SELF reset-password someone@example.com

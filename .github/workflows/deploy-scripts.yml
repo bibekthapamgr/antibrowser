@@ -102,6 +102,29 @@ jobs:
             PB_HEADER_FILE="$RUNNER_TEMP/owner.header" \
             scripts/ci/annotate.sh "owner sign-in" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
 
+      - name: Support console and billing defaults (milestone 11)
+        run: |
+          # The console page is served by the API with its CSP naming the identity provider's origin only.
+          csp=$(curl -fsS -D - -o /dev/null http://127.0.0.1:8080/console/ | tr -d '\r' | sed -n 's/^content-security-policy: //Ip')
+          echo "$csp" | grep -q "connect-src 'self' http://127.0.0.1:8081;" \
+            || { echo "::error title=console::unexpected Content-Security-Policy: $csp"; exit 1; }
+          # Signed in through the console client but not staff: refused. Then the server command gives the roles.
+          PB_CONSOLE=1 PB_EXPECT_STAFF=0 PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" \
+            scripts/ci/annotate.sh "console sign-in (not staff)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          scripts/ci/annotate.sh "staff.ts add" sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && \
+            /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts add owner@example.test --roles support_lead,billing_admin'
+          PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" \
+            scripts/ci/annotate.sh "console sign-in (staff)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          # Without a Stripe key nothing billing-related runs; the owner's settings file exists, readable by pb only.
+          grep -q "billing not set up yet" "$RUNNER_TEMP/vps-setup.log" \
+            || { echo "::error title=billing::vps-setup.sh did not report billing as not set up"; exit 1; }
+          [ "$(sudo stat -c '%a %U:%G' /etc/project-browser/billing.env)" = "640 root:pb" ] \
+            || { echo "::error title=billing::billing.env has unexpected permissions"; exit 1; }
+          if systemctl cat pb-stripe-listen >/dev/null 2>&1; then
+            echo "::error title=billing::the Stripe forwarder exists without a key"; exit 1
+          fi
+          echo "::notice title=Support console::served at /console/ with its CSP; Keycloak console client (PKCE, CORS for the console origin only); non-staff refused; staff session after staff.ts add"
+
       - name: Update path - vps-setup.sh and keycloak-setup.sh again
         run: |
           scripts/ci/annotate.sh "vps-setup.sh (update)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh --skip-tests

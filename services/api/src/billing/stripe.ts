@@ -113,7 +113,11 @@ export interface Stripe {
     },
     idempotencyKey: string,
   ): Promise<StripeCheckoutSession>;
-  createPortalSession(p: { customer: string; returnUrl: string }): Promise<string>;
+  createPortalSession(p: {
+    customer: string;
+    returnUrl: string;
+    configuration?: string | null;
+  }): Promise<string>;
   getSubscription(id: string): Promise<StripeSubscription>;
   listSubscriptions(customer: string): Promise<StripeSubscription[]>;
   getCheckoutSession(id: string): Promise<StripeCheckoutSession>;
@@ -377,6 +381,7 @@ export function createStripe(cfg: StripeConfig, fetchImpl: typeof fetch = fetch)
       const r = await call('POST', '/v1/billing_portal/sessions', {
         customer: p.customer,
         return_url: p.returnUrl,
+        configuration: p.configuration ?? null,
       });
       return need(str(obj(r).url), 'portal.url');
     },
