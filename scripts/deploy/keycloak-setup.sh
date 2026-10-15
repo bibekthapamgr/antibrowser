@@ -64,9 +64,6 @@ DB_PW_FILE=$ENV_DIR/keycloak-db               # PostgreSQL password of the keycl
 OIDC_ENV=$ENV_DIR/oidc.env
 # R2: the customer portal, e-mail and the staff sign-in flow.
 WEB_CLIENT_ID=project-browser-web
-WEB_ORIGIN=$CONSOLE_ORIGIN
-[[ $PUBLIC == 1 ]] && WEB_ORIGIN=https://$SITE_HOST
-WEB_REDIRECT=$WEB_ORIGIN/v1/web/auth/callback
 SMTP_ENV=$ENV_DIR/smtp.env      # yours: the mail server (see the summary for the format)
 EMAIL_ENV=$ENV_DIR/email.env    # generated: the worker's mail settings and the API's e-mail sealing key
 # R6: staging/production use the public addresses (public.env) and their own realm.
@@ -90,6 +87,9 @@ if [[ $PB_ENV == staging || $PB_ENV == prod ]]; then
   [[ -s $ENV_DIR/public-ca.pem ]] && PUB_CURL+=(--cacert "$ENV_DIR/public-ca.pem")
 fi
 ISSUER=$KC_PUBLIC_URL/realms/$REALM
+WEB_ORIGIN=http://127.0.0.1:$API_PORT
+(( PUBLIC )) && WEB_ORIGIN=https://$SITE_HOST
+WEB_REDIRECT=$WEB_ORIGIN/v1/web/auth/callback
 APP_DIR=/home/pb/antibrowser
 THEME_SRC=$APP_DIR/scripts/deploy/keycloak-theme/pb
 STAFF_FLOW=pb-staff-browser

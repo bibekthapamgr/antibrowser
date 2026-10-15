@@ -172,9 +172,16 @@ $FILES_HOST {
 	}
 }
 EOF
-"$CADDY_DIR/caddy" validate --config "$PROXY_CONF.new" --adapter caddyfile >/dev/null 2>"$PROXY_DATA.validate.log" \
-  || { cat "$PROXY_DATA.validate.log" >&2; rm -f "$PROXY_CONF.new"; die "the generated proxy configuration is not valid"; }
-rm -f "$PROXY_DATA.validate.log"
+# Validated as the proxy's own user: validation provisions the certificate store, whose files must stay its own.
+chown root:"$PROXY_USER" "$PROXY_CONF.new"; chmod 640 "$PROXY_CONF.new"
+chown -R "$PROXY_USER:$PROXY_USER" "$PROXY_DATA"
+if ! runuser -u "$PROXY_USER" -- env HOME="$PROXY_DATA" XDG_DATA_HOME="$PROXY_DATA" XDG_CONFIG_HOME="$PROXY_DATA" \
+     "$CADDY_DIR/caddy" validate --config "$PROXY_CONF.new" --adapter caddyfile > /run/pb-proxy-validate.log 2>&1; then
+  cat /run/pb-proxy-validate.log >&2; rm -f "$PROXY_CONF.new" /run/pb-proxy-validate.log
+  die "the generated proxy configuration is not valid"
+fi
+rm -f /run/pb-proxy-validate.log
+chown -R "$PROXY_USER:$PROXY_USER" "$PROXY_DATA"
 CHANGED=0
 if [[ ! -f $PROXY_CONF ]] || ! cmp -s "$PROXY_CONF.new" "$PROXY_CONF"; then
   mv -f "$PROXY_CONF.new" "$PROXY_CONF"; CHANGED=1
