@@ -1,0 +1,212 @@
+/* Project Browser look for Keycloak's sign-in pages (keycloak.v2 / PatternFly 5). Light and dark follow the OS. */
+:root {
+  --pb-navy: #111827;
+  --pb-violet: #7c3aed;
+  --pb-violet-strong: #6d28d9;
+  --pb-bg: #f1f5f9;
+  --pb-surface: #ffffff;
+  --pb-text: #111827;
+  --pb-muted: #475569;
+  --pb-border: #e2e8f0;
+  --pb-accent: var(--pb-violet);
+  --pb-accent-hover: var(--pb-violet-strong);
+  --pb-accent-text: #ffffff;
+  --pb-input-border: #cbd5e1;
+  --pb-ring: rgba(124, 58, 237, 0.18);
+
+  --pf-v5-global--FontFamily--text: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --pf-v5-global--FontFamily--heading: var(--pf-v5-global--FontFamily--text);
+  --pf-v5-global--primary-color--100: var(--pb-accent);
+  --pf-v5-global--primary-color--200: var(--pb-accent-hover);
+  --pf-v5-global--link--Color: var(--pb-accent);
+  --pf-v5-global--link--Color--hover: var(--pb-accent-hover);
+  --pf-v5-global--active-color--100: var(--pb-accent);
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--pb-accent);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--pb-accent-hover);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--pb-accent-hover);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--pb-accent-hover);
+  --pf-v5-c-button--m-primary--Color: var(--pb-accent-text);
+  --pf-v5-c-button--BorderRadius: 8px;
+  --pf-v5-c-form-control--BorderRadius: 8px;
+  --keycloak-card-top-color: transparent;
+}
+:root.pf-v5-theme-dark {
+  --pb-bg: #0b1120;
+  --pb-surface: #111827;
+  --pb-text: #f1f5f9;
+  --pb-muted: #94a3b8;
+  --pb-border: #273244;
+  --pb-accent: #a78bfa;
+  --pb-accent-hover: #c4b5fd;
+  --pb-accent-text: #111827;
+  --pb-input-border: #334155;
+  --pb-ring: rgba(167, 139, 250, 0.25);
+}
+
+.login-pf body,
+#keycloak-bg {
+  background: var(--pb-bg) !important;
+  color: var(--pb-text);
+  font-family: var(--pf-v5-global--FontFamily--text);
+}
+
+.pf-v5-c-login {
+  min-height: 100vh;
+  align-items: flex-start;
+  padding-top: clamp(16px, 8vh, 72px);
+}
+.pf-v5-c-login__container {
+  grid-template-columns: minmax(0, 26rem);
+  row-gap: 0;
+  padding-inline: 16px;
+}
+
+/* Brand above the card: a violet mark and the product name. */
+.pf-v5-c-login__header {
+  padding-block: 0 20px;
+  margin: 0;
+  --pf-v5-c-login__header--MarginBottom: 0;
+  --pf-v5-c-login__header--sm--PaddingLeft: 0;
+  text-align: center;
+}
+#kc-header-wrapper {
+  margin: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--pb-text) !important;
+  text-transform: none;
+}
+#kc-header-wrapper * {
+  color: inherit !important;
+}
+#kc-header-wrapper::before {
+  content: "";
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--pb-violet) 0%, var(--pb-violet-strong) 100%);
+  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.18);
+  flex: none;
+}
+
+/* The card. */
+.pf-v5-c-login__main {
+  background: var(--pb-surface);
+  border: 1px solid var(--pb-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+.pf-v5-c-login__main-header {
+  border-top: 0;
+  padding-top: 28px;
+  display: block;
+}
+.pf-v5-c-login__main-header .pf-v5-c-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--pb-text);
+}
+.pf-v5-c-login__main-body {
+  padding-bottom: 28px;
+}
+
+.pf-v5-c-form__label-text,
+.pf-v5-c-form__label {
+  font-weight: 600;
+  color: var(--pb-text);
+}
+.pf-v5-c-form-control {
+  --pf-v5-c-form-control--BorderRadius: 8px;
+  border-radius: 8px;
+  min-height: 40px;
+  background: var(--pb-surface);
+}
+.pf-v5-c-form-control::before {
+  border: 1px solid var(--pb-input-border) !important;
+  border-radius: 8px;
+}
+.pf-v5-c-form-control::after {
+  border: 0 !important;
+  border-radius: 8px;
+}
+.pf-v5-c-form-control:focus-within::before {
+  border-color: var(--pb-accent) !important;
+  box-shadow: 0 0 0 3px var(--pb-ring);
+}
+.pf-v5-c-form-control.pf-m-error::before {
+  border-color: #dc2626 !important;
+}
+/* Password field: the show/hide button sits inside the field's frame. */
+.pf-v5-c-input-group {
+  gap: 0;
+}
+.pf-v5-c-input-group > .pf-v5-c-input-group__item:first-child .pf-v5-c-form-control::before {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  border-radius: 0 8px 8px 0;
+  min-height: 40px;
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+  border: 1px solid var(--pb-input-border);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+}
+/* Every field is required; the "* Required fields" line adds nothing. */
+.pf-v5-c-login__main-body .subtitle {
+  display: none;
+}
+
+.pf-v5-c-button.pf-m-primary {
+  background-color: var(--pb-accent) !important;
+  color: var(--pb-accent-text) !important;
+  font-weight: 600;
+  padding-block: 10px;
+  border-radius: 8px;
+}
+.pf-v5-c-button.pf-m-block {
+  width: 100%;
+}
+
+/* "New here? Create account" and other footer links. */
+.pf-v5-c-login__main-footer-band {
+  border-top: 1px solid var(--pb-border);
+  background: transparent;
+  color: var(--pb-muted);
+}
+.pf-v5-c-login__main-footer-band a {
+  font-weight: 600;
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+.pf-v5-c-button.pf-m-primary:focus {
+  background-color: var(--pb-accent-hover) !important;
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  background: var(--pb-surface);
+}
+.pf-v5-c-form-control > input {
+  outline: none;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--pb-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .pf-v5-c-login {
+    padding-top: 16px;
+  }
+  .pf-v5-c-login__main {
+    border-radius: 12px;
+  }
+}

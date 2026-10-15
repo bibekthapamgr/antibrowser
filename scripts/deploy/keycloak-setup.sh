@@ -442,7 +442,8 @@ if [[ ! -f $KC_HOME/lib/.pb-build || "$(<"$KC_HOME/lib/.pb-build")" != "$build_i
   CHANGED=1
   ok "optimized build done"
 fi
-# R2: e-mail texts (verification, password reset) with the product's wording, from the repository.
+# R2: e-mail texts (verification, password reset) with the product's wording, from the repository; R7: the sign-in,
+# registration and password pages in the product's look (login theme, parent keycloak.v2).
 if [[ -d $THEME_SRC ]]; then
   if ! diff -rq "$THEME_SRC" "$KC_HOME/themes/pb" >/dev/null 2>&1; then
     rm -rf "$KC_HOME/themes/pb"
@@ -450,7 +451,7 @@ if [[ -d $THEME_SRC ]]; then
     chown -R root:"$KC_USER" "$KC_HOME/themes/pb"; chmod -R u=rwX,g=rX,o= "$KC_HOME/themes/pb"
     CHANGED=1
   fi
-  ok "e-mail theme 'pb' installed"
+  ok "sign-in and e-mail theme 'pb' installed"
 else
   warn "e-mail theme not found in $THEME_SRC (run vps-setup.sh first); Keycloak's own texts are used"
 fi
@@ -566,6 +567,8 @@ SMTP_OK=$SMTP_OK H=$SMTP_HOST P=$SMTP_PORT S=$SMTP_SECURITY U=$SMTP_USER W=$SMTP
 T=$THEME mkjson '({ registrationAllowed: e.SMTP_OK === "1", registrationEmailAsUsername: true,
     loginWithEmailAllowed: true, duplicateEmailsAllowed: false, verifyEmail: true,
     resetPasswordAllowed: e.SMTP_OK === "1", rememberMe: false, emailTheme: e.T || undefined,
+    loginTheme: e.T || undefined,
+    displayNameHtml: (e.N || "Project Browser").replace(/[&<>"\x27]/g, (c) => "&#" + c.charCodeAt(0) + ";"),
     eventsEnabled: true, eventsExpiration: 604800,
     enabledEventTypes: ["REGISTER", "REGISTER_ERROR", "VERIFY_EMAIL", "VERIFY_EMAIL_ERROR", "SEND_VERIFY_EMAIL",
       "SEND_VERIFY_EMAIL_ERROR", "SEND_RESET_PASSWORD", "SEND_RESET_PASSWORD_ERROR", "RESET_PASSWORD",

@@ -108,3 +108,11 @@ set `Auto-Submitted: auto-generated`. Brand: `EMAIL_BRAND` (= `SMTP_FROM_NAME`).
 | e-mail queue: sealed, sent, refused, retried, skipped, no double send | `services/worker/test/email.test.ts` |
 | real provider end to end (register → verify by e-mail → portal → workspace; invite e-mailed → teammate joins; staff one-time code) | `.github/workflows/deploy-scripts.yml` "Self-service signup…" with `scripts/ci/signup-check.ts`, `scripts/ci/totp.ts`, `services/worker/test/smtp-sink.ts` |
 | desktop: Create account, terms once, Profiles after sign-in | `apps/desktop/e2e/manager.e2e.test.ts` "R2: Create account…"; `src-tauri/tests/account.rs` (registration URL, default server) |
+
+## 5. Sign-in pages
+
+Sign-in, registration, password reset and authenticator set-up are Keycloak pages on `ID_HOST`, shown in the
+product's look by the login theme `scripts/deploy/keycloak-theme/pb/login` (parent `keycloak.v2`: colours, type,
+card and wording only; Keycloak's own page logic and security stay unchanged). The brand above the card is
+`SMTP_FROM_NAME`. keycloak-setup.sh installs the theme and sets the realm's `loginTheme` on every run. The desktop
+app opens these pages in the person's own browser on purpose: the app never sees the password (RFC 8252).
