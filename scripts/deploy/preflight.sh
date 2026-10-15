@@ -96,6 +96,7 @@ install -d -m 750 -o root -g root "$OUT_DIR"
 touch "$WORK/report.json"; chown "$APP_USER" "$WORK/report.json"
 echo "    Preflight of the $PB_ENV server ($(date -u +%FT%TZ)); no secret values are shown"
 set +e
+trap - ERR   # a FAIL is an expected answer here, not a script error
 runuser -u "$APP_USER" -- env HOME=/home/$APP_USER PATH="/opt/node/bin:/usr/bin:/bin" "${extra[@]}" \
   bash -c "cd '$APP_DIR/services/api' && node --env-file='$WORK/env' scripts/preflight.ts --facts '$WORK/facts.json' --repo '$APP_DIR' --json '$WORK/report.json'"
 rc=$?
