@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "pb-desktop"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "aes",
  "aes-gcm",

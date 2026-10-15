@@ -44,6 +44,7 @@ use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use sha2::{Digest, Sha256};
 
 const CARRY_FORMAT: &str = "project-browser-cookie-carry";
 const CARRY_VERSION: u32 = 1;
@@ -140,12 +141,18 @@ pub fn collect_portable(user_data: &Path) -> Option<Zeroizing<Vec<u8>>> {
         if let Ok(conn) = rusqlite::Connection::open_with_flags(
             db,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        ) && let Ok(mut stmt) = conn.prepare("SELECT rowid, encrypted_value FROM cookies")
-            && let Ok(rows) =
-                stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))
+        ) && let Ok(mut stmt) =
+            conn.prepare("SELECT rowid, host_key, encrypted_value FROM cookies")
+            && let Ok(rows) = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })
         {
-            for (rowid, enc) in rows.flatten() {
-                if let Some(pt) = key.decrypt(&enc) {
+            for (rowid, host_key, enc) in rows.flatten() {
+                if let Some(pt) = key.decrypt(&enc, &host_key) {
                     cookies.push(PortableCookie {
                         rowid,
                         v: b64().encode(&pt),
@@ -265,13 +272,19 @@ enum CookieKey {
 
 impl CookieKey {
     /// Decrypts a Chromium `encrypted_value` to its opaque plaintext, or `None` when the value uses a scheme this
-    /// build cannot carry (empty/legacy values, Windows app-bound `v20`, …).
-    fn decrypt(&self, blob: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    /// build cannot carry (empty/legacy values, Windows app-bound `v20`, …) or does not verify against `host_key`.
+    ///
+    /// Chromium binds each cookie to its host by prefixing the plaintext with `SHA-256(host_key)` before
+    /// encryption (verified again on read). For the unauthenticated CBC scheme (macOS/Linux) we use that same
+    /// prefix as our check: a correct key reproduces it, a wrong key yields noise that will not, so a wrong key
+    /// makes us skip the cookie (carry nothing) rather than carry garbage — the honest, fail-safe behaviour. The
+    /// GCM scheme (Windows) is already authenticated by its tag, so a wrong key fails there before this check.
+    fn decrypt(&self, blob: &[u8], host_key: &str) -> Option<Zeroizing<Vec<u8>>> {
         if blob.len() < 3 {
             return None;
         }
         let (prefix, body) = blob.split_at(3);
-        match self {
+        let pt = match self {
             CookieKey::Cbc { key, .. } => {
                 if prefix != b"v10" && prefix != b"v11" {
                     return None;
@@ -279,7 +292,10 @@ impl CookieKey {
                 let pt = Dec::new((&**key).into(), (&CBC_IV).into())
                     .decrypt_padded_vec::<Pkcs7>(body)
                     .ok()?;
-                Some(Zeroizing::new(pt))
+                if !host_hash_matches(&pt, host_key) {
+                    return None;
+                }
+                pt
             }
             CookieKey::Gcm { key } => {
                 if prefix != b"v10" {
@@ -290,10 +306,10 @@ impl CookieKey {
                 }
                 let (nonce, ct) = body.split_at(12);
                 let nonce = Nonce::try_from(nonce).ok()?;
-                let pt = Aes256Gcm::new((&**key).into()).decrypt(&nonce, ct).ok()?;
-                Some(Zeroizing::new(pt))
+                Aes256Gcm::new((&**key).into()).decrypt(&nonce, ct).ok()?
             }
-        }
+        };
+        Some(Zeroizing::new(pt))
     }
 
     /// Re-encrypts an opaque plaintext into a Chromium `encrypted_value` this computer's browser will accept.
@@ -330,6 +346,13 @@ fn cbc_key_from_password(password: &[u8], iterations: u32) -> Zeroizing<[u8; 16]
     key
 }
 
+/// Whether a decrypted cookie plaintext carries Chromium's host-binding prefix for `host_key`
+/// (`SHA-256(host_key)` as the first 32 bytes). Used to confirm a CBC decryption really worked.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn host_hash_matches(plaintext: &[u8], host_key: &str) -> bool {
+    plaintext.len() >= 32 && Sha256::digest(host_key.as_bytes())[..] == plaintext[..32]
+}
+
 // ------------------------------------------------------------------------------------------------------- Linux
 
 #[cfg(target_os = "linux")]
@@ -356,19 +379,20 @@ fn destination_key(_user_data: &Path) -> Option<CookieKey> {
 // ------------------------------------------------------------------------------------------------------- macOS
 
 /// The password Chromium's OSCrypt derives the cookie key from when launched with `--use-mock-keychain`, which the
-/// manager always passes on macOS (ADR-0028, `pb_runtime::launch`). Verified against Chromium source for the pinned
-/// runtime (Chrome for Testing 155): `crypto/mock_apple_keychain.cc` defines `kPassword[] = "my_password"` and its
-/// `FindGenericPassword` returns it with `*passwordLength = arraysize(kPassword)` = 12 (**including the trailing
-/// NUL**); `components/os_crypt/.../keychain_password_mac.mm` `GetPassword()` builds the password as
-/// `std::string(passwordData, passwordLength)`, i.e. exactly those 12 bytes. So the PBKDF2 input is
-/// `b"my_password\0"`, not `b"my_password"`.
+/// manager always passes on macOS (ADR-0028, `pb_runtime::launch`). Determined **empirically** on a real macOS
+/// runner against the pinned runtime (Chrome for Testing 155.0.8059.39): a cookie written by the browser decrypts
+/// only with `"mock_password"` (OSCrypt calls the mock keychain's `GetEncryptionPassword()`, not the
+/// `FindGenericPassword` `kPassword` an earlier source read suggested). A trailing NUL makes no difference — HMAC
+/// zero-pads a short key, so `"mock_password"` and `"mock_password\0"` derive the same key — but we store the exact
+/// string. PBKDF2 then uses the macOS parameters (1003 iterations), AES-128-CBC, `v10`. The plaintext Chromium
+/// stores is `SHA-256(host_key)` followed by the cookie value (see [`host_hash_matches`]).
 ///
 /// Because this key is fixed and public, the cookie store at rest on this device is no more secret than the file
 /// itself: its protection is the user account / FileVault and the app's data-folder permissions, the same footing
 /// as Linux's basic password store. Cross-device carry still only ever happens inside the end-to-end-encrypted
-/// workspace snapshot. The real-browser portability test on the macOS runner proves these bytes match Chromium's.
+/// workspace snapshot. The real-browser portability test on the macOS runner keeps proving these bytes match.
 #[cfg(target_os = "macos")]
-const MOCK_KEYCHAIN_PASSWORD: &[u8] = b"my_password\0";
+const MOCK_KEYCHAIN_PASSWORD: &[u8] = b"mock_password";
 
 #[cfg(target_os = "macos")]
 fn mac_mock_key() -> CookieKey {
@@ -470,11 +494,20 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    const HOST: &str = "example.test";
+
     fn cbc(prefix: &'static [u8]) -> CookieKey {
         CookieKey::Cbc {
             key: cbc_key_from_password(b"peanuts", 1),
             write_prefix: prefix,
         }
+    }
+
+    /// Chromium's cookie plaintext: `SHA-256(host_key)` followed by the value.
+    fn host_bound(host: &str, value: &[u8]) -> Vec<u8> {
+        let mut v = Sha256::digest(host.as_bytes()).to_vec();
+        v.extend_from_slice(value);
+        v
     }
 
     #[test]
@@ -486,10 +519,15 @@ mod tests {
             &[0u8, 1, 2, 3, 255, 254][..],
             &[7u8; 64][..],
         ] {
-            let blob = key.encrypt(value).expect("encrypt");
+            let plaintext = host_bound(HOST, value);
+            let blob = key.encrypt(&plaintext).expect("encrypt");
             assert_eq!(&blob[..3], b"v10");
-            let back = key.decrypt(&blob).expect("decrypt");
-            assert_eq!(&back[..], value, "re-encryption must be byte-exact");
+            let back = key.decrypt(&blob, HOST).expect("decrypt");
+            assert_eq!(
+                &back[..],
+                &plaintext[..],
+                "re-encryption must be byte-exact"
+            );
         }
     }
 
@@ -498,9 +536,18 @@ mod tests {
         // The destination accepts either tag the browser might have written.
         let writer_v11 = cbc(b"v11");
         let reader = cbc(b"v10");
-        let blob = writer_v11.encrypt(b"domain-bound-value").unwrap();
+        let plaintext = host_bound(HOST, b"domain-bound-value");
+        let blob = writer_v11.encrypt(&plaintext).unwrap();
         assert_eq!(&blob[..3], b"v11");
-        assert_eq!(&reader.decrypt(&blob).unwrap()[..], b"domain-bound-value");
+        assert_eq!(&reader.decrypt(&blob, HOST).unwrap()[..], &plaintext[..]);
+    }
+
+    #[test]
+    fn cbc_wrong_host_is_rejected() {
+        // A plaintext whose host-hash prefix does not match (a wrong key would look like this) is skipped.
+        let key = cbc(b"v10");
+        let blob = key.encrypt(&host_bound(HOST, b"v")).unwrap();
+        assert!(key.decrypt(&blob, "other.test").is_none());
     }
 
     #[test]
@@ -508,28 +555,28 @@ mod tests {
         let key = CookieKey::Gcm {
             key: Zeroizing::new([9u8; 32]),
         };
-        let value = b"\x00\x01windows cookie value";
-        let blob = key.encrypt(value).expect("encrypt");
+        let value = host_bound(HOST, b"windows cookie value");
+        let blob = key.encrypt(&value).expect("encrypt");
         assert_eq!(&blob[..3], b"v10");
         assert!(blob.len() >= 3 + 12 + 16);
         // A fresh nonce each time.
-        let blob2 = key.encrypt(value).unwrap();
+        let blob2 = key.encrypt(&value).unwrap();
         assert_ne!(blob, blob2);
-        assert_eq!(&key.decrypt(&blob).unwrap()[..], value);
-        assert_eq!(&key.decrypt(&blob2).unwrap()[..], value);
+        assert_eq!(&key.decrypt(&blob, HOST).unwrap()[..], &value[..]);
+        assert_eq!(&key.decrypt(&blob2, HOST).unwrap()[..], &value[..]);
     }
 
     #[test]
     fn unsupported_prefixes_are_skipped_not_corrupted() {
         let cbc = cbc(b"v10");
-        assert!(cbc.decrypt(b"").is_none());
-        assert!(cbc.decrypt(b"v2").is_none());
+        assert!(cbc.decrypt(b"", HOST).is_none());
+        assert!(cbc.decrypt(b"v2", HOST).is_none());
         let gcm = CookieKey::Gcm {
             key: Zeroizing::new([0u8; 32]),
         };
         // Windows app-bound values (v20) and short blobs are left for a fresh sign-in.
-        assert!(gcm.decrypt(b"v20abc").is_none());
-        assert!(gcm.decrypt(b"v10short").is_none());
+        assert!(gcm.decrypt(b"v20abc", HOST).is_none());
+        assert!(gcm.decrypt(b"v10short", HOST).is_none());
     }
 
     #[test]
@@ -568,9 +615,11 @@ mod tests {
         std::fs::create_dir_all(&profile).unwrap();
         std::fs::write(ud.join("Default").join("Preferences"), b"{}").unwrap();
         let db = profile.join("Cookies");
+        let host = "example.test";
         let src = linux_basic_key();
-        let secret = b"auth=super-secret-session-token";
-        let enc = src.encrypt(secret).unwrap();
+        // Chromium stores SHA-256(host_key) ++ value; the carry decrypts, verifies that prefix, and re-encrypts it.
+        let plaintext = host_bound(host, b"auth=super-secret-session-token");
+        let enc = src.encrypt(&plaintext).unwrap();
         {
             let conn = rusqlite::Connection::open(&db).unwrap();
             conn.execute_batch(
@@ -578,8 +627,8 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO cookies(host_key,name,encrypted_value,path) VALUES ('example.test','auth',?1,'/')",
-                rusqlite::params![enc],
+                "INSERT INTO cookies(host_key,name,encrypted_value,path) VALUES (?1,'auth',?2,'/')",
+                rusqlite::params![host, enc],
             )
             .unwrap();
         }
@@ -596,30 +645,33 @@ mod tests {
         let blob: Vec<u8> = conn
             .query_row("SELECT encrypted_value FROM cookies", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(&linux_basic_key().decrypt(&blob).unwrap()[..], secret);
+        assert_eq!(
+            &linux_basic_key().decrypt(&blob, host).unwrap()[..],
+            &plaintext[..]
+        );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_key_is_the_mock_keychain_password_and_round_trips() {
-        // The password is Chromium's mock-keychain `kPassword` INCLUDING the trailing NUL byte (its reported
-        // length is arraysize = 12). The real-browser macOS portability test is what proves these bytes actually
-        // match the browser; this just pins the constant and the source==destination derivation.
-        assert_eq!(MOCK_KEYCHAIN_PASSWORD, b"my_password\0");
-        assert_eq!(MOCK_KEYCHAIN_PASSWORD.len(), 12);
-        let secret = b"auth=cross-mac-session";
+        // Empirically determined on a real macOS runner: Chrome for Testing under --use-mock-keychain uses
+        // "mock_password" (its GetEncryptionPassword), not the FindGenericPassword kPassword. The real-browser
+        // macOS portability test is what keeps proving these bytes; this pins the constant and the layout.
+        assert_eq!(MOCK_KEYCHAIN_PASSWORD, b"mock_password");
+        let host = "accounts.example";
+        let plaintext = host_bound(host, b"auth=cross-mac-session");
         let blob = source_key(Path::new("/nonexistent"))
             .unwrap()
-            .encrypt(secret)
+            .encrypt(&plaintext)
             .unwrap();
         assert_eq!(&blob[..3], b"v10");
         let back = destination_key(Path::new("/nonexistent"))
             .unwrap()
-            .decrypt(&blob)
+            .decrypt(&blob, host)
             .unwrap();
         assert_eq!(
             &back[..],
-            secret,
+            &plaintext[..],
             "source and destination derive the same key"
         );
     }

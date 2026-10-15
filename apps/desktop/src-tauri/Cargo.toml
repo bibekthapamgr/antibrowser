@@ -1,6 +1,6 @@
 [package]
 name = "pb-desktop"
-version = "0.16.1"
+version = "0.16.2"
 description = "Desktop manager shell (Tauri 2). Renders only trusted, bundled manager UI; browsing happens in separate Chromium processes."
 edition.workspace = true
 rust-version.workspace = true

@@ -32,11 +32,14 @@ within one authorized, encrypted workspace at the user's request — not a way a
    public password instead of a login-Keychain item, so **neither the browser nor the manager ever triggers a
    Keychain authorization prompt** (an unanswerable prompt on CI, and a prompt the owner dislikes on a real Mac) and
    the cookie key is deterministic across enrolled Macs. The macOS cookie key is derived with the macOS PBKDF2
-   parameters from Chromium's verified mock-keychain password (`crypto/mock_apple_keychain.cc` `kPassword`,
-   `"my_password"` returned with its length including the trailing NUL, i.e. the 12 bytes `my_password\0`; confirmed
-   against the pinned Chrome for Testing 155 source and proven by the macOS real-browser test). Consequence: a macOS
-   profile whose cookies were previously encrypted under the real login Keychain loses those sign-ins **once** when
-   it first launches under the mock keychain (the user signs in again). This is accepted for the current
+   parameters (salt `saltysalt`, 1003 iterations, AES-128-CBC, `v10`) from the mock keychain's encryption password,
+   **determined empirically on a real macOS runner** to be `"mock_password"` (OSCrypt calls the mock's
+   `GetEncryptionPassword()`, not the `FindGenericPassword` `kPassword` — an earlier source reading of
+   `"my_password"` was measured wrong when Mac↔Windows carry failed; a trailing NUL is immaterial because HMAC
+   zero-pads a short key). The plaintext Chromium stores is `SHA-256(host_key)` followed by the cookie value, which
+   the carry uses to confirm each decryption (see Key handling). Consequence: a macOS profile whose cookies were previously
+   encrypted under the real login Keychain loses those sign-ins **once** when it first launches under the mock
+   keychain (the user signs in again). This is accepted for the current
    staging-only stage; no migration is provided.
 4. **Nothing in the clear, ever.** The decrypted blobs exist only (a) transiently in memory while being re-keyed
    (zeroized after use) and (b) inside the AES-256-GCM sealed snapshot. They are never written to disk unencrypted.
@@ -74,6 +77,11 @@ within one authorized, encrypted workspace at the user's request — not a way a
     is read, created, or prompted for — the app's keyring is not touched for cookie keys at all.
   - **Linux:** the documented basic password-store key (`"peanuts"`), development/CI only.
   No OS-protected key is extracted outside a supported path.
+- **Every decryption is verified before it is carried.** Chromium prefixes each cookie's plaintext with
+  `SHA-256(host_key)`. On the unauthenticated CBC scheme (macOS/Linux) the carry accepts a decryption only when that
+  prefix matches the row's `host_key`; a wrong key produces noise that will not match, so it is skipped (the cookie
+  falls back to a fresh sign-in) rather than carried as garbage. The GCM scheme (Windows) is already authenticated
+  by its tag. This is what makes a wrong key fail safe instead of silently corrupting a session.
 - **At-rest protection on macOS changes (and is stated honestly).** Because the mock-keychain key is fixed and
   public, the cookie store on a macOS device is no longer protected by a machine-bound Keychain secret; its
   protection is the user account / FileVault and the app's data-folder permissions — the same footing as Linux's
@@ -82,19 +90,24 @@ within one authorized, encrypted workspace at the user's request — not a way a
 - **Blast radius.** The carried values are the profile's own cookies, which the authorized teammate can already use
   by opening the profile. Nothing leaves the workspace; tenant isolation, the app's authentication, and Chromium's
   sandbox are unchanged. The re-keyed values are written only into the destination profile's own cookie database.
-- **Residual risk.** The exact mock-keychain password bytes (including the trailing NUL) are read from Chromium
-  source for the pinned runtime and asserted in code; the macOS real-browser portability test is the oracle — if
-  the bytes ever diverge, the carried cookie will not decrypt and the macOS rows turn the run red (a dishonest
-  `supported` label is impossible, only a failed build).
+- **Residual risk.** The mock-keychain password and the plaintext layout are pinned from an empirical macOS-runner
+  measurement, not from source reading alone; the macOS real-browser portability test is the standing oracle — if
+  the bytes ever diverge, the host-hash prefix will not verify, the carried cookie will not survive, and the macOS
+  rows turn the run red (a dishonest `supported` label is impossible, only a failed build).
 
 ## Evidence
-The `portability_spike` test (sealing + real-browser restore through the production snapshot format) now carries and
+The `portability_spike` test (sealing + real-browser restore through the production snapshot format) carries and
 re-keys sessions and asserts the honesty rule per row; the runtime-pipeline `report` job fails on any dishonest
-label. Local verification (Linux, Chrome for Testing 141.0.7390.37): a signed-in profile sealed with the carried
-`cookies.json` member restored into a new profile and opened still signed in; unit tests in
-`apps/desktop/src-tauri/src/cookies.rs` prove the AES-128-CBC (`v10`/`v11`) and AES-256-GCM (`v10`) re-encryption is
-byte-exact and that unsupported schemes (`v20`, empty) are skipped rather than corrupted. Windows and macOS pairs
-are measured by the macOS and Windows runners in the runtime pipeline. Full table:
+label. The runtime pipeline measured Windows→Windows and macOS→macOS kept cross-device; the macOS mock-keychain
+password was then **determined empirically** on a `macos-14` runner against Chrome for Testing 155.0.8059.39 — a
+cookie the browser wrote under `--use-mock-keychain` decrypts only with `"mock_password"` (PBKDF2-HMAC-SHA1, salt
+`saltysalt`, 1003 iterations, AES-128-CBC, IV = 16 spaces, `v10`) and its plaintext is `SHA-256(host_key)` ++ value.
+Local verification (Linux, Chrome for Testing 141.0.7390.37): a signed-in profile sealed with the carried
+`cookies.json` member restored into a new profile and opened still signed in, with the host-hash prefix verifying
+(`restored: 1, skipped: 0`). Unit tests in `apps/desktop/src-tauri/src/cookies.rs` prove the AES-128-CBC
+(`v10`/`v11`) and AES-256-GCM (`v10`) re-encryption is byte-exact, that a wrong host-hash is rejected, and that
+unsupported schemes (`v20`, empty) are skipped rather than corrupted. The Windows and macOS cross-device pairs are
+confirmed by the macOS and Windows runners in the runtime pipeline. Full table:
 [docs/portability-matrix.md](../portability-matrix.md).
 
 ## Consequences
