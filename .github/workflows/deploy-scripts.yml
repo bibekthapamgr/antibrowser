@@ -634,7 +634,8 @@ jobs:
             scripts/ci/annotate.sh "console sign-in (not staff yet)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
           scripts/ci/annotate.sh "bootstrap-owner" sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && \
             /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts bootstrap-owner owner@example.test'
-          PB_API="https://$ADMIN" PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EXPECT_ADMIN=1 PB_EMAIL=owner@example.test PB_PASSWORD="$new" \
+          PB_API="https://$ADMIN" PB_CUSTOMER_API="https://$SITE" PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EXPECT_ADMIN=1 \
+            PB_EMAIL=owner@example.test PB_PASSWORD="$new" \
             scripts/ci/annotate.sh "console sign-in (platform owner, one-time code)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
 
       - name: Preflight report

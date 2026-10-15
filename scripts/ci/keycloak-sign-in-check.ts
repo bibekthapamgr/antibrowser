@@ -243,7 +243,9 @@ if (consoleMode) {
   const headers = { authorization: `Bearer ${body.access_token}` };
   const alerts = await fetch(`${api}/v1/support/alerts`, { headers });
   if (alerts.status !== 200) fail(`GET /v1/support/alerts answered ${alerts.status}`);
-  const meWithStaff = await fetch(`${api}/v1/me`, { headers });
+  // R6: on a public server the staff console has its own name, where customer routes are not served at all; the
+  // customer API (PB_CUSTOMER_API) must still refuse the staff token.
+  const meWithStaff = await fetch(`${process.env.PB_CUSTOMER_API ?? api}/v1/me`, { headers });
   if (meWithStaff.status !== 401)
     fail(`a staff token reached an organization route (HTTP ${meWithStaff.status})`);
   // R5: the staff flow reports its second factor in the ID token (amr), and the API recorded it for this session.
