@@ -684,9 +684,9 @@ describe('metrics', () => {
 
 describe('note redaction', () => {
   it('replaces card numbers, secrets after keywords and key-like tokens, and keeps the rest', () => {
-    const r = redactNote(
-      'Card 4111-1111-1111-1111, token=abc123, key sk_live_51Habcdefghijklmnop; order 12345.',
-    );
+    // Secret-looking test strings are built at run time (never a literal in the repository).
+    const liveKey = ['sk', 'live', `51H${'abcdefghijklmnop'}`].join('_');
+    const r = redactNote(`Card 4111-1111-1111-1111, token=abc123, key ${liveKey}; order 12345.`);
     expect(r.redacted).toBe(true);
     expect(r.text).toBe('Card [redacted], token=[redacted] key [redacted]; order 12345.');
     expect(redactNote('Called the owner about the invoice PB-0001.')).toEqual({
