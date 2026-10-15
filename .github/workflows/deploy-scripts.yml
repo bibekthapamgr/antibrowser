@@ -501,8 +501,9 @@ jobs:
       ID: id.pb-ci.test
       FILES: files.pb-ci.test
       # Clients in the checks below (Node and curl) trust the proxy's private authority, as the server's own API does.
-      NODE_EXTRA_CA_CERTS: /etc/project-browser/public-ca.pem
-      CURL_CA_BUNDLE: /etc/project-browser/public-ca.pem
+      # (A copy readable by the runner user: /etc/project-browser is root:pb 750.)
+      NODE_EXTRA_CA_CERTS: /tmp/pb-ci-public-ca.pem
+      CURL_CA_BUNDLE: /tmp/pb-ci-public-ca.pem
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -536,6 +537,7 @@ jobs:
           systemctl is-active --quiet pb-api && systemctl is-active --quiet pb-proxy && systemctl is-active --quiet keycloak \
             || { echo "::error title=prod setup::pb-api, pb-proxy or keycloak is not running"; exit 1; }
           grep -q "Preflight report (prod)" "$RUNNER_TEMP/vps-setup.log" || { echo "::error title=prod setup::no preflight report"; exit 1; }
+          sudo install -m 644 /etc/project-browser/public-ca.pem /tmp/pb-ci-public-ca.pem
 
       - name: Production configuration fails closed
         run: |
