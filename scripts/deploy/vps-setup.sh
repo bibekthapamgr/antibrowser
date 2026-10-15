@@ -657,6 +657,8 @@ EnvironmentFile=-$ENV_DIR/billing.env
 EnvironmentFile=-$ENV_DIR/stripe-webhook.env
 EnvironmentFile=-$ENV_DIR/email.env
 EnvironmentFile=-$ENV_DIR/site.env
+# R6: the environment's sign-in settings (keycloak-setup.sh); in staging/prod the worker's configuration needs them too.
+EnvironmentFile=-$ENV_DIR/oidc.env
 ExecStart=$NODE_ROOT/bin/node $4
 Restart=on-failure
 RestartSec=3
