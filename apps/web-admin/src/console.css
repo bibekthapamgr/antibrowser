@@ -1296,13 +1296,12 @@ input[type="radio"] {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
+/* Movement only, never opacity: text must keep full contrast at every moment (axe measures mid-animation). */
 @keyframes toast-in {
   from {
-    opacity: 0;
     transform: translateY(8px);
   }
   to {
-    opacity: 1;
     transform: none;
   }
 }

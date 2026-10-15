@@ -776,9 +776,9 @@ kbd {
 .m-toast-text span {
   color: var(--muted);
 }
+/* Movement only, never opacity: text keeps full contrast at every moment. */
 @keyframes toast-in {
   from {
-    opacity: 0;
     transform: translateY(14px) scale(0.98);
   }
 }
