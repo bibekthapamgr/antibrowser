@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-15T13:36:12.895Z",
+  "generated_at": "2026-10-15T16:32:43.211Z",
   "dependencies": [
     {
       "ecosystem": "cargo",
@@ -225,6 +225,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "block-padding",
+      "version": "0.4.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "block2",
       "version": "0.6.2",
       "license": "MIT"
@@ -317,6 +323,12 @@
       "ecosystem": "cargo",
       "name": "cargo-platform",
       "version": "0.1.9",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cbc",
+      "version": "0.2.1",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -1143,6 +1155,12 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "hmac",
+      "version": "0.13.0",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "html5ever",
       "version": "0.39.0",
       "license": "MIT OR Apache-2.0"
@@ -1853,6 +1871,12 @@
       "ecosystem": "cargo",
       "name": "pbkdf2",
       "version": "0.12.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pbkdf2",
+      "version": "0.13.0",
       "license": "MIT OR Apache-2.0"
     },
     {

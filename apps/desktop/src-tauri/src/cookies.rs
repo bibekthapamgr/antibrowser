@@ -49,6 +49,7 @@ const CARRY_VERSION: u32 = 1;
 
 /// Chromium cookie encryption is AES-128-CBC with this fixed IV on macOS and Linux.
 const CBC_IV: [u8; 16] = [b' '; 16];
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 const PBKDF2_SALT: &[u8] = b"saltysalt";
 
 type Enc = cbc::Encryptor<aes::Aes128>;
@@ -251,6 +252,7 @@ fn safe_join(base: &Path, rel: &str) -> Option<PathBuf> {
 /// A browser cookie key for this computer, able to decrypt and re-encrypt cookie values exactly as Chromium does.
 enum CookieKey {
     /// macOS / Linux: AES-128-CBC with [`CBC_IV`]; `write_prefix` is the version tag this computer's store writes.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     Cbc {
         key: Zeroizing<[u8; 16]>,
         write_prefix: &'static [u8],
@@ -319,6 +321,7 @@ impl CookieKey {
 
 /// Derives a 16-byte AES-128 key from a Safe Storage password exactly as Chromium does (PBKDF2-HMAC-SHA1,
 /// salt `saltysalt`). macOS uses 1003 iterations; Linux uses 1.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn cbc_key_from_password(password: &[u8], iterations: u32) -> Zeroizing<[u8; 16]> {
     let mut key = Zeroizing::new([0u8; 16]);
     // Infallible for a 16-byte output; HMAC accepts any key length.
@@ -415,62 +418,6 @@ fn destination_key(_user_data: &Path) -> Option<CookieKey> {
 // ------------------------------------------------------------------------------------------------------- Windows
 
 #[cfg(target_os = "windows")]
-mod dpapi {
-    use std::ptr::{null, null_mut};
-
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Cryptography::{
-        CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
-    };
-
-    fn blob(data: &[u8]) -> CRYPT_INTEGER_BLOB {
-        CRYPT_INTEGER_BLOB {
-            cbData: data.len() as u32,
-            pbData: data.as_ptr() as *mut u8,
-        }
-    }
-
-    /// Copies the output blob out of the OS allocation and frees it.
-    unsafe fn take(out: &CRYPT_INTEGER_BLOB) -> Option<Vec<u8>> {
-        if out.pbData.is_null() {
-            return None;
-        }
-        let v = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec() };
-        unsafe { LocalFree(out.pbData as *mut core::ffi::c_void) };
-        Some(v)
-    }
-
-    pub fn protect(data: &[u8]) -> Option<Vec<u8>> {
-        let input = blob(data);
-        let mut out = CRYPT_INTEGER_BLOB {
-            cbData: 0,
-            pbData: null_mut(),
-        };
-        // CryptProtectData(pDataIn, szDataDescr, pOptionalEntropy, pvReserved, pPromptStruct, dwFlags, pDataOut)
-        let ok = unsafe { CryptProtectData(&input, null(), null(), null(), null(), 0, &mut out) };
-        if ok == 0 {
-            return None;
-        }
-        unsafe { take(&out) }
-    }
-
-    pub fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
-        let input = blob(data);
-        let mut out = CRYPT_INTEGER_BLOB {
-            cbData: 0,
-            pbData: null_mut(),
-        };
-        // CryptUnprotectData(pDataIn, ppszDataDescr, pOptionalEntropy, pvReserved, pPromptStruct, dwFlags, pDataOut)
-        let ok =
-            unsafe { CryptUnprotectData(&input, null_mut(), null(), null(), null(), 0, &mut out) };
-        if ok == 0 {
-            return None;
-        }
-        unsafe { take(&out) }
-    }
-}
-
-#[cfg(target_os = "windows")]
 const DPAPI_PREFIX: &[u8] = b"DPAPI";
 
 /// Reads the raw 32-byte cookie key out of a profile's `Local State`, unwrapping it with DPAPI on THIS machine.
@@ -482,7 +429,7 @@ fn windows_unwrap_local_state_key(user_data: &Path) -> Option<Zeroizing<[u8; 32]
     let encoded = v.get("os_crypt")?.get("encrypted_key")?.as_str()?;
     let wrapped = b64().decode(encoded).ok()?;
     let wrapped = wrapped.strip_prefix(DPAPI_PREFIX)?;
-    let key = dpapi::unprotect(wrapped)?;
+    let key = pb_dpapi::unprotect(wrapped)?;
     let arr: [u8; 32] = key.as_slice().try_into().ok()?;
     Some(Zeroizing::new(arr))
 }
@@ -502,7 +449,7 @@ fn destination_key(user_data: &Path) -> Option<CookieKey> {
     // THIS machine with DPAPI, and write it back so the browser adopts it, then re-encrypt the cookies under it.
     let mut raw = Zeroizing::new([0u8; 32]);
     getrandom::fill(&mut raw[..]).ok()?;
-    let wrapped = dpapi::protect(&raw[..])?;
+    let wrapped = pb_dpapi::protect(&raw[..])?;
     let mut encoded = DPAPI_PREFIX.to_vec();
     encoded.extend_from_slice(&wrapped);
     let encoded = b64().encode(&encoded);

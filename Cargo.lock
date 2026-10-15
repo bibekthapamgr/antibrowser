@@ -3174,6 +3174,7 @@ dependencies = [
  "keyring",
  "pb-cloud",
  "pb-devtools",
+ "pb-dpapi",
  "pb-import",
  "pb-netproxy",
  "pb-runtime",
@@ -3196,7 +3197,6 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "url",
- "windows-sys 0.60.2",
  "zeroize",
  "zip",
 ]
@@ -3216,6 +3216,13 @@ dependencies = [
  "thiserror 2.0.21",
  "tungstenite",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "pb-dpapi"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

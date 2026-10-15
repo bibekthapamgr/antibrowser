@@ -92,7 +92,7 @@ describe('demo backend run states (mirrors the Rust state machine)', () => {
     expect((await b.profiles.status(p.id)).profile.state).toBe('stopped');
   });
 
-  it('recovers a crashed profile and refuses launch until the runtime is installed', async () => {
+  it('recovers a crashed profile, and a launch without the browser installs it first', async () => {
     const crashed = demoBackend('crashed');
     const p = await first(crashed, (x) => x.state === 'crashed');
     expect((await crashed.profiles.status(p.id)).suggested_recovery).toBe('restore_backup');
@@ -100,13 +100,12 @@ describe('demo backend run states (mirrors the Rust state machine)', () => {
     await settle();
     expect((await crashed.profiles.status(p.id)).profile).toMatchObject({ state: 'stopped', crash_count: 0 });
 
+    // ADR-0010 addendum: the pinned browser installs by itself; a launch before that installs it, then opens.
     const fresh = demoBackend('noruntime');
     const q = await first(fresh);
-    expect(await code(fresh.profiles.launch(q.id))).toBe('RUNTIME_NOT_INSTALLED');
     expect(await code(fresh.system.installRuntime('1.2.3.4'))).toBe('RUNTIME_NOT_IN_MANIFEST');
-    const rs = await fresh.system.runtimeStatus();
-    await fresh.system.installRuntime(rs.browser.manifest?.version ?? '');
-    await settle(1500);
+    expect(await code(fresh.profiles.launch(q.id))).toBe('OK');
+    await settle(2500);
     expect((await fresh.system.runtimeStatus()).browser.configured).toBe(true);
   });
 

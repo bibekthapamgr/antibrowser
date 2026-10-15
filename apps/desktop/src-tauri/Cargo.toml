@@ -51,9 +51,10 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 url = "2"
 
-# Windows cookie key (ADR-0016): DPAPI wrap/unwrap of the per-profile Local State key.
+# Windows cookie key (ADR-0028): DPAPI wrap/unwrap of the per-profile Local State key (the unsafe Win32 calls live
+# in pb-dpapi, like pb-devtools' pipe module; this crate stays free of unsafe code).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+pb-dpapi.workspace = true
 
 [dev-dependencies]
 base64 = "0.22"
