@@ -39,8 +39,10 @@ LIBEXEC=/usr/local/libexec/pb-backup
 BACKUP_USER=pb-backup
 STANZA=pb
 RCLONE_VERSION=v1.75.2
-# R6: this server's snapshot bucket (pb-snapshots-dev, -staging or -prod), as the API is configured.
+# R6: this server's snapshot bucket (pb-snapshots-dev, -staging or -prod), as the API is configured. The copy job
+# runs as pb-backup, which cannot read api.env: setup records the bucket in bucket.env (its own file) for it.
 OBJECT_BUCKET=$(sed -n 's/^OBJECT_STORE_BUCKET=//p' "$ENV_DIR/api.env" 2>/dev/null || true)
+[[ -n $OBJECT_BUCKET ]] || OBJECT_BUCKET=$(sed -n 's/^OBJECT_BUCKET=//p' "$STATE_DIR/bucket.env" 2>/dev/null || true)
 OBJECT_BUCKET=${OBJECT_BUCKET:-pb-snapshots-dev}
 [[ $OBJECT_BUCKET =~ ^pb-snapshots-(dev|staging|prod)$ ]] || { echo "unexpected OBJECT_STORE_BUCKET in $ENV_DIR/api.env" >&2; exit 1; }
 ARCHIVE_QUEUE_MAX=2GiB
@@ -571,7 +573,7 @@ systemctl daemon-reload
 systemctl enable -q --now pb-backup-db.timer pb-backup-objects.timer
 # The object copy runs as the backup user, which cannot read backup.env: it gets the bucket name from here.
 umask 027
-printf 'R2_BUCKET=%s\n' "$R2_BUCKET" > "$STATE_DIR/bucket.env"
+printf 'R2_BUCKET=%s\nOBJECT_BUCKET=%s\n' "$R2_BUCKET" "$OBJECT_BUCKET" > "$STATE_DIR/bucket.env"
 umask 022
 chown root:"$BACKUP_USER" "$STATE_DIR/bucket.env"; chmod 640 "$STATE_DIR/bucket.env"
 
