@@ -1,0 +1,119 @@
+{
+  "setup": {
+    "profiles": 10000,
+    "import_ms": 1095
+  },
+  "machine": {
+    "host": "vm",
+    "os": "linux 6.18.44-fc-v114",
+    "cpu": "2 × Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memory_gb": 8,
+    "free_memory_gb_at_start": 6.6,
+    "node": "v22.22.0",
+    "concurrency": 16,
+    "seconds_per_phase": 30
+  },
+  "warm-up": {
+    "requests": 1296,
+    "errors": 0,
+    "per_second": 259,
+    "p50_ms": 210.7,
+    "p95_ms": 338.7,
+    "p99_ms": 543.7,
+    "max_ms": 565.4,
+    "by_request": {
+      "list 50 of 10,000": {
+        "p50_ms": 213.8,
+        "p95_ms": 334.1,
+        "p99_ms": 551
+      },
+      "search by name": {
+        "p50_ms": 231.6,
+        "p95_ms": 350.1,
+        "p99_ms": 552
+      },
+      "one profile": {
+        "p50_ms": 218.5,
+        "p95_ms": 339.1,
+        "p99_ms": 543.8
+      },
+      "my workspaces": {
+        "p50_ms": 158.4,
+        "p95_ms": 271.7,
+        "p99_ms": 426.8
+      }
+    }
+  },
+  "metadata_reads": {
+    "requests": 10820,
+    "errors": 0,
+    "per_second": 361,
+    "p50_ms": 147.9,
+    "p95_ms": 222,
+    "p99_ms": 255,
+    "max_ms": 382.1,
+    "by_request": {
+      "list 50 of 10,000": {
+        "p50_ms": 151.2,
+        "p95_ms": 217.7,
+        "p99_ms": 243.2
+      },
+      "search by name": {
+        "p50_ms": 167.8,
+        "p95_ms": 242.1,
+        "p99_ms": 272.3
+      },
+      "one profile": {
+        "p50_ms": 152.8,
+        "p95_ms": 221,
+        "p99_ms": 249.7
+      },
+      "my workspaces": {
+        "p50_ms": 113,
+        "p95_ms": 166,
+        "p99_ms": 189.6
+      }
+    }
+  },
+  "metadata_reads_light": {
+    "requests": 10172,
+    "errors": 0,
+    "per_second": 339,
+    "p50_ms": 10.7,
+    "p95_ms": 23.6,
+    "p99_ms": 31.3,
+    "max_ms": 53.5,
+    "by_request": {
+      "list 50 of 10,000": {
+        "p50_ms": 10.2,
+        "p95_ms": 17.4,
+        "p99_ms": 20.6
+      },
+      "search by name": {
+        "p50_ms": 17.9,
+        "p95_ms": 30,
+        "p99_ms": 38.5
+      },
+      "one profile": {
+        "p50_ms": 9.3,
+        "p95_ms": 15.8,
+        "p99_ms": 19.7
+      },
+      "my workspaces": {
+        "p50_ms": 8.3,
+        "p95_ms": 15.1,
+        "p99_ms": 18.2
+      }
+    }
+  },
+  "session_cycle": {
+    "requests": 8600,
+    "errors": 0,
+    "per_second": 287,
+    "p50_ms": 54.6,
+    "p95_ms": 83.9,
+    "p99_ms": 99.9,
+    "max_ms": 233
+  },
+  "generated_at": "2026-10-15T05:18:54.565Z"
+}

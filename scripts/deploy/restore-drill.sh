@@ -147,7 +147,17 @@ port_in_use() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
 need=$(( $(psql_live -c "select pg_database_size(current_database())") / 1048576 * 3 + 512 ))
 free=$(df -Pm /var/lib | awk 'NR==2{print $4}')
 (( free > need )) || die "not enough free disk for the drill: $free MB free, about $need MB needed"
-trap 'cleanup' EXIT
+# R7: a drill that does not pass raises the owner-visible "Restore drill failed" alert (console → Alerts); a passing
+# one clears it.
+drill_exit() {
+  local rc=$?
+  cleanup
+  if (( rc != 0 )); then
+    psql_live -c "select app.ops_alert('restore_failed', 'The restore drill of $DRILL_START failed (see /var/lib/pb-backup/drills and its log)')" \
+      >/dev/null 2>&1 || true
+  fi
+}
+trap 'drill_exit' EXIT
 DRILL_START=$(date -u +%FT%TZ)
 
 # ----------------------------------------------------------------------------- 1. data to find again
@@ -263,7 +273,7 @@ OUT=$STATE_DIR/drills/$(date -u +%Y%m%dT%H%M%SZ).json
   "$DRILL_START" "$CHECK" "$RPO" "$RTO" "$BACKUP" "$MARKER" "$ORGS" "$REPORT" "$APP_ENV" "r2:$R2_BUCKET/objects/$OBJECT_BUCKET" "$WORKSPACE" "$LIVE_NEWEST" > "$OUT"
 chmod 640 "$OUT"
 cleanup
-trap - EXIT
+trap 'drill_exit' EXIT
 if [[ $CHECK != pass ]]; then
   "$NODE" -e '
     let r = null; try { r = JSON.parse(process.argv[1]); } catch {}
@@ -277,6 +287,8 @@ if [[ $CHECK != pass ]]; then
     if (r.marker_found === false) console.error("    FAILED the recovery marker is missing");' "$REPORT" >&2
   die "the restore checks failed (report: $OUT)"
 fi
+trap - EXIT
+psql_live -c "select app.ops_resolve('restore_failed')" >/dev/null 2>&1 || true
 ok "restore drill passed: recovery point ${RPO} s before the restore began (target 15 min), recovery time ${RTO} s (target 4 h)"
 if [[ -n $WORKSPACE ]]; then
   "$NODE" -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const w = r.checks.workspace;

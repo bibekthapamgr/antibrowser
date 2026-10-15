@@ -1066,3 +1066,107 @@ fn portability_spike() {
         other => panic!("unknown PB_PORTABILITY mode {other}"),
     }
 }
+
+// ---------------------------------------------------------------------------------------------- performance (R7)
+
+/// Proportional memory (PSS, KiB) of every process whose command line names this profile's data folder (Linux only):
+/// pages shared between processes are split between them, so the sum is the real total (plain RSS would count the
+/// shared browser libraries once per process).
+fn profile_rss_kib(dir: &std::path::Path) -> u64 {
+    let needle = dir.to_string_lossy().to_string();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
+    let mut total = 0;
+    for e in entries.flatten() {
+        let p = e.path();
+        let cmd = std::fs::read(p.join("cmdline")).unwrap_or_default();
+        if !String::from_utf8_lossy(&cmd).contains(&needle) {
+            continue;
+        }
+        let status = std::fs::read_to_string(p.join("smaps_rollup")).unwrap_or_default();
+        total += status
+            .lines()
+            .find_map(|l| l.strip_prefix("Pss:"))
+            .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+            .unwrap_or(0);
+    }
+    total
+}
+
+fn self_rss_kib() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix("VmRSS:"))
+        .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// R7: an existing local profile from "open" to its first page reporting back (a local page: no internet time), for
+/// 1, 5 and 10 profiles open together, cold (first start of each profile) and warm (opened again), and the memory of
+/// the browsers separately from this process (the manager core without its window). Prints one `pb-perf:` JSON line.
+/// Run: PB_TEST_BROWSER=<chromium> cargo test --release -p pb-desktop --test browser perf_ -- --ignored --nocapture
+#[test]
+#[ignore = "measurement, run on demand"]
+fn perf_profiles_open_to_interactive_and_memory() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(env) = env() else { return };
+    let open = |id: &ProfileId, who: &str| -> f64 {
+        let t = Instant::now();
+        let op = env
+            .state
+            .launch_profile(id, Some(&env.server.url("read", who, "-")))
+            .unwrap_or_else(|e| panic!("launch {who}: {e:?}"));
+        assert_eq!(
+            env.wait(&op.operation_id, Duration::from_secs(60)),
+            OpStatus::Succeeded
+        );
+        env.server
+            .wait_report(who)
+            .unwrap_or_else(|| panic!("no report from {who}"));
+        t.elapsed().as_secs_f64() * 1000.0
+    };
+    let pct = |v: &mut Vec<f64>, p: f64| -> f64 {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let i = ((v.len() as f64 * p).floor() as usize).min(v.len().saturating_sub(1));
+        (v.get(i).copied().unwrap_or(0.0) * 10.0).round() / 10.0
+    };
+    let mut results = Vec::new();
+    for n in [1usize, 5, 10] {
+        let ids: Vec<ProfileId> = (0..n)
+            .map(|i| env.profile(&format!("Perf {n}-{i}")))
+            .collect();
+        let mut cold: Vec<f64> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| open(id, &format!("cold-{n}-{i}")))
+            .collect();
+        std::thread::sleep(Duration::from_secs(3));
+        let browsers_kib: u64 = ids
+            .iter()
+            .map(|id| profile_rss_kib(&env.user_data(id)))
+            .sum();
+        let manager_kib = self_rss_kib();
+        for id in &ids {
+            env.close(id);
+        }
+        let mut warm: Vec<f64> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| open(id, &format!("warm-{n}-{i}")))
+            .collect();
+        for id in &ids {
+            env.close(id);
+        }
+        results.push(json!({
+            "profiles_open": n,
+            "cold_open_to_interactive_ms": { "p50": pct(&mut cold.clone(), 0.5), "p95": pct(&mut cold, 0.95) },
+            "warm_open_to_interactive_ms": { "p50": pct(&mut warm.clone(), 0.5), "p95": pct(&mut warm, 0.95) },
+            "browsers_pss_mb": browsers_kib / 1024,
+            "browsers_pss_mb_per_profile": browsers_kib / 1024 / n as u64,
+            "manager_core_rss_mb": manager_kib / 1024,
+        }));
+    }
+    println!("pb-perf: {}", json!({ "profiles": results }));
+}

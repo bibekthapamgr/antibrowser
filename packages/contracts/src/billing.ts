@@ -558,6 +558,11 @@ export const BILLING_ALERT_KINDS = [
   'break_glass_used',
   // R5: a catalog publication failed at the payment provider (nothing was published).
   'publish_failed',
+  // R7: operations, raised and cleared by the worker (restore_failed by the restore drill).
+  'queue_backlog',
+  'backup_failing',
+  'restore_failed',
+  'sync_failures',
 ] as const;
 export type BillingAlertKind = (typeof BILLING_ALERT_KINDS)[number];
 

@@ -103,6 +103,52 @@ describe('sharing exactly what was chosen', () => {
       expect((await openLease(mate, other?.id as string)).statusCode).toBe(404);
       expect((await call('GET', o(`/profiles/${other?.id}`), mate)).statusCode).toBe(404);
     }
+
+    // R7 integration matrix 3: the other 40 cannot be discovered by any other route either.
+    const hidden = profiles.filter((p) => !chosen.includes(p.id));
+    const leaks = (body: string) => hidden.filter((p) => body.includes(p.id) || body.includes(p.name));
+    // Search by the exact name of an unshared profile.
+    for (const p of [hidden[0], hidden[39]]) {
+      const found = await call('GET', o(`/profiles?q=${encodeURIComponent(p?.name ?? '')}&limit=100`), mate);
+      expect(found.statusCode).toBe(200);
+      expect(leaks(found.body)).toEqual([]);
+    }
+    // Export: not allowed for a Member, and the refusal names nothing.
+    const exported = await call('GET', o('/profiles/export'), mate);
+    expect([403, 404]).toContain(exported.statusCode);
+    expect(leaks(exported.body)).toEqual([]);
+    // Workspace list: counts only what this person can see.
+    const ws = await call('GET', '/v1/me/workspaces', mate);
+    expect(ws.json().items.find((w: { org_id?: string }) => w.org_id === org.id)?.profiles).toBe(10);
+    // Automation: a job aimed at an unshared profile answers like the profile does not exist.
+    const job = await call(
+      'POST',
+      o('/automation/jobs'),
+      mate,
+      { profile_id: hidden[3]?.id, steps: [], keep_open_minutes: 5 },
+      { 'idempotency-key': idemKey() },
+    );
+    expect([403, 404]).toContain(job.statusCode);
+    expect(leaks(job.body)).toEqual([]);
+    // An API token the Member makes (when the plan and role allow one) reaches only the same 10.
+    const token = await call('POST', o('/api-tokens'), mate, {
+      name: 'mine',
+      scopes: ['profiles:read'],
+      expires_in_days: 1,
+    });
+    if (token.statusCode === 201) {
+      const bearer = { authorization: `Bearer ${token.json().secret}` };
+      const viaToken = await h.app.inject({ method: 'GET', url: o('/profiles?limit=100'), headers: bearer });
+      expect((viaToken.json().items as { id: string }[]).map((x) => x.id).sort()).toEqual([...chosen].sort());
+      const one = await h.app.inject({
+        method: 'GET',
+        url: o(`/profiles/${hidden[7]?.id}`),
+        headers: bearer,
+      });
+      expect(one.statusCode).toBe(404);
+    } else {
+      expect([403, 404]).toContain(token.statusCode);
+    }
   });
 
   it('a Member can open and use by default, but not edit, export backups, delete, share or manage billing', async () => {

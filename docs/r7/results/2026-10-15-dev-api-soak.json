@@ -1,0 +1,211 @@
+{
+  "setup": {
+    "profiles": 10000,
+    "import_ms": 1054
+  },
+  "machine": {
+    "host": "vm",
+    "os": "linux 6.18.44-fc-v114",
+    "cpu": "2 × Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memory_gb": 8,
+    "free_memory_gb_at_start": 6.7,
+    "node": "v22.22.0",
+    "concurrency": 16,
+    "seconds_per_phase": 30
+  },
+  "warm-up": {
+    "requests": 1256,
+    "errors": 0,
+    "per_second": 251,
+    "p50_ms": 215.1,
+    "p95_ms": 329,
+    "p99_ms": 628.5,
+    "max_ms": 808.8
+  },
+  "metadata_reads": {
+    "requests": 8908,
+    "errors": 0,
+    "per_second": 297,
+    "p50_ms": 181,
+    "p95_ms": 258.6,
+    "p99_ms": 317.7,
+    "max_ms": 450.6
+  },
+  "session_cycle": {
+    "requests": 6875,
+    "errors": 0,
+    "per_second": 229,
+    "p50_ms": 62.8,
+    "p95_ms": 114.8,
+    "p99_ms": 249.2,
+    "max_ms": 488.2
+  },
+  "soak": [
+    {
+      "minute": 1,
+      "requests": 18657,
+      "errors": 0,
+      "per_second": 311,
+      "p50_ms": 69.3,
+      "p95_ms": 113.6,
+      "p99_ms": 139.1,
+      "max_ms": 279.6,
+      "rss_mb": 363
+    },
+    {
+      "minute": 2,
+      "requests": 18999,
+      "errors": 0,
+      "per_second": 317,
+      "p50_ms": 68,
+      "p95_ms": 109.9,
+      "p99_ms": 130.6,
+      "max_ms": 196.4,
+      "rss_mb": 364
+    },
+    {
+      "minute": 3,
+      "requests": 18612,
+      "errors": 0,
+      "per_second": 310,
+      "p50_ms": 69,
+      "p95_ms": 110.4,
+      "p99_ms": 129.7,
+      "max_ms": 209.8,
+      "rss_mb": 364
+    },
+    {
+      "minute": 4,
+      "requests": 18684,
+      "errors": 0,
+      "per_second": 311,
+      "p50_ms": 69.1,
+      "p95_ms": 111.2,
+      "p99_ms": 133.7,
+      "max_ms": 201.6,
+      "rss_mb": 364
+    },
+    {
+      "minute": 5,
+      "requests": 18558,
+      "errors": 0,
+      "per_second": 309,
+      "p50_ms": 69.8,
+      "p95_ms": 113.3,
+      "p99_ms": 135.1,
+      "max_ms": 197.4,
+      "rss_mb": 364
+    },
+    {
+      "minute": 6,
+      "requests": 17586,
+      "errors": 0,
+      "per_second": 293,
+      "p50_ms": 72.6,
+      "p95_ms": 122.3,
+      "p99_ms": 151.4,
+      "max_ms": 213.5,
+      "rss_mb": 364
+    },
+    {
+      "minute": 7,
+      "requests": 18603,
+      "errors": 0,
+      "per_second": 310,
+      "p50_ms": 69.2,
+      "p95_ms": 111.9,
+      "p99_ms": 135,
+      "max_ms": 254.7,
+      "rss_mb": 364
+    },
+    {
+      "minute": 8,
+      "requests": 17217,
+      "errors": 0,
+      "per_second": 287,
+      "p50_ms": 75.1,
+      "p95_ms": 123.7,
+      "p99_ms": 147.6,
+      "max_ms": 206.5,
+      "rss_mb": 364
+    },
+    {
+      "minute": 9,
+      "requests": 18864,
+      "errors": 0,
+      "per_second": 314,
+      "p50_ms": 68.4,
+      "p95_ms": 112.1,
+      "p99_ms": 138.4,
+      "max_ms": 202.3,
+      "rss_mb": 364
+    },
+    {
+      "minute": 10,
+      "requests": 18063,
+      "errors": 0,
+      "per_second": 301,
+      "p50_ms": 71.3,
+      "p95_ms": 115.6,
+      "p99_ms": 139.7,
+      "max_ms": 198.4,
+      "rss_mb": 364
+    },
+    {
+      "minute": 11,
+      "requests": 18126,
+      "errors": 0,
+      "per_second": 302,
+      "p50_ms": 71,
+      "p95_ms": 114.5,
+      "p99_ms": 137.3,
+      "max_ms": 193,
+      "rss_mb": 364
+    },
+    {
+      "minute": 12,
+      "requests": 19332,
+      "errors": 0,
+      "per_second": 322,
+      "p50_ms": 66.8,
+      "p95_ms": 108.4,
+      "p99_ms": 130.2,
+      "max_ms": 292.9,
+      "rss_mb": 364
+    },
+    {
+      "minute": 13,
+      "requests": 19323,
+      "errors": 0,
+      "per_second": 322,
+      "p50_ms": 67,
+      "p95_ms": 107.4,
+      "p99_ms": 128,
+      "max_ms": 329.3,
+      "rss_mb": 364
+    },
+    {
+      "minute": 14,
+      "requests": 19116,
+      "errors": 0,
+      "per_second": 319,
+      "p50_ms": 67.5,
+      "p95_ms": 109,
+      "p99_ms": 131,
+      "max_ms": 216.3,
+      "rss_mb": 364
+    },
+    {
+      "minute": 15,
+      "requests": 18360,
+      "errors": 0,
+      "per_second": 306,
+      "p50_ms": 70.3,
+      "p95_ms": 113.1,
+      "p99_ms": 137.1,
+      "max_ms": 222.7,
+      "rss_mb": 364
+    }
+  ],
+  "generated_at": "2026-10-15T05:16:47.717Z"
+}

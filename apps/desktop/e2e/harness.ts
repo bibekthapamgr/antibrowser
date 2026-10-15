@@ -5,7 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 
-const DIST = resolve(import.meta.dirname, '../dist');
+// The demo build (`build:demo`): the production bundle (dist/) carries no demo backend since R7.
+const DIST = resolve(import.meta.dirname, '../dist-demo');
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -14,10 +15,10 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png',
 };
 
-/** Serves dist/ read-only on 127.0.0.1 with the same CSP the desktop shell applies. */
+/** Serves dist-demo/ read-only on 127.0.0.1 with the same CSP the desktop shell applies. */
 export async function serveDist(csp: string): Promise<{ url: string; close: () => Promise<void> }> {
   if (!existsSync(join(DIST, 'index.html')))
-    throw new Error('dist/ is missing: run `pnpm --filter @pb/desktop build` first');
+    throw new Error('dist-demo/ is missing: run `pnpm --filter @pb/desktop build:demo` first');
   const server: Server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
     const file = normalize(join(DIST, path === '/' ? 'index.html' : path));

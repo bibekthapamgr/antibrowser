@@ -1,0 +1,83 @@
+{
+  "tool": "lighthouse 13.5.0",
+  "machine": "DEV (2 vCPU, Chromium build 1194)",
+  "runs": {
+    "portal-desktop": {
+      "url": "http://127.0.0.1:8766/app/",
+      "form_factor": "desktop",
+      "throttling": "simulate",
+      "performance": 1,
+      "accessibility": 1,
+      "lcp_ms": 638,
+      "cls": 0.021800975177304966,
+      "fcp_ms": 612,
+      "tbt_ms": 0
+    },
+    "portal-gz": {
+      "url": "http://127.0.0.1:8767/app/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 0.99,
+      "accessibility": 1,
+      "lcp_ms": 1709,
+      "cls": 0.04801359457516215,
+      "fcp_ms": 1606,
+      "tbt_ms": 3
+    },
+    "portal-mobile": {
+      "url": "http://127.0.0.1:8766/app/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 0.9,
+      "accessibility": 1,
+      "lcp_ms": 3008,
+      "cls": 0.04801359457516215,
+      "fcp_ms": 2782,
+      "tbt_ms": 0
+    },
+    "site-download": {
+      "url": "http://127.0.0.1:8765/download/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 1,
+      "accessibility": 1,
+      "lcp_ms": 1213,
+      "cls": 0.017530270546413984,
+      "fcp_ms": 903,
+      "tbt_ms": 0
+    },
+    "site-gz": {
+      "url": "http://127.0.0.1:8768/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 1,
+      "accessibility": 1,
+      "lcp_ms": 1375,
+      "cls": 0,
+      "fcp_ms": 1045,
+      "tbt_ms": 0
+    },
+    "site-home": {
+      "url": "http://127.0.0.1:8765/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 1,
+      "accessibility": 1,
+      "lcp_ms": 1298,
+      "cls": 0,
+      "fcp_ms": 997,
+      "tbt_ms": 0
+    },
+    "site-pricing": {
+      "url": "http://127.0.0.1:8765/pricing/",
+      "form_factor": "mobile",
+      "throttling": "simulate",
+      "performance": 1,
+      "accessibility": 1,
+      "lcp_ms": 1013,
+      "cls": 0.014602750216595349,
+      "fcp_ms": 1013,
+      "tbt_ms": 0
+    }
+  }
+}

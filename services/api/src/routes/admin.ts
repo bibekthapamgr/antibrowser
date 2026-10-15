@@ -1179,6 +1179,25 @@ export function adminRoutes(app: App, deps: Deps): void {
         const migration = await deps.pool
           .query<{ name: string }>('select app.schema_version() as name')
           .catch(() => ({ rows: [] as { name: string }[] }));
+        const health = await c.query<{
+          signups_24h: string;
+          signups_7d: string;
+          checkouts_open: string;
+          checkout_oldest_open: string | null;
+          leases_active: string;
+          leases_expired_unreleased: string;
+          snapshots_committed_24h: string;
+          snapshots_failed_24h: string;
+          jobs_queued: string;
+          job_oldest_queued: string | null;
+          archiving_failing: boolean;
+        }>(
+          `select signups_24h::text, signups_7d::text, checkouts_open::text,
+                  ${ts('checkout_oldest_open')} as checkout_oldest_open, leases_active::text,
+                  leases_expired_unreleased::text, snapshots_committed_24h::text, snapshots_failed_24h::text,
+                  jobs_queued::text, ${ts('job_oldest_queued')} as job_oldest_queued, archiving_failing
+             from app.admin_health()`,
+        );
         const releaseReqs = await c.query<{
           id: string;
           action: string;
@@ -1197,7 +1216,7 @@ export function adminRoutes(app: App, deps: Deps): void {
         return {
           generated_at: new Date().toISOString(),
           server: {
-            api_version: '0.18.0',
+            api_version: '0.19.0',
             environment: deps.config.appEnv,
             database_migration: migration.rows[0]?.name ?? null,
             worker_last_seen: beat.rows[0]?.at ?? null,
@@ -1248,6 +1267,23 @@ export function adminRoutes(app: App, deps: Deps): void {
                   }
                 : null,
           },
+          health: (() => {
+            const x = health.rows[0];
+            const n = (v: string | undefined) => Number(v ?? 0);
+            return {
+              signups_24h: n(x?.signups_24h),
+              signups_7d: n(x?.signups_7d),
+              checkouts_open: n(x?.checkouts_open),
+              checkout_oldest_open: x?.checkout_oldest_open ?? null,
+              leases_active: n(x?.leases_active),
+              leases_expired_unreleased: n(x?.leases_expired_unreleased),
+              snapshots_committed_24h: n(x?.snapshots_committed_24h),
+              snapshots_failed_24h: n(x?.snapshots_failed_24h),
+              jobs_queued: n(x?.jobs_queued),
+              job_oldest_queued: x?.job_oldest_queued ?? null,
+              archiving_failing: x?.archiving_failing === true,
+            };
+          })(),
           release: {
             status: downloads?.status ?? 'unknown',
             version: downloads?.version ?? null,

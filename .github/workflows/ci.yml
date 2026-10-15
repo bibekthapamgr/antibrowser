@@ -128,6 +128,8 @@ jobs:
         run: |
           pnpm --filter @pb/desktop build && pnpm --filter @pb/web-admin build
           pnpm --filter @pb/web-customer build && pnpm --filter @pb/web-public build
+          # R7 retirement gate: no demo backend, fixture data or test hook in a production bundle.
+          node scripts/ci/check-production-bundles.mjs
       - name: IPC schema document is up to date
         run: |
           pnpm run docs:ipc
@@ -249,7 +251,8 @@ jobs:
           PB_BRIDGE_BIN="$PWD/target/debug/examples/bridge" scripts/ci/annotate.sh "playwright compatibility" \
             pnpm --filter @pb/sdk exec vitest run test/playwright.test.ts
       - name: Local search latency baseline (informational)
-        run: cargo test -p pb-storage --release --test search_latency -- --ignored --nocapture
+        # (R7: the test is not #[ignore]d, so no --ignored filter: that ran zero tests.)
+        run: cargo test -p pb-storage --release --test search_latency -- --nocapture
 
   licenses:
     name: dependency and license inventory

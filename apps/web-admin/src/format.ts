@@ -79,6 +79,10 @@ export const ALERT_LABEL: Record<BillingAlertKind, string> = {
   resync_failed: 'Resync failing',
   break_glass_used: 'Break-glass access',
   publish_failed: 'Plan publication failed',
+  queue_backlog: 'Work waiting too long',
+  backup_failing: 'Off-site backup failing',
+  restore_failed: 'Restore drill failed',
+  sync_failures: 'Cloud backups failing',
 };
 
 export function when(ts: string | null): string {

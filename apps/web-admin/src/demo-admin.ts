@@ -553,7 +553,7 @@ export function adminDemo(opts: {
       const o: AdminOperations = {
         generated_at: iso(Date.now()),
         server: {
-          api_version: '0.18.0',
+          api_version: '0.19.0',
           environment: 'demo',
           database_migration: '0016_business_admin.sql',
           worker_last_seen: iso(Date.now() - 40_000),
@@ -582,6 +582,19 @@ export function adminDemo(opts: {
         },
         inbox: { deletion_requests_pending: 1, contact_requests_unhandled: 3 },
         outbox: { pending: 0, retrying: 0, oldest_pending: null },
+        health: {
+          signups_24h: 3,
+          signups_7d: 17,
+          checkouts_open: 1,
+          checkout_oldest_open: iso(Date.now() - 40 * 60_000),
+          leases_active: 12,
+          leases_expired_unreleased: 0,
+          snapshots_committed_24h: 148,
+          snapshots_failed_24h: 0,
+          jobs_queued: 0,
+          job_oldest_queued: null,
+          archiving_failing: false,
+        },
         backups: {
           last_profile_backup: iso(Date.now() - 25 * 60_000),
           offsite: { last_success: iso(Date.now() - 50_000), status: 'Log archiving works' },

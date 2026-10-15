@@ -5,6 +5,13 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.19.0 — 2026-10-15 (R7: journey verification, performance and launch)
+Added (see ADR-0026; nothing removed or renamed)
+- `GET /v1/admin/operations` → `health`: sign-ups finished (24 h, 7 days), open checkouts and the oldest, open profile
+  leases and leases that ran out without renewal (24 h), snapshots saved and failed (24 h), queued automation jobs and
+  the oldest, whether off-site archiving is failing. Counts and times only.
+- Alert kinds `queue_backlog`, `backup_failing`, `restore_failed`, `sync_failures` (raised and cleared automatically).
+
 ## 0.18.0 — 2026-10-15 (R6: public deployment, security and release readiness)
 Added (see ADR-0025; nothing removed or renamed)
 - `GET /v1/ready` now answers with safe status words only: `{"status": "ready" | "not_ready", "checks": {"database":

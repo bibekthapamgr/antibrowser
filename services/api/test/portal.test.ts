@@ -227,6 +227,19 @@ describe('one checkout per workspace', () => {
     await deliver(f.completeCheckout(sessionOf(retry.json().url)));
     const after = await subscription(o);
     expect(after).toMatchObject({ state: 'active', plan: { id: 'team' }, checkout: { state: 'completed' } });
+    // R7 matrix 5: the payment belongs to this workspace only. The same owner's other workspace keeps its own state
+    // and shows no checkout of this one.
+    const second = await h.app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: o.owner.headers,
+      payload: { name: 'Second workspace (test)' },
+    });
+    expect(second.statusCode, second.body).toBe(201);
+    const other = await subscription({ id: second.json().id, owner: o.owner });
+    expect(other.state).not.toBe('active');
+    expect(other.plan?.id).not.toBe('team');
+    expect(JSON.stringify(other)).not.toContain(sessionOf(retry.json().url));
     // Subscribed: no second checkout, from any client.
     expect((await checkout(o, { plan_id: 'agency' })).json().code).toBe('ALREADY_SUBSCRIBED');
     // The owner hears about the result once (a replayed event changes nothing and sends nothing).

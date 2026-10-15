@@ -5,8 +5,9 @@
   "type": "module",
   "description": "Desktop manager UI (trusted bundle rendered by Tauri's system webview)",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --mode demo",
     "build": "vite build",
+    "build:demo": "vite build --mode demo --outDir dist-demo",
     "tauri": "tauri",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test": "vitest run",

@@ -1,6 +1,6 @@
 {
   "name": "@pb/api",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -26,7 +26,8 @@
     "openapi": "node --env-file=../../infra/env/dev.env.example scripts/openapi.ts",
     "dev-token": "node --env-file=../../infra/env/dev.env.example scripts/dev-token.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "perf": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1142.0",

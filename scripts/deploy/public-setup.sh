@@ -121,6 +121,17 @@ cat > "$PROXY_CONF.new" <<EOF
 }
 
 (hardening) {
+	# R7: compressed text (pages, scripts, styles, JSON): the portal's script is about a third of its size.
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+		-Via
+	}
+}
+
+(hardening_no_encode) {
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
@@ -162,7 +173,7 @@ $ID_HOST {
 
 # Snapshot storage: this environment's bucket only (path-style presigned links). No listing of buckets.
 $FILES_HOST {
-	import hardening
+	import hardening_no_encode
 	@bucket path /$BUCKET/*
 	handle @bucket {
 		reverse_proxy 127.0.0.1:$S3_PORT

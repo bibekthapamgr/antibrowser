@@ -1423,6 +1423,51 @@ export function OperationsPage() {
             </div>
           </dl>
 
+          <section aria-labelledby="ops-health-title">
+            <h2 id="ops-health-title">Health</h2>
+            <dl className="facts">
+              <div>
+                <dt>Sign-ups finished</dt>
+                <dd>
+                  {o.health.signups_24h} in 24 hours · {o.health.signups_7d} in 7 days
+                </dd>
+              </div>
+              <div>
+                <dt>Checkouts waiting at the provider</dt>
+                <dd>
+                  {o.health.checkouts_open}
+                  {o.health.checkout_oldest_open && `, oldest ${when(o.health.checkout_oldest_open)}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Open profiles</dt>
+                <dd className={o.health.leases_expired_unreleased > 0 ? 'over' : undefined}>
+                  {o.health.leases_active} open · {o.health.leases_expired_unreleased} ran out without renewal
+                  (24 h)
+                </dd>
+              </div>
+              <div>
+                <dt>Cloud backups (24 h)</dt>
+                <dd className={o.health.snapshots_failed_24h > 0 ? 'over' : undefined}>
+                  {o.health.snapshots_committed_24h} saved · {o.health.snapshots_failed_24h} failed
+                </dd>
+              </div>
+              <div>
+                <dt>Automation jobs waiting</dt>
+                <dd>
+                  {o.health.jobs_queued}
+                  {o.health.job_oldest_queued && `, oldest ${when(o.health.job_oldest_queued)}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Off-site archiving</dt>
+                <dd className={o.health.archiving_failing ? 'over' : undefined}>
+                  {o.health.archiving_failing ? 'Failing now (see Alerts)' : 'No failure'}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
           <section aria-labelledby="ops-hooks-title">
             <h2 id="ops-hooks-title">Payment provider events</h2>
             <p>

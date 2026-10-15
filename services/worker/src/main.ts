@@ -175,6 +175,11 @@ while (running) {
         );
         return 0;
       });
+      // R7: operations alerts (queue backlog, failing off-site archiving, many failed uploads), raised and cleared.
+      await task('operations watch', async () => {
+        const r = await pool.query<{ n: number }>('select app.ops_watch() as n');
+        return r.rows[0]?.n ?? 0;
+      });
       await task('restrictions expired', async () => {
         const r = await pool.query<{ n: number }>('select app.restrictions_expire() as n');
         return r.rows[0]?.n ?? 0;

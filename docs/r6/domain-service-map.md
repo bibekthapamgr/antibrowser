@@ -14,7 +14,7 @@ four values of `/etc/project-browser/public.env`; use different names for stagin
 | `FILES_HOST` | presigned upload/download links of `pb-snapshots-<env>` only | `/`, every other bucket | SeaweedFS S3 `127.0.0.1:8333` |
 
 Certificates: Caddy (pinned 2.11.4), ACME with `ACME_EMAIL`, renewed automatically, stored in `/var/lib/pb-proxy`.
-Headers: HSTS one year, `X-Content-Type-Options`, no `Server`. No access log (links carry one-time codes and
+Headers: HSTS one year, `X-Content-Type-Options`, no `Server`. Text responses are compressed (zstd/gzip, R7) except on `FILES_HOST`. No access log (links carry one-time codes and
 signatures). The proxy replaces `X-Forwarded-For`; the API trusts one hop.
 
 ## Private (127.0.0.1 only; reach with an SSH tunnel)

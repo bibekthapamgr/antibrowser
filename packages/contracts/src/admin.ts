@@ -612,6 +612,25 @@ export const AdminOperations = Type.Object(
       },
       { additionalProperties: false },
     ),
+    /** R7: health figures (counts and times only, no names or addresses). */
+    health: Type.Object(
+      {
+        signups_24h: Type.Integer({ minimum: 0 }),
+        signups_7d: Type.Integer({ minimum: 0 }),
+        checkouts_open: Type.Integer({ minimum: 0 }),
+        /** The oldest checkout waiting at the payment provider (a customer who has not paid or confirmed yet). */
+        checkout_oldest_open: Nullable(Timestamp),
+        leases_active: Type.Integer({ minimum: 0 }),
+        /** Open profiles whose lease ran out without being renewed or released in the last day (lost connections). */
+        leases_expired_unreleased: Type.Integer({ minimum: 0 }),
+        snapshots_committed_24h: Type.Integer({ minimum: 0 }),
+        snapshots_failed_24h: Type.Integer({ minimum: 0 }),
+        jobs_queued: Type.Integer({ minimum: 0 }),
+        job_oldest_queued: Nullable(Timestamp),
+        archiving_failing: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
     release: Type.Object(
       {
         status: Type.String(),

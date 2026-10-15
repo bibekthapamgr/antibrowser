@@ -7,7 +7,7 @@ import { errors } from './common.ts';
  * backward compatible), so a database older than this means the deploy order was broken: not ready.
  * A test keeps it equal to the newest file in infra/db/migrations.
  */
-export const REQUIRED_SCHEMA = '0017_readiness.sql';
+export const REQUIRED_SCHEMA = '0018_operations_watch.sql';
 /** The worker records a heartbeat about every minute; older than this counts as stale. */
 const WORKER_STALE_SECONDS = 300;
 

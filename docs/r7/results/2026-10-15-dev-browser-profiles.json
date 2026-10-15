@@ -1,0 +1,32 @@
+{
+  "test": "apps/desktop/src-tauri/tests/browser.rs perf_profiles_open_to_interactive_and_memory (release build)",
+  "machine": "DEV: 2 vCPU Intel Xeon 2.10 GHz, 8 GB, Linux 6.18; Chromium 141.0.7390.37 headless (--ozone-platform=headless, sandbox on, non-root user)",
+  "page": "local test page on 127.0.0.1 (no internet time)",
+  "memory": "PSS (proportional set size) summed over each profile's browser processes; manager_core_rss_mb is the test process (manager core without its window)",
+  "profiles": [
+    {
+      "profiles_open": 1,
+      "cold_open_to_interactive_ms": { "p50": 531.9, "p95": 531.9 },
+      "warm_open_to_interactive_ms": { "p50": 323.9, "p95": 323.9 },
+      "browsers_pss_mb": 241,
+      "browsers_pss_mb_per_profile": 241,
+      "manager_core_rss_mb": 10
+    },
+    {
+      "profiles_open": 5,
+      "cold_open_to_interactive_ms": { "p50": 339.5, "p95": 417.6 },
+      "warm_open_to_interactive_ms": { "p50": 346.1, "p95": 450.5 },
+      "browsers_pss_mb": 616,
+      "browsers_pss_mb_per_profile": 123,
+      "manager_core_rss_mb": 11
+    },
+    {
+      "profiles_open": 10,
+      "cold_open_to_interactive_ms": { "p50": 361.4, "p95": 460.0 },
+      "warm_open_to_interactive_ms": { "p50": 333.6, "p95": 364.5 },
+      "browsers_pss_mb": 1101,
+      "browsers_pss_mb_per_profile": 110,
+      "manager_core_rss_mb": 13
+    }
+  ]
+}

@@ -736,3 +736,126 @@ describe('staff second factor at sign-in (R6)', () => {
     }
   });
 });
+
+describe('operations health and alerts (R7)', () => {
+  it('shows health figures to the owner, and the worker raises and clears operations alerts by itself', async () => {
+    const owner = await staff(['platform_owner']);
+    const ops = await get('/v1/admin/operations', owner.headers);
+    expect(ops.statusCode, ops.body).toBe(200);
+    expect(ops.json().health).toMatchObject({
+      signups_24h: expect.any(Number),
+      checkouts_open: expect.any(Number),
+      leases_active: expect.any(Number),
+      snapshots_committed_24h: expect.any(Number),
+      jobs_queued: expect.any(Number),
+      archiving_failing: false,
+    });
+    // The worker's role may run the watch (and nothing else of it is needed).
+    const n = await h.worker.query<{ n: number }>('select app.ops_watch() as n');
+    expect(n.rows[0]?.n).toEqual(expect.any(Number));
+    // An outbox event waiting 20 minutes raises "queue_backlog"; once it is published the next watch clears it.
+    // (Inside one transaction that is rolled back: other test files never see the event.)
+    await db.query('begin');
+    try {
+      await db.query(
+        `insert into app.outbox_events (event_id, org_id, actor_id, aggregate_id, aggregate_version, event_type, created_at)
+         values (app.new_id('evt'), 'org_x', 'usr_x', 'agg_x', 1, 'ops.test', now() - interval '20 minutes')`,
+      );
+      await db.query('select app.ops_watch()');
+      const open = await db.query(
+        "select detail from app.billing_alerts where kind = 'queue_backlog' and resolved_at is null",
+      );
+      expect(open.rows[0]?.detail).toMatch(/outbox event 2\d min/);
+      await db.query("update app.outbox_events set published_at = now() where event_type = 'ops.test'");
+      await db.query('select app.ops_watch()');
+      const after = await db.query(
+        "select count(*)::int as n from app.billing_alerts where kind = 'queue_backlog' and resolved_at is null",
+      );
+      expect(after.rows[0]?.n).toBe(0);
+      // A failed restore drill is an alert until a drill passes (restore-drill.sh calls these).
+      await db.query("select app.ops_alert('restore_failed', 'The restore drill failed')");
+      const alerts = await get('/v1/support/alerts', owner.headers);
+      if (alerts.statusCode === 200) {
+        // (seen only inside this transaction; the API's own connection does not see it)
+        expect(Array.isArray(alerts.json().items ?? alerts.json())).toBe(true);
+      }
+      await db.query("select app.ops_resolve('restore_failed')");
+      const restore = await db.query(
+        "select count(*)::int as n from app.billing_alerts where kind = 'restore_failed' and resolved_at is null",
+      );
+      expect(restore.rows[0]?.n).toBe(0);
+    } finally {
+      await db.query('rollback');
+    }
+  });
+});
+
+describe('the owner handles a customer case without shell or SQL (R7 matrix 7)', () => {
+  it('finds the customer, reads billing, adds an audited temporary override and resolves a webhook problem', async () => {
+    const owner = await staff(['platform_owner']);
+    const org = await newOrg(`Case ${randomBytes(2).toString('hex')}`);
+    // 1. Find the customer by the owner's address and open the case.
+    const list = await get(
+      `/v1/admin/customers?q=${encodeURIComponent(org.owner.person.email)}`,
+      owner.headers,
+    );
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json().items.map((i: { id: string }) => i.id)).toEqual([org.id]);
+    const detail = await get(`/v1/admin/customers/${org.id}`, owner.headers);
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(JSON.stringify(detail.json())).toContain(org.id);
+    // 2. A temporary, audited exception: more profiles for a week.
+    const reason = 'Customer migrating a large account while the plan is decided';
+    const ov = await post(`/v1/support/orgs/${org.id}/overrides`, owner.headers, {
+      scope: 'limit.profiles',
+      value: 777,
+      reason,
+      expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    });
+    expect(ov.statusCode, ov.body).toBe(201);
+    const own = (await get(`/v1/orgs/${org.id}/billing/subscription`, org.owner.headers)).json();
+    expect(own.limits.profiles).toBe(777);
+    expect(JSON.stringify(own)).not.toContain(reason);
+    // 3. A provider event for this customer failed: the owner sees it, asks for a resync and resolves the alert.
+    const evt = `evt_${randomBytes(10).toString('hex')}`;
+    await db.query(
+      `insert into app.billing_webhook_events (provider_event_id, type, livemode, provider_created_at, status, org_id, attempts, error)
+       values ($1, 'invoice.paid', false, now(), 'failed', $2, 5, 'test failure')`,
+      [evt, org.id],
+    );
+    const alertId = (
+      await db.query<{ id: string }>(
+        `insert into app.billing_alerts (id, kind, org_id, ref, detail) values (app.new_id('alr'), 'event_failed', $1, $2, 'Provider event failing')
+         returning id`,
+        [org.id, evt],
+      )
+    ).rows[0]?.id;
+    const ops = (await get('/v1/admin/operations', owner.headers)).json();
+    expect(
+      ops.webhooks.recent_failures.some((w: { provider_event_id: string }) => w.provider_event_id === evt),
+    ).toBe(true);
+    const resync = await post(`/v1/admin/customers/${org.id}/resync`, owner.headers);
+    expect(resync.statusCode, resync.body).toBe(202);
+    const resolved = await post(`/v1/support/alerts/${alertId}/resolve`, owner.headers);
+    expect(resolved.statusCode, resolved.body).toBeLessThan(300);
+    const open = await db.query('select 1 from app.billing_alerts where id = $1 and resolved_at is null', [
+      alertId,
+    ]);
+    expect(open.rowCount).toBe(0);
+    // Every step is in the audit trails.
+    const trail = await db.query<{ action: string }>(
+      'select action from app.platform_audit where org_id = $1 or target = $1 order by at',
+      [org.id],
+    );
+    const actions = trail.rows.map((r) => r.action);
+    expect(actions).toContain('admin.resync_requested');
+    const orgAudit = await db.query<{ action: string }>(
+      "select action from app.audit_events where org_id = $1 and action like 'support.%'",
+      [org.id],
+    );
+    expect(orgAudit.rows.map((r) => r.action)).toContain('support.override_added');
+    await db.query("update app.billing_webhook_events set status = 'ignored' where provider_event_id = $1", [
+      evt,
+    ]);
+  });
+});
