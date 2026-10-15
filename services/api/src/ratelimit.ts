@@ -43,6 +43,8 @@ export const LIMITS = {
   contactPerEmail: { bucket: 'contact.email', max: 3, windowSeconds: 3600 },
   deletionPerUser: { bucket: 'deletion.user', max: 5, windowSeconds: 86_400 },
   unsubscribePerIp: { bucket: 'unsubscribe.ip', max: 60, windowSeconds: 3600 },
+  // ADR-0027: the desktop proxy check (one per proxy test or launch check; many people may share an exit address).
+  netcheckPerIp: { bucket: 'netcheck.ip', max: 300, windowSeconds: 600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one hit; throws RATE_LIMITED (with retry_after_seconds) above the limit. */

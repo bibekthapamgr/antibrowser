@@ -869,3 +869,79 @@ fn fail_open_is_visible_when_traffic_goes_direct() {
         json!({ "status": network["status"], "direct_connections": network["direct_connections"] }),
     );
 }
+
+/// ADR-0027: a profile that matches its proxy shows the proxy location's time zone and language to pages, and its
+/// WebRTC stays on the proxy even with fail-closed off (no STUN packets from this computer's own route).
+#[test]
+fn matching_profile_shows_the_proxy_locations_time_zone_and_language() {
+    let Some(env) = env() else { return };
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let site = Site::start();
+    let stun = Stun::start();
+    let check = pb_netproxy::testing::TestCheckService::start_with_body(
+        "check.pb.test",
+        "ip=203.0.113.7\nloc=JP\ncity=Tokyo\ntz=Asia/Tokyo\nlat=35.69\nlon=139.69\nlang=ja-JP\n",
+    );
+    env.state
+        .set_network_settings(pb_desktop_lib::network::NetworkSettings {
+            trust: check.ca.trust(),
+            check: Some(pb_netproxy::check::CheckTarget {
+                host: "check.pb.test".into(),
+                port: 443,
+                path: "/v1/netcheck".into(),
+            }),
+        });
+    let proxy = TestProxy::http(ProxyOptions {
+        login: Some(("match".into(), "pw-M4tch".into())),
+        hosts: [
+            (SITE.to_owned(), site.addr),
+            ("check.pb.test".to_owned(), check.addr()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    });
+    let proxy_id = env.proxy(&proxy, ("match", "pw-M4tch"));
+    let privacy: PrivacyConfig =
+        serde_json::from_value(json!({ "match_proxy": true })).unwrap_or_else(|e| panic!("{e}"));
+    let id = env.profile("Matching", Some(privacy));
+    // Fail-closed off: WebRTC is kept on the proxy by matching alone.
+    env.assign(&id, &proxy_id, false);
+    let stun_param = stun.addr.map(|a| a.to_string()).unwrap_or_default();
+    // No check yet: the launch checks first.
+    env.open(
+        &id,
+        &format!("http://{SITE}/?who=matching&stun={stun_param}"),
+    );
+    let report = site.wait_report("matching", Duration::from_secs(60));
+    std::thread::sleep(Duration::from_secs(2));
+    env.close(&id);
+    let report = report.unwrap_or_else(|| panic!("no report; proxy log {:?}", proxy.log()));
+    assert_eq!(
+        check.requests(),
+        1,
+        "the launch checked the proxy's location"
+    );
+    assert_eq!(report["languages"][0], json!("ja-JP"), "{report}");
+    let lang_header = site
+        .seen()
+        .iter()
+        .find(|s| s.line.starts_with("GET /?"))
+        .and_then(|s| s.header("accept-language").map(str::to_owned))
+        .unwrap_or_default();
+    assert!(lang_header.starts_with("ja-JP"), "{lang_header}");
+    // Tokyo is UTC+9 all year.
+    let tokyo = report["tz"] == json!("Asia/Tokyo") && report["offset"] == json!(-540);
+    if cfg!(windows) {
+        assert!(!tokyo, "documented as unavailable on Windows: {report}");
+    } else {
+        assert!(tokyo, "{report}");
+    }
+    assert_eq!(stun.packets(), 0, "WebRTC stayed on the proxy");
+    evidence(
+        "match-proxy",
+        json!({ "languages": report["languages"], "accept_language": lang_header, "tz": report["tz"],
+                "utc_offset_minutes": report["offset"], "stun_packets": stun.packets(),
+                "permissions": report["permissions"] }),
+    );
+}

@@ -6,7 +6,7 @@
 
 use crate::migrations::name_key;
 use crate::{LocalStore, StoreError};
-use pb_runtime::{NetworkCheckId, ProfileId, ProxyId, WorkspaceId};
+use pb_runtime::{NetworkCheckId, ProfileId, ProxyGeo, ProxyId, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 
@@ -14,7 +14,7 @@ use serde::Serialize;
 pub const CHECK_RETENTION_DAYS: u32 = 7;
 pub const KINDS: &[&str] = &["http", "https", "socks5"];
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NetworkCheck {
     pub id: NetworkCheckId,
     pub proxy_id: ProxyId,
@@ -24,9 +24,11 @@ pub struct NetworkCheck {
     pub latency_ms: Option<u64>,
     pub egress_ip: Option<String>,
     pub checked_at: String,
+    /// The check service's estimate of where the exit address is (ADR-0027); `None` when it gave none.
+    pub geo: Option<ProxyGeo>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProxyConfig {
     pub id: ProxyId,
     pub workspace_id: WorkspaceId,
@@ -122,7 +124,8 @@ const SELECT_PROXY: &str =
     "select x.id, x.workspace_id, x.owner_scope, x.name, x.type, x.host, x.port,
        x.credential_ref, x.expires_at, x.notes, x.version, x.created_at, x.updated_at,
        (select count(*) from profile_network_settings ns where ns.proxy_id = x.id),
-       c.id, c.result, c.error_code, c.latency_ms, c.egress_ip, c.checked_at
+       c.id, c.result, c.error_code, c.latency_ms, c.egress_ip, c.checked_at,
+       c.country, c.city, c.timezone, c.language, c.latitude, c.longitude
      from proxy_configs x
      left join network_checks c on c.id = (select id from network_checks where proxy_id = x.id
                                            order by checked_at desc, rowid desc limit 1)";
@@ -148,6 +151,7 @@ fn row_to_proxy(r: &rusqlite::Row<'_>) -> rusqlite::Result<Result<ProxyConfig, S
                 latency_ms: r.get::<_, Option<i64>>(17)?.map(|v| v.max(0) as u64),
                 egress_ip: r.get(18)?,
                 checked_at: r.get(19)?,
+                geo: geo_at(r, 20)?,
             })
         }
     };
@@ -185,7 +189,24 @@ fn row_to_check(r: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NetworkCheck, 
         latency_ms: r.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as u64),
         egress_ip: r.get(5)?,
         checked_at: r.get(6)?,
+        geo: geo_at(r, 7)?,
     }))
+}
+
+const CHECK_COLUMNS: &str = "id, proxy_id, result, error_code, latency_ms, egress_ip, checked_at,
+       country, city, timezone, language, latitude, longitude";
+
+/// The six location columns starting at `i`; `None` when all are empty.
+fn geo_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Option<ProxyGeo>> {
+    let geo = ProxyGeo {
+        country: r.get(i)?,
+        city: r.get(i + 1)?,
+        timezone: r.get(i + 2)?,
+        language: r.get(i + 3)?,
+        latitude: r.get(i + 4)?,
+        longitude: r.get(i + 5)?,
+    };
+    Ok((geo != ProxyGeo::default()).then_some(geo))
 }
 
 /// The routing settings of one profile (no row: no proxy, fail-closed on).
@@ -379,19 +400,23 @@ impl LocalStore {
             .collect()
     }
 
-    /// Records a user-started check. Only an address (validated by the caller), a latency and an error code.
+    /// Records a check. Only an address (validated by the caller), a latency, an error code and the service's
+    /// location estimate (validated when the answer was read; the table's checks hold it to the same shapes).
     pub fn record_check(
         &self,
         proxy: &ProxyId,
         error_code: Option<&str>,
         latency_ms: Option<u64>,
         egress_ip: Option<&str>,
+        geo: Option<&ProxyGeo>,
     ) -> Result<NetworkCheck, StoreError> {
         let id = NetworkCheckId::generate().map_err(|_| StoreError::Corrupt)?;
+        let g = geo.cloned().unwrap_or_default();
         let conn = self.w()?;
         conn.execute(
-            "insert into network_checks (id, proxy_id, result, error_code, latency_ms, egress_ip)
-             values (?1, ?2, ?3, ?4, ?5, ?6)",
+            "insert into network_checks (id, proxy_id, result, error_code, latency_ms, egress_ip,
+                                         country, city, timezone, language, latitude, longitude)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id.as_str(),
                 proxy.as_str(),
@@ -399,12 +424,17 @@ impl LocalStore {
                 error_code,
                 latency_ms.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
                 egress_ip,
+                g.country,
+                g.city,
+                g.timezone,
+                g.language,
+                g.latitude,
+                g.longitude,
             ],
         )?;
-        let mut stmt = conn.prepare_cached(
-            "select id, proxy_id, result, error_code, latency_ms, egress_ip, checked_at
-               from network_checks where id = ?1",
-        )?;
+        let mut stmt = conn.prepare_cached(&format!(
+            "select {CHECK_COLUMNS} from network_checks where id = ?1"
+        ))?;
         stmt.query_row([id.as_str()], row_to_check)?
     }
 
@@ -414,10 +444,10 @@ impl LocalStore {
         limit: u32,
     ) -> Result<Vec<NetworkCheck>, StoreError> {
         let conn = self.r()?;
-        let mut stmt = conn.prepare_cached(
-            "select id, proxy_id, result, error_code, latency_ms, egress_ip, checked_at
-               from network_checks where proxy_id = ?1 order by checked_at desc, rowid desc limit ?2",
-        )?;
+        let mut stmt = conn.prepare_cached(&format!(
+            "select {CHECK_COLUMNS}
+               from network_checks where proxy_id = ?1 order by checked_at desc, rowid desc limit ?2"
+        ))?;
         stmt.query_map(params![proxy.as_str(), limit.clamp(1, 500)], row_to_check)?
             .map(|r| r.map_err(StoreError::from).and_then(|x| x))
             .collect()

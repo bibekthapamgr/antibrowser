@@ -98,6 +98,7 @@ export type {
   ProfileStatus,
   ProfileView,
   ProxyEdit,
+  ProxyGeo,
   ProxyInput,
   ProxyView,
   ResourcesView,
@@ -253,8 +254,12 @@ export interface NetworkRepository {
     failClosed: boolean,
     expectedVersion: number,
   ): Promise<ProfileView>;
-  /** `privacy.validate(config)`. */
-  validatePrivacy(config: PrivacyConfig, failClosedProxy: boolean): Promise<PrivacyValidation>;
+  /** `privacy.validate(config)`. `proxied`: the profile has a proxy (how matching the proxy is reported). */
+  validatePrivacy(
+    config: PrivacyConfig,
+    failClosedProxy: boolean,
+    proxied?: boolean,
+  ): Promise<PrivacyValidation>;
   privacyOptions(): Promise<PrivacyOptions>;
 }
 
@@ -312,9 +317,16 @@ export interface SyncRepository {
   copies(orgId: string): Promise<WorkspaceCopy[]>;
   /**
    * R3: makes sure this computer has a copy of a workspace profile (existing; restored from its newest backup; or an
-   * empty linked copy when it was never backed up). `proxyId` (this computer only) is set on a new copy.
+   * empty linked copy when it was never backed up). `proxyId` (this computer only) is set on a new copy; with it,
+   * `matchProxy` (default true, ADR-0027) makes the copy's time zone and language follow the proxy.
    */
-  prepare(orgId: string, orgProfileId: string, name: string, proxyId?: string): Promise<ProfileView>;
+  prepare(
+    orgId: string,
+    orgProfileId: string,
+    name: string,
+    proxyId?: string,
+    matchProxy?: boolean,
+  ): Promise<ProfileView>;
   /** R3: opens a workspace profile through the usual path (lease, newest backup, browser). */
   openWorkspaceProfile(orgId: string, orgProfileId: string, name: string): Promise<WorkspaceOpen>;
 }

@@ -10,6 +10,7 @@
   <li>Billing: plan, subscription state and invoices. Card details are handled by our payment provider, not by us.</li>
   <li>Messages you send through the contact form.</li>
   <li>Security and operations logs (without passwords, tokens or message contents).</li>
+  <li>Proxy checks: when the desktop app checks a proxy, our server sees the proxy's exit address and answers with an estimate of where that address is (from the IP geolocation database of DB-IP). The answer is not stored; the address appears only in the ordinary request log.</li>
 </ul>
 <h2>How we use it</h2>
 <p>To provide the service, to secure it, to bill workspaces, and to answer you. Product news only with your consent; you can stop it at any time.</p>

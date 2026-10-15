@@ -9,17 +9,23 @@
 //! the gateway adds the login and is fail-closed unless the user turned that off for the profile. Proxies are
 //! never changed under a running profile: an edit or a new assignment takes effect when the profile is reopened
 //! (the profile shows "restart required"), so a session never switches exit address on its own.
+//!
+//! Checks (ADR-0027) go through the proxy to the account server's `/v1/netcheck` when one is configured (https):
+//! it reports the exit address and an estimate of where it is (country, city, time zone, language). Without a
+//! server the interim Cloudflare trace service is used, which reports the country only. A profile that matches its
+//! proxy (`match_proxy`) takes its time zone and language from the proxy's last check; a check older than a day
+//! (or older than the proxy's last edit) is repeated before the profile opens, for at most 10 seconds.
 
 use crate::events::{PROFILES_CHANGED, WARNING};
 use crate::ipc::{self, IpcError};
 use crate::secrets::SecretStore;
 use crate::state::{AppState, ProfileView};
-use pb_netproxy::check::{self, CheckTarget};
+use pb_netproxy::check::{self, CheckOutcome, CheckTarget, TraceGeo};
 use pb_netproxy::gateway::{Fallback, Gateway};
 use pb_netproxy::tls::TlsTrust;
 use pb_netproxy::{AddressPolicy, Credentials, ProxyKind, Upstream};
 use pb_runtime::environment::{self, FieldReport, Platform, Preset, Support};
-use pb_runtime::{PrivacyConfig, ProfileId, ProxyId};
+use pb_runtime::{PrivacyConfig, ProfileId, ProxyGeo, ProxyId};
 use pb_storage::network::{GatewaySession, NetworkCheck, NewProxy, ProxyChanges, ProxyConfig};
 use pb_storage::{LocalProfile, LocalStore, ProfileUpdate, settings};
 use serde::{Deserialize, Serialize};
@@ -33,6 +39,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const EXPIRY_WARNING_DAYS: i64 = 7;
 const PROXY_NAME_CHARS: usize = 80;
 const PROXY_NOTES_CHARS: usize = 500;
+/// A proxy's location is re-checked before a matching profile opens when its last check is older than this.
+pub const MATCH_CHECK_MAX_AGE_SECS: i64 = 24 * 3600;
+/// How long a launch waits for that check.
+pub const MATCH_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 // ----------------------------------------------------------------------------- IPC input and output
 /// A proxy login as typed by the user. `Debug` never prints it.
@@ -200,16 +210,84 @@ pub(crate) struct Route {
 #[derive(Clone, Debug)]
 pub struct NetworkSettings {
     pub trust: TlsTrust,
-    pub check: CheckTarget,
+    /// A fixed check service (tests). `None`: the account server's `/v1/netcheck` when one is configured over
+    /// https, otherwise [`CheckTarget::default_service`].
+    pub check: Option<CheckTarget>,
 }
 
 impl Default for NetworkSettings {
     fn default() -> Self {
         Self {
             trust: TlsTrust::Platform,
-            check: CheckTarget::default_service(),
+            check: None,
         }
     }
+}
+
+/// `<server>/v1/netcheck` for an https account server with a host name (the check verifies its certificate).
+pub fn server_check_target(server: &str) -> Option<CheckTarget> {
+    let url = url::Url::parse(server).ok()?;
+    if url.scheme() != "https" || url.query().is_some() {
+        return None;
+    }
+    let host = match url.host()? {
+        url::Host::Domain(d) => d.to_owned(),
+        _ => return None,
+    };
+    Some(CheckTarget {
+        host,
+        port: url.port_or_known_default()?,
+        path: format!("{}/v1/netcheck", url.path().trim_end_matches('/')),
+    })
+}
+
+/// The location facts of a check answer, as stored.
+fn geo_of(t: &TraceGeo) -> ProxyGeo {
+    ProxyGeo {
+        country: t.country.clone(),
+        city: t.city.clone(),
+        timezone: t.timezone.clone(),
+        language: t.language.clone(),
+        latitude: t.latitude,
+        longitude: t.longitude,
+    }
+}
+
+/// Seconds since 1970 for `YYYY-MM-DDTHH:MM:SS(.fff)Z` (the store's timestamps).
+pub fn epoch_seconds(ts: &str) -> Option<i64> {
+    let days = days_from_date(ts.get(0..10)?)?;
+    if ts.as_bytes().get(10) != Some(&b'T') {
+        return None;
+    }
+    let h: i64 = ts.get(11..13)?.parse().ok()?;
+    let m: i64 = ts.get(14..16)?.parse().ok()?;
+    let sec: i64 = ts.get(17..19)?.parse().ok()?;
+    Some(days * 86_400 + h * 3600 + m * 60 + sec)
+}
+
+fn now_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Whether a proxy's last check can be used for matching without checking again: it worked, it is less than a day
+/// old, and the proxy was not edited after it.
+pub fn check_is_fresh(proxy: &ProxyConfig, now: i64) -> bool {
+    proxy.last_check.as_ref().is_some_and(|c| {
+        c.result == "ok"
+            && c.checked_at >= proxy.updated_at
+            && epoch_seconds(&c.checked_at)
+                .is_some_and(|t| now - t < MATCH_CHECK_MAX_AGE_SECS && t <= now + 300)
+    })
+}
+
+/// The location a launch matches, and why there is none.
+pub(crate) struct LaunchGeo {
+    pub geo: Option<ProxyGeo>,
+    /// A check error code, or `NO_LOCATION` (the service gave no time zone or language).
+    pub problem: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -620,25 +698,49 @@ impl AppState {
         let upstream = match self.upstream_for(&store, &proxy) {
             Ok(u) => u,
             Err(e) if e.code == ipc::PROXY_CREDENTIALS_MISSING.code => {
-                return Ok(store.record_check(&id, Some(e.code), None, None)?);
+                return Ok(store.record_check(&id, Some(e.code), None, None, None)?);
             }
             Err(e) => return Err(e),
         };
         let settings = self.network_settings();
+        let target = self.check_target(&store, &settings);
         let outcome = self
             .net
             .handle()
-            .spawn(async move { check::run(&upstream, &settings.trust, &settings.check).await })
+            .spawn(async move { check::run(&upstream, &settings.trust, &target).await })
             .await
             .map_err(|_| ipc::INTERNAL)?;
-        let record = match &outcome {
+        self.record_outcome(&store, &id, &outcome)
+    }
+
+    /// The service checks go to: a test override, the account server's `/v1/netcheck`, or Cloudflare's trace.
+    fn check_target(&self, store: &LocalStore, settings: &NetworkSettings) -> CheckTarget {
+        if let Some(t) = &settings.check {
+            return t.clone();
+        }
+        store
+            .cloud_state(pb_storage::cloud::SERVER_URL)
+            .ok()
+            .flatten()
+            .and_then(|s| server_check_target(&s))
+            .unwrap_or_else(CheckTarget::default_service)
+    }
+
+    fn record_outcome(
+        &self,
+        store: &LocalStore,
+        id: &ProxyId,
+        outcome: &Result<CheckOutcome, pb_netproxy::ProxyError>,
+    ) -> Result<NetworkCheck, IpcError> {
+        let record = match outcome {
             Ok(o) => store.record_check(
-                &id,
+                id,
                 None,
                 Some(o.latency_ms),
                 o.egress_ip.map(|ip| ip.to_string()).as_deref(),
+                o.geo.as_ref().map(geo_of).as_ref(),
             )?,
-            Err(e) => store.record_check(&id, Some(e.code()), None, None)?,
+            Err(e) => store.record_check(id, Some(e.code()), None, None, None)?,
         };
         let _ = store.audit(
             None,
@@ -652,6 +754,58 @@ impl AppState {
             Some(record.error_code.as_deref().unwrap_or(id.as_str())),
         );
         Ok(record)
+    }
+
+    /// The proxy location a matching profile's launch uses: the last check when it is fresh, otherwise a new check
+    /// (at most [`MATCH_CHECK_TIMEOUT`]). Runs on the launch's worker thread, never inside the network runtime.
+    pub(crate) fn launch_geo(&self, store: &LocalStore, profile: &LocalProfile) -> LaunchGeo {
+        let none = |problem: &str| LaunchGeo {
+            geo: None,
+            problem: Some(problem.to_owned()),
+        };
+        let Some(proxy) = profile
+            .proxy_id
+            .as_ref()
+            .and_then(|id| store.get_proxy(id).ok().flatten())
+        else {
+            return none(ipc::UNKNOWN_PROXY.code);
+        };
+        let check = if check_is_fresh(&proxy, now_seconds()) {
+            proxy.last_check.clone()
+        } else {
+            let upstream = match self.upstream_for(store, &proxy) {
+                Ok(u) => u,
+                Err(e) => return none(e.code),
+            };
+            let settings = self.network_settings();
+            let target = self.check_target(store, &settings);
+            let outcome = self.net.block_on(check::run_within(
+                &upstream,
+                &settings.trust,
+                &target,
+                MATCH_CHECK_TIMEOUT,
+            ));
+            match self.record_outcome(store, &proxy.id, &outcome) {
+                Ok(c) => Some(c),
+                Err(e) => return none(e.code),
+            }
+        };
+        let Some(check) = check else {
+            return none("CHECK_FAILED");
+        };
+        if let Some(code) = check.error_code {
+            return LaunchGeo {
+                geo: None,
+                problem: Some(code),
+            };
+        }
+        match check.geo {
+            Some(g) if g.timezone.is_some() || g.language.is_some() => LaunchGeo {
+                geo: Some(g),
+                problem: None,
+            },
+            _ => none("NO_LOCATION"),
+        }
     }
 
     // ------------------------------------------------------------------------- profiles
@@ -699,19 +853,34 @@ impl AppState {
     }
 
     /// `privacy.validate(config)`: whether the settings can be saved, and what this OS's browser will do with them.
+    /// `proxied`: whether the profile has a proxy (`None`: not said; matching is then reported as for a proxy).
     pub fn validate_privacy(
         &self,
         config: &PrivacyConfig,
         fail_closed_proxy: bool,
+        proxied: Option<bool>,
     ) -> PrivacyValidation {
         let platform = Platform::current();
         let mut report = environment::report(config, platform);
-        if fail_closed_proxy {
+        let matching = config.match_proxy && proxied != Some(false);
+        if fail_closed_proxy || matching {
             report.retain(|r| r.field != "webrtc");
             report.push(FieldReport {
                 field: "webrtc",
                 support: Support::Applied,
-                message: "WebRTC can use only the proxy (set by fail-closed routing).",
+                message: if fail_closed_proxy {
+                    "WebRTC can use only the proxy (set by fail-closed routing)."
+                } else {
+                    "WebRTC can use only the proxy (set by matching the proxy)."
+                },
+            });
+        }
+        if config.match_proxy && proxied == Some(false) {
+            report.retain(|r| r.field != "match_proxy");
+            report.push(FieldReport {
+                field: "match_proxy",
+                support: Support::Unavailable,
+                message: "This profile has no proxy, so there is nothing to match. It uses this computer's settings.",
             });
         }
         let error = environment::validate(config).err().map(IpcError::from);

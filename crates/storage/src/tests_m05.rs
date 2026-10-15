@@ -4,7 +4,7 @@ use super::*;
 use crate::bulk::BulkOp;
 use crate::network::{GatewaySession, NewProxy, ProxyChanges};
 use crate::query::{ProfileFilter, Sort};
-use pb_runtime::{PrivacyConfig, ProxyId, WebRtcPolicy};
+use pb_runtime::{PrivacyConfig, ProxyGeo, ProxyId, WebRtcPolicy};
 
 fn pid(n: u32) -> ProfileId {
     ProfileId::parse(&format!("prf_01J9ZSEED0{n:016}")).unwrap_or_else(|_| panic!("id"))
@@ -237,8 +237,57 @@ fn bulk_proxy_assignment_reports_and_undoes() -> Result<(), StoreError> {
 fn checks_are_recorded_listed_and_expire_after_seven_days() -> Result<(), StoreError> {
     let (_d, store, ws) = open()?;
     store.create_proxy(proxy(&ws, 1, "A", false))?;
-    store.record_check(&xid(1), None, Some(120), Some("198.51.100.7"))?;
-    let failed = store.record_check(&xid(1), Some("PROXY_AUTH_FAILED"), None, None)?;
+    let berlin = ProxyGeo {
+        country: Some("DE".into()),
+        city: Some("Berlin".into()),
+        timezone: Some("Europe/Berlin".into()),
+        language: Some("de-DE".into()),
+        latitude: Some(52.52),
+        longitude: Some(13.41),
+    };
+    let good = store.record_check(
+        &xid(1),
+        None,
+        Some(120),
+        Some("198.51.100.7"),
+        Some(&berlin),
+    )?;
+    assert_eq!(good.geo.as_ref(), Some(&berlin));
+    assert_eq!(
+        store
+            .get_proxy(&xid(1))?
+            .and_then(|p| p.last_check)
+            .and_then(|c| c.geo),
+        Some(berlin.clone())
+    );
+    let failed = store.record_check(&xid(1), Some("PROXY_AUTH_FAILED"), None, None, None)?;
+    assert_eq!(failed.geo, None);
+    // The table holds location values to the same shapes the check parser accepts.
+    for bad in [
+        ProxyGeo {
+            timezone: Some("Europe/Berlin; rm".into()),
+            ..Default::default()
+        },
+        ProxyGeo {
+            language: Some("de-DE --x".into()),
+            ..Default::default()
+        },
+        ProxyGeo {
+            country: Some("de".into()),
+            ..Default::default()
+        },
+        ProxyGeo {
+            latitude: Some(91.0),
+            ..Default::default()
+        },
+    ] {
+        assert!(
+            store
+                .record_check(&xid(1), None, Some(1), None, Some(&bad))
+                .is_err(),
+            "{bad:?}"
+        );
+    }
     assert_eq!(
         (failed.result.as_str(), failed.error_code.as_deref()),
         ("error", Some("PROXY_AUTH_FAILED"))
@@ -300,5 +349,43 @@ fn gateway_sessions_and_privacy_settings_persist() -> Result<(), StoreError> {
         store.get_profile(&pid(1)),
         Err(StoreError::Corrupt)
     ));
+    Ok(())
+}
+
+#[test]
+fn upgrade_from_v12_keeps_checks_without_a_location() -> Result<(), StoreError> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("local.db");
+    {
+        let mut conn = Connection::open(&path)?;
+        let tx = conn.transaction()?;
+        for (_, _, step) in &migrations::MIGRATIONS[..12] {
+            step(&tx)?;
+        }
+        tx.pragma_update(None, "user_version", 12)?;
+        tx.execute(
+            "insert into workspaces (id, name) values ('wsp_01J9ZSEED0A010000000000000', 'W')",
+            [],
+        )?;
+        tx.execute(
+            "insert into proxy_configs (id, workspace_id, name, name_key, type, host, port)
+             values (?1, 'wsp_01J9ZSEED0A010000000000000', 'P', 'p', 'http', 'proxy.example', 3128)",
+            [xid(1).as_str()],
+        )?;
+        tx.execute(
+            "insert into network_checks (id, proxy_id, result, latency_ms, egress_ip)
+             values ('nck_01J9ZSEED0A010000000000000', ?1, 'ok', 50, '198.51.100.7')",
+            [xid(1).as_str()],
+        )?;
+        tx.commit()?;
+    }
+    let store = LocalStore::open(&path)?;
+    assert_eq!(store.schema_version()?, migrations::SCHEMA_VERSION);
+    let checks = store.list_checks(&xid(1), 10)?;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(
+        (checks[0].egress_ip.as_deref(), checks[0].geo.as_ref()),
+        (Some("198.51.100.7"), None)
+    );
     Ok(())
 }

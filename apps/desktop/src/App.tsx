@@ -599,6 +599,17 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
         );
       else if (w.code === 'PROXY_CONNECTION_LOST')
         notify("A profile's proxy connection could not be restored. Close and reopen that profile.", 'error');
+      else if (w.code === 'PROXY_MATCH_UNAVAILABLE')
+        void nameOf(w.profile_id).then((n) =>
+          notify(
+            `${n} opened without ${w.partial ? 'all of ' : ''}its proxy's time zone and language: ${
+              w.reason === 'NO_LOCATION'
+                ? 'the check service gave no location for the proxy (it needs your account server).'
+                : `the proxy check did not work. ${PROXY_ERROR_HELP[w.reason] ?? ''}`.trim()
+            } WebRTC still uses only the proxy, and websites are still refused this computer's location unless you allowed it.`,
+            'error',
+          ),
+        );
       else if (w.code === 'PROXY_EXPIRED' || w.code === 'PROXY_EXPIRING') {
         notify(
           w.code === 'PROXY_EXPIRED'

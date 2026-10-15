@@ -24,6 +24,26 @@ Settings left at their default are **removed** from `Preferences` (not written a
 really returns the browser to its own behaviour. A setting the OS cannot apply is shown in the drawer as
 “Not available on this computer” with the reason, never silently claimed.
 
+### Match timezone, language and location to the proxy (`match_proxy`, ADR-0027)
+
+For a profile with a proxy. The values come from the proxy's last successful check (the check service's estimate for
+the exit address); the check is repeated before the profile opens when it is missing, failed, older than 24 hours or
+older than the proxy's last edit (at most 10 s; on failure the profile opens without the match and the person is
+told). A language or time zone chosen by hand always wins. On by default for profiles created with a proxy; existing
+profiles keep their behaviour until it is turned on.
+
+| What | Applied as | Windows | macOS | Linux |
+|---|---|---|---|---|
+| Time zone | the check's IANA zone as `TZ` (any IANA-shaped name, not only the list above) | **Unavailable** (system zone; the drawer says “partly applied”) | Applied | Applied |
+| Page language | the check's `ll-CC` tag as `--lang` and `intl.accept_languages = "ll-CC,ll"` | Applied | Partial (menus follow macOS) | Applied |
+| WebRTC | `webrtc.ip_handling_policy = disable_non_proxied_udp`, even with fail-closed off | Applied | Applied | Applied |
+| Location permission | `geolocation` content setting **Block** when it was “Ask” (an explicit Allow is kept) | Applied | Applied | Applied |
+
+Not changed (deliberately): canvas, WebGL, audio, fonts, user agent, `navigator` properties, screen and hardware
+values, and the coordinates a page could get from the Geolocation API (it is refused, not faked). Real-browser
+evidence: `matching_profile_shows_the_proxy_locations_time_zone_and_language` (Linux: `Asia/Tokyo`, UTC+9,
+`navigator.languages = ["ja-JP"]`, `Accept-Language: ja-JP,ja;q=0.9`, 0 STUN packets with fail-closed off).
+
 Forced by routing: a profile with a proxy and fail-closed on always gets WebRTC “only through the proxy” and has
 speculative pre-connects/DNS prefetch turned off (`net.network_prediction_options = 2`); the drawer shows the WebRTC
 choice as locked and says why.

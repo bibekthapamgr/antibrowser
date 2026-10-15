@@ -149,6 +149,11 @@ export interface AppConfig {
     downloadChannelUrl: string | null;
     releaseKeysFile: string | null;
   };
+  /**
+   * ADR-0027: IP geolocation for the desktop proxy check (/v1/netcheck). `dbPath` (GEOIP_DB): an absolute path to a
+   * MaxMind-format City database (DB-IP "IP to City Lite" in production); null: the check answers with the address only.
+   */
+  geo: { dbPath: string | null };
 }
 
 export class ConfigError extends Error {
@@ -370,6 +375,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
     releaseKeysFile: env.RELEASE_KEYS_FILE || null,
   };
 
+  const geoDb = env.GEOIP_DB || null;
+  if (geoDb && (!geoDb.startsWith('/') || geoDb.includes('..') || !geoDb.endsWith('.mmdb')))
+    problems.push('GEOIP_DB must be an absolute path to a .mmdb file');
+
   const kms = loadKms(env, local, problems);
   if (objectStore && !kms)
     problems.push('a key provider (KMS_LOCAL_KEY_FILE) is required with object storage');
@@ -397,6 +406,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     web,
     email: { taskKey, smtpUrl, from: emailFrom },
     site,
+    geo: { dbPath: geoDb },
   };
 }
 

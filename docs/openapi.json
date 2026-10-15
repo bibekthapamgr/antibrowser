@@ -631,6 +631,209 @@
         }
       }
     },
+    "/v1/netcheck": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "description": "The address this server saw, for the desktop proxy check, as `key=value` lines (Cloudflare trace format): `ip=`, and when a geolocation database is configured `loc=` (country), `city=`, `tz=` (IANA time zone), `lat=`/`lon=` (two decimals) and `lang=` (the country’s most likely language, BCP 47). IP geolocation by DB-IP (https://db-ip.com, CC BY 4.0). An estimate, not a verified location. The address is the client address after TRUST_PROXY_HOPS trusted reverse-proxy hops. Rate limited per address.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "key=value lines",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED",
+                        "MFA_REQUIRED",
+                        "LAST_PLATFORM_OWNER",
+                        "PUBLISH_IN_PROGRESS",
+                        "PUBLISH_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "request_id",
+                    "retryable",
+                    "safe_details"
+                  ],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "VALIDATION_FAILED",
+                        "UNAUTHENTICATED",
+                        "FORBIDDEN",
+                        "NOT_FOUND",
+                        "VERSION_CONFLICT",
+                        "LEASE_HELD",
+                        "LEASE_NOT_HELD",
+                        "FENCING_TOKEN_STALE",
+                        "IDEMPOTENCY_IN_PROGRESS",
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "PRECONDITION_REQUIRED",
+                        "REAUTHENTICATION_REQUIRED",
+                        "EMAIL_NOT_VERIFIED",
+                        "ALREADY_EXISTS",
+                        "LAST_OWNER",
+                        "ALREADY_MEMBER",
+                        "INVITATION_EXPIRED",
+                        "INVITATION_USED",
+                        "INVITATION_WRONG_ACCOUNT",
+                        "RATE_LIMITED",
+                        "QUOTA_EXCEEDED",
+                        "SNAPSHOT_TOO_LARGE",
+                        "UPLOAD_INCOMPLETE",
+                        "SYNC_STATE_CONFLICT",
+                        "SNAPSHOT_UNAVAILABLE",
+                        "STORAGE_UNAVAILABLE",
+                        "LEASE_UNCERTAIN",
+                        "PROFILE_NOT_IN_USE",
+                        "RUNTIME_TOO_OLD",
+                        "ENTITLEMENT_REQUIRED",
+                        "NOTE_LOOKS_SECRET",
+                        "TOKEN_SCOPE_MISSING",
+                        "URL_NOT_APPROVED",
+                        "QUEUE_FULL",
+                        "JOB_FINISHED",
+                        "JOB_CLAIM_STALE",
+                        "AGENT_UNAVAILABLE",
+                        "WEBHOOK_DESTINATION_BLOCKED",
+                        "PLAN_LIMIT_REACHED",
+                        "SUBSCRIPTION_RESTRICTED",
+                        "BILLING_UNAVAILABLE",
+                        "ALREADY_SUBSCRIBED",
+                        "PLAN_NOT_AVAILABLE",
+                        "INTERNAL",
+                        "UNAVAILABLE",
+                        "CLIENT_UPDATE_REQUIRED",
+                        "TERMS_REQUIRED",
+                        "WORKSPACE_SUSPENDED",
+                        "ACCOUNT_SUSPENDED",
+                        "CSRF_FAILED",
+                        "MFA_REQUIRED",
+                        "LAST_PLATFORM_OWNER",
+                        "PUBLISH_IN_PROGRESS",
+                        "PUBLISH_FAILED"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "safe_details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/config": {
       "get": {
         "tags": [

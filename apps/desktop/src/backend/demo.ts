@@ -168,7 +168,27 @@ const DEFAULT_PRIVACY: FullPrivacy = {
   text_size: 'default',
   reduced_motion: false,
   preset: null,
+  match_proxy: false,
 };
+/** Demo locations of the sample exit addresses (documentation ranges; what the project's server would estimate). */
+const DEMO_GEO = {
+  socks5: {
+    country: 'US',
+    city: 'New York',
+    timezone: 'America/New_York',
+    language: 'en-US',
+    latitude: 40.71,
+    longitude: -74.01,
+  },
+  other: {
+    country: 'DE',
+    city: 'Frankfurt am Main',
+    timezone: 'Europe/Berlin',
+    language: 'de-DE',
+    latitude: 50.11,
+    longitude: 8.68,
+  },
+} satisfies Record<string, NonNullable<NetworkCheck['geo']>>;
 const LANGUAGES: [string, string][] = [
   ['en-US', 'English (United States)'],
   ['en-GB', 'English (United Kingdom)'],
@@ -706,7 +726,8 @@ export function demoBackend(requested = ''): Backend {
         error_code: null,
         latency_ms: 182,
         egress_ip: '203.0.113.40',
-        checked_at: new Date(Date.now() - 3_600_000).toISOString(),
+        checked_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+        geo: DEMO_GEO.socks5,
       });
     }
     const first = recs[0];
@@ -878,7 +899,7 @@ export function demoBackend(requested = ''): Backend {
       throw E.INVALID_WINDOW_SIZE;
     return full;
   }
-  const report = (c: FullPrivacy, failClosed: boolean): PrivacyValidation['report'] => {
+  const report = (c: FullPrivacy, failClosed: boolean, proxied?: boolean): PrivacyValidation['report'] => {
     const out: PrivacyValidation['report'] = [];
     if (c.timezone)
       out.push(
@@ -912,6 +933,29 @@ export function demoBackend(requested = ''): Backend {
       });
     if (c.text_size !== 'default')
       out.push({ field: 'text_size', support: 'applied', message: 'Default text size for pages.' });
+    if (c.match_proxy)
+      out.push(
+        proxied === false
+          ? {
+              field: 'match_proxy',
+              support: 'unavailable',
+              message:
+                "This profile has no proxy, so there is nothing to match. It uses this computer's settings.",
+            }
+          : platform === 'windows'
+            ? {
+                field: 'match_proxy',
+                support: 'partial',
+                message:
+                  "With a proxy, the page language follows the proxy's location, WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it). On Windows the browser keeps the computer's time zone.",
+              }
+            : {
+                field: 'match_proxy',
+                support: 'applied',
+                message:
+                  "With a proxy, the time zone and page language follow the proxy's location, WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it). Other device details are not changed.",
+              },
+      );
     if (c.reduced_motion)
       out.push({
         field: 'reduced_motion',
@@ -923,6 +967,12 @@ export function demoBackend(requested = ''): Backend {
         field: 'webrtc',
         support: 'applied',
         message: 'WebRTC can use only the proxy (set by fail-closed routing).',
+      });
+    else if (c.match_proxy && proxied !== false)
+      out.push({
+        field: 'webrtc',
+        support: 'applied',
+        message: 'WebRTC can use only the proxy (set by matching the proxy).',
       });
     else if (c.webrtc !== 'default')
       out.push({
@@ -1339,7 +1389,14 @@ export function demoBackend(requested = ''): Backend {
     teamPhase: (pid) => teamHooks?.phase(pid) ?? null,
     view: (pid) => view(find(pid)),
     launch: (pid) => backend.profiles.launch(pid),
-    assignProxy: (pid, proxyId) => backend.network.assign(pid, proxyId, false, find(pid).version),
+    assignProxy: async (pid, proxyId, matchProxy) => {
+      const assigned = await backend.network.assign(pid, proxyId, false, find(pid).version);
+      if (!matchProxy) return assigned;
+      return backend.profiles.update(pid, {
+        expectedVersion: assigned.version,
+        privacy: { ...assigned.privacy, match_proxy: true },
+      });
+    },
   });
   syncHooks = sync;
   const migration = demoMigration({
@@ -1757,6 +1814,24 @@ export function demoBackend(requested = ''): Backend {
           pid: 5000 + opSeq,
           launched_key: netKey(p),
         });
+        // ADR-0027: a matching profile's proxy is checked first when its last check is missing or a day old.
+        if (px && p.proxy_id && p.privacy.match_proxy) {
+          const last = checks.find((c) => c.proxy_id === px.id);
+          const fresh =
+            last?.result === 'ok' && Date.now() - new Date(last.checked_at).getTime() < 24 * 3_600_000;
+          if (px.down)
+            setTimeout(
+              () =>
+                emit('warning', {
+                  code: 'PROXY_MATCH_UNAVAILABLE',
+                  profile_id: pid,
+                  reason: 'PROXY_UNREACHABLE',
+                  partial: false,
+                }),
+              600,
+            );
+          else if (!fresh) void backend.network.testProxy(px.id).then(() => changed());
+        }
         if (px?.down)
           setTimeout(
             () =>
@@ -2334,6 +2409,8 @@ export function demoBackend(requested = ''): Backend {
           latency_ms: error ? null : 120 + Math.floor(Math.random() * 180),
           egress_ip: error ? null : x.type === 'socks5' ? '203.0.113.40' : '198.51.100.23',
           checked_at: now(),
+          // Demo: the location the project's server would report for the exit address (an estimate).
+          geo: error ? null : x.type === 'socks5' ? DEMO_GEO.socks5 : DEMO_GEO.other,
         };
         checks.unshift(c);
         return c;
@@ -2362,16 +2439,20 @@ export function demoBackend(requested = ''): Backend {
         changed();
         return view(find(profileId));
       },
-      async validatePrivacy(config: PrivacyConfig, failClosedProxy: boolean): Promise<PrivacyValidation> {
+      async validatePrivacy(
+        config: PrivacyConfig,
+        failClosedProxy: boolean,
+        proxied?: boolean,
+      ): Promise<PrivacyValidation> {
         try {
           const full = checkPrivacy(config);
-          return { valid: true, error: null, platform, report: report(full, failClosedProxy) };
+          return { valid: true, error: null, platform, report: report(full, failClosedProxy, proxied) };
         } catch (e) {
           return {
             valid: false,
             error: e as IpcError,
             platform,
-            report: report({ ...DEFAULT_PRIVACY, ...config }, failClosedProxy),
+            report: report({ ...DEFAULT_PRIVACY, ...config }, failClosedProxy, proxied),
           };
         }
       },

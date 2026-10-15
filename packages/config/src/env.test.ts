@@ -240,3 +240,15 @@ describe('billing configuration (milestone 11)', () => {
     expect(() => loadConfig({ ...dev, STRIPE_PORTAL_CONFIGURATION: 'https://x' })).toThrow(/bpc_/);
   });
 });
+
+describe('IP geolocation (ADR-0027)', () => {
+  const dev = { ...base, APP_ENV: 'dev', DEV_AUTH_ENABLED: 'true', DEV_AUTH_SECRET: fixture };
+  it('is optional and must be an absolute .mmdb path', () => {
+    expect(loadConfig(dev).geo.dbPath).toBeNull();
+    expect(loadConfig({ ...dev, GEOIP_DB: '/var/lib/pb-geo/dbip-city-lite.mmdb' }).geo.dbPath).toBe(
+      '/var/lib/pb-geo/dbip-city-lite.mmdb',
+    );
+    for (const bad of ['geo.mmdb', '/var/lib/../etc/passwd.mmdb', '/var/lib/pb-geo/city.csv'])
+      expect(() => loadConfig({ ...dev, GEOIP_DB: bad }), bad).toThrow(/GEOIP_DB/);
+  });
+});

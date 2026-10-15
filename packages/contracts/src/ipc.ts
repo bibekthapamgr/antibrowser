@@ -57,6 +57,11 @@ export const TextSize = Type.Enum(['default', 'large', 'larger']);
 /**
  * Privacy and environment settings: configuration and QA controls the browser itself supports. They change what
  * the browser sends and shows; they do not make a profile look like a different device, and nothing is randomised.
+ *
+ * `match_proxy` (ADR-0027): with a proxy, the time zone and page language follow the location the check service
+ * estimated for the proxy's exit address (manual `language`/`timezone` win), WebRTC uses only the proxy and websites
+ * are refused this computer's location. Canvas, WebGL, audio, fonts and other device signals are not changed; on
+ * Windows the browser keeps the computer's time zone.
  */
 export const PrivacyConfig = Type.Object(
   {
@@ -79,6 +84,12 @@ export const PrivacyConfig = Type.Object(
     text_size: Type.Optional(TextSize),
     reduced_motion: Type.Optional(Type.Boolean()),
     preset: Type.Optional(Nullable(Type.String({ maxLength: 40 }))),
+    match_proxy: Type.Optional(
+      Type.Boolean({
+        description:
+          "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed.",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -652,6 +663,18 @@ export const ProxyEdit = Type.Object(
   { additionalProperties: false },
 );
 export type ProxyEdit = Static<typeof ProxyEdit>;
+/** Where the check service estimated the exit address to be (ADR-0027): an estimate, not a verified location. */
+export const ProxyGeo = Type.Object({
+  country: Nullable(Type.String({ pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2' })),
+  city: Nullable(Type.String({ minLength: 1, maxLength: 64 })),
+  timezone: Nullable(
+    Type.String({ maxLength: 64, pattern: '^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$' }),
+  ),
+  language: Nullable(Type.String({ pattern: '^[a-z]{2,3}-[A-Z]{2}$' })),
+  latitude: Nullable(Type.Number({ minimum: -90, maximum: 90 })),
+  longitude: Nullable(Type.Number({ minimum: -180, maximum: 180 })),
+});
+export type ProxyGeo = Static<typeof ProxyGeo>;
 export const NetworkCheck = Type.Object({
   id: Type.String({ pattern: NetworkCheckIdPattern }),
   proxy_id: Type.String({ pattern: ProxyIdPattern }),
@@ -660,6 +683,8 @@ export const NetworkCheck = Type.Object({
   latency_ms: Nullable(Type.Integer({ minimum: 0 })),
   egress_ip: Nullable(Type.String({ maxLength: 45, description: 'The address the check service saw.' })),
   checked_at: Type.String(),
+  /** The service's location estimate for the exit address (the project's server; Cloudflare gives the country only). */
+  geo: Type.Optional(Nullable(ProxyGeo)),
 });
 export type NetworkCheck = Static<typeof NetworkCheck>;
 export const ProxyView = Type.Object({
@@ -1507,7 +1532,13 @@ export const COMMANDS = {
     result: ProfileView,
   },
   validate_privacy: {
-    args: Type.Object({ config: PrivacyConfig, failClosedProxy: Type.Optional(Type.Boolean()) }),
+    args: Type.Object({
+      config: PrivacyConfig,
+      failClosedProxy: Type.Optional(Type.Boolean()),
+      proxied: Type.Optional(
+        Type.Boolean({ description: 'The profile has a proxy (matching is reported for it).' }),
+      ),
+    }),
     result: PrivacyValidation,
   },
   get_privacy_options: { args: Type.Object({}), result: PrivacyOptions },
@@ -1759,6 +1790,11 @@ export const COMMANDS = {
       orgProfileId: Type.String({ pattern: '^prf_[0-9A-HJKMNP-TV-Z]{26}$' }),
       name: Type.String({ minLength: 1, maxLength: 120 }),
       proxyId: Type.Optional(Type.String({ pattern: ProxyIdPattern })),
+      matchProxy: Type.Optional(
+        Type.Boolean({
+          description: 'With proxyId (default true): time zone and language follow the proxy.',
+        }),
+      ),
     }),
     result: ProfileView,
   },
@@ -1838,6 +1874,14 @@ export const EVENTS = {
       code: Type.Literal('PROXY_CONNECTION_LOST'),
       profile_id: Type.String({ pattern: ProfileIdPattern }),
       reason: Type.String(),
+    }),
+    // ADR-0027: a profile that matches its proxy opened without (part of) the match: the check failed or the service
+    // gave no location (`reason`: a check error code or NO_LOCATION). `partial`: one of time zone / language was set.
+    Type.Object({
+      code: Type.Literal('PROXY_MATCH_UNAVAILABLE'),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      reason: Type.String({ maxLength: 64 }),
+      partial: Type.Boolean(),
     }),
     Type.Object({
       code: Type.Union([Type.Literal('PROXY_EXPIRING'), Type.Literal('PROXY_EXPIRED')]),

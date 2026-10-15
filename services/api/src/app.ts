@@ -28,6 +28,7 @@ import { type ProviderCall, providerCaller } from './billing/provision.ts';
 import { planLimitError, restrictedFromDatabase } from './billing/state.ts';
 import { createStripe, type Stripe, type StripePrice } from './billing/stripe.ts';
 import { withTx } from './db.ts';
+import { type GeoLookup, openGeoLookup } from './geo.ts';
 import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
 import { hit, LIMITS } from './ratelimit.ts';
 import { downloadsReader } from './release.ts';
@@ -48,6 +49,7 @@ import { importRoutes } from './routes/import.ts';
 import { invitationRoutes } from './routes/invitations.ts';
 import { leaseRoutes } from './routes/leases.ts';
 import { meRoutes } from './routes/me.ts';
+import { netcheckRoutes } from './routes/netcheck.ts';
 import { onboardingRoutes } from './routes/onboarding.ts';
 import { organizationRoutes } from './routes/organizations.ts';
 import { portalConfigRoutes, portalRoutes, publicSiteRoutes } from './routes/portal.ts';
@@ -88,6 +90,8 @@ export interface Deps {
   webIdTokens: IdTokenVerifier | null;
   /** R4: the download page's view of the signed stable channel (cached). */
   downloads: () => Promise<PublicDownloads>;
+  /** ADR-0027: IP geolocation for /v1/netcheck (answers null without a database). */
+  geo: GeoLookup;
 }
 
 export interface BillingDeps {
@@ -165,6 +169,8 @@ export interface BuildOptions {
   downloads?: () => Promise<PublicDownloads>;
   /** Tests inject the raw provider caller used to publish plans (R5). */
   provider?: ProviderCall;
+  /** Tests inject the IP geolocation lookup (ADR-0027); normally read from GEOIP_DB. */
+  geo?: GeoLookup;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -258,6 +264,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     downloads:
       opts.downloads ??
       downloadsReader({ channelUrl: config.site.downloadChannelUrl, keysFile: config.site.releaseKeysFile }),
+    geo: opts.geo ?? (await openGeoLookup(config.geo.dbPath, (m) => app.log.warn(m))),
   };
 
   await app.register(swagger, {
@@ -464,6 +471,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
     async (v1) => {
       const scoped = v1 as unknown as App;
       healthRoutes(scoped, deps);
+      netcheckRoutes(scoped, deps);
       authRoutes(scoped, deps);
       deviceRoutes(scoped, deps);
       meRoutes(scoped, deps);

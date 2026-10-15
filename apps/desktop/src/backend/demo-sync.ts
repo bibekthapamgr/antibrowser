@@ -50,7 +50,7 @@ export function demoSync(deps: {
   /** R3: the current view of a local profile; opening it (lease first); its proxy on this computer. */
   view?: (id: string) => ProfileView;
   launch?: (id: string) => Promise<Started>;
-  assignProxy?: (id: string, proxyId: string) => Promise<ProfileView>;
+  assignProxy?: (id: string, proxyId: string, matchProxy: boolean) => Promise<ProfileView>;
 }): SyncRepository & {
   afterCleanClose(id: string): void;
   /** A shared session's closing backup (milestone 08): how it ended, or `waiting` for the connection. */
@@ -387,7 +387,7 @@ export function demoSync(deps: {
       }
       return out;
     },
-    async prepare(orgId, orgProfileId, name, proxyId) {
+    async prepare(orgId, orgProfileId, name, proxyId, matchProxy = true) {
       const existing = await localCopy(orgId, orgProfileId);
       if (existing) return viewOf(existing);
       let made: ProfileView;
@@ -400,7 +400,7 @@ export function demoSync(deps: {
         deps.cloud.link(made.id, orgId, orgProfileId);
         deps.changed();
       }
-      if (proxyId && deps.assignProxy) return deps.assignProxy(made.id, proxyId);
+      if (proxyId && deps.assignProxy) return deps.assignProxy(made.id, proxyId, matchProxy);
       return viewOf(made.id);
     },
     async openWorkspaceProfile(orgId, orgProfileId, name) {

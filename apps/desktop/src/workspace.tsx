@@ -11,7 +11,7 @@
 import type { MigrationPlan } from '@pb/contracts/ipc';
 import type { FolderMoveImpact, Organization, Profile as OrgProfile, Role } from '@pb/contracts/resources';
 import type { Folder } from '@pb/contracts/workspace';
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { OrgAutomationSection } from './automation.tsx';
 import type { AppView, Backend, Library, ProfileView, ProxyView, WorkspaceCopy } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
@@ -25,6 +25,7 @@ import { useLauncher } from './launch.tsx';
 import { ActivitySection, ClientsSection, type SectionProps, SettingsSection, Stale } from './org.tsx';
 import { day, type Notify, plural, relative } from './status.tsx';
 import { OPEN_REFUSED, TakeoverDialog } from './team.tsx';
+import { Toggle } from './ui.tsx';
 
 // ------------------------------------------------------------------------------------------------ status
 export type RowStatusKey =
@@ -678,6 +679,10 @@ export function CreateWorkspaceProfile(props: {
   const [folder, setFolder] = useState(props.initialFolder);
   const [proxy, setProxy] = useState('');
   const [proxies, setProxies] = useState<ProxyView[]>([]);
+  // ADR-0027: a new profile with a proxy matches its time zone and language to it unless turned off here.
+  const [matchProxy, setMatchProxy] = useState(true);
+  const matchId = useId();
+  const matchHelp = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -698,7 +703,13 @@ export function CreateWorkspaceProfile(props: {
           ...(folder ? { folder_id: folder } : {}),
         })
       ).data;
-      await backend.sync.prepare(orgId, created.id, created.name, proxy || undefined);
+      await backend.sync.prepare(
+        orgId,
+        created.id,
+        created.name,
+        proxy || undefined,
+        proxy ? matchProxy : undefined,
+      );
       notify(`Profile “${created.name}” created. Open it when you are ready.`);
       props.onCreated();
     } catch (err) {
@@ -748,6 +759,19 @@ export function CreateWorkspaceProfile(props: {
             ))}
           </select>
         </label>
+        {proxy && (
+          <>
+            <label className="choice" htmlFor={matchId}>
+              <Toggle id={matchId} checked={matchProxy} describedBy={matchHelp} onChange={setMatchProxy} />
+              Match timezone, language and location to the proxy
+            </label>
+            <p id={matchHelp} className="muted small">
+              {matchProxy
+                ? 'The profile takes its time zone and language from the proxy’s location, keeps WebRTC on the proxy and does not give websites this computer’s location. You can change this in its settings.'
+                : 'The profile uses this computer’s time zone and language.'}
+            </p>
+          </>
+        )}
         <p className="muted small">
           A new profile uses the browser’s usual supported settings. Proxies are kept on this computer only.
           {folder ? ' People given this folder with “profiles added later” can open it.' : ''}

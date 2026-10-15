@@ -14,7 +14,10 @@
 #      snapshot round trip (upload, verification by the worker, restore).
 #   6. Keeps the pb user's processes (API, worker) away from private networks with an nftables table of its own
 #      (outbound only; proven with a refused test connection), so webhook deliveries cannot reach internal addresses.
-#   7. Builds the internal support console (served by the API at /console/) and, once you have put a Stripe TEST key
+#   7. Downloads DB-IP's free "IP to City Lite" database (CC BY 4.0) for the desktop proxy check's location
+#      (/v1/netcheck, ADR-0027) into /var/lib/pb-geo/ and refreshes it monthly (geo-setup.sh, pb-geo-refresh.timer).
+#      A failed download only warns: the check then reports the address without a location.
+#   8. Builds the internal support console (served by the API at /console/) and, once you have put a Stripe TEST key
 #      into /etc/project-browser/billing.env, installs the Stripe CLI (pinned, SHA-256 verified) as a forwarder of
 #      Stripe's test-mode events to the API, so this tunnel-only server needs no public webhook address.
 #
@@ -357,6 +360,13 @@ fi
 chown "$APP_USER:$APP_USER" "$KMS_FILE"; chmod 600 "$KMS_FILE"
 
 # ----------------------------------------------------------------------------- database roles + secrets
+# ADR-0027: the IP geolocation database for the proxy check (a failed download never stops the setup).
+GEO_DB=/var/lib/pb-geo/dbip-city-lite.mmdb
+install -m 700 -o root -g root "$APP_DIR/scripts/deploy/geo-setup.sh" /root/.pb-geo-setup.sh
+if ! PB_APP_DIR="$APP_DIR" PB_NODE="$NODE_ROOT/bin/node" bash /root/.pb-geo-setup.sh; then
+  warn "IP geolocation database not updated (see above); proxy checks report the exit address without a location until it is"
+fi
+
 step "Database roles and secrets"
 (cd /tmp && runuser -u postgres -- "$PSQL" -q -v ON_ERROR_STOP=1 -f - < "$APP_DIR/infra/db/bootstrap-local.sql")
 if (( ! LOCAL_ENV )); then  # R6: this environment's own database
@@ -398,6 +408,8 @@ KMS_LOCAL_KEY_FILE=$KMS_FILE
 CONSOLE_DIR=$CONSOLE_DIR
 PUBLIC_DIR=$PUBLIC_DIR
 EOF
+# ADR-0027: location for the desktop proxy check (DB-IP City Lite; the API reads a replaced file by itself).
+if [[ -s $GEO_DB ]]; then printf 'GEOIP_DB=%s\n' "$GEO_DB"; fi
 if (( LOCAL_ENV )); then
   printf 'DEV_AUTH_ENABLED=true\nDEV_AUTH_SECRET=%s\n' "$DEV_SECRET"
 else

@@ -583,6 +583,22 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     },
   },
   {
+    name: 'profile-match-proxy',
+    demo: '',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      const form = 'form[aria-label="Privacy and environment"]';
+      await p.waitForSelector(`${form} input[role=switch]`);
+      await p.click(`${form} input[role=switch]`);
+      await p.waitForFunction(
+        (f) => document.querySelector(f)?.textContent?.includes('No location from the proxy yet'),
+        {},
+        form,
+      );
+      await p.$eval(form, (el) => el.scrollIntoView());
+    },
+  },
+  {
     name: 'proxy-login-prompt',
     demo: 'nologin',
     prepare: async (p) => {
@@ -1147,6 +1163,103 @@ describe('proxies and privacy (milestone 05)', () => {
     );
     await clickButton(page, form, 'Save privacy settings');
     await toastContains(page, 'Privacy and environment settings saved.');
+    await page.close();
+  });
+
+  it('shows where a checked proxy is, and a profile matches its time zone and language to it', async () => {
+    const page = await open('');
+    // The sample SOCKS5 proxy was checked two hours ago: its estimated location is listed.
+    await goTo(page, 'Proxies');
+    await page.waitForSelector('.proxy-table [data-geo]');
+    const geo = await text(page, '.proxy-table');
+    expect(geo).toContain('New York, United States');
+    expect(geo).toContain('America/New York');
+    expect(geo).toContain('English (US)');
+    expect(await text(page, '.proxies > p.small')).toContain('IP geolocation by DB-IP');
+    await goTo(page, 'Profiles');
+    // Shop admin uses a proxy that was never checked.
+    await clickRow(page, 'Shop admin');
+    const form = 'form[aria-label="Privacy and environment"]';
+    await page.waitForSelector(`${form} input[role=switch]`);
+    expect(await page.$eval(`${form} input[role=switch]`, (i) => (i as HTMLInputElement).checked)).toBe(
+      false,
+    );
+    await page.click(`${form} input[role=switch]`);
+    await page.waitForFunction(
+      (f) => document.querySelector(f)?.textContent?.includes('No location from the proxy yet'),
+      {},
+      form,
+    );
+    // The manual fields become overrides, and WebRTC is held on the proxy.
+    expect(await text(page, form)).toContain('Time zone (override)');
+    const webrtcDisabled = await page.$$eval(
+      `${form} select`,
+      (all) => (all[5] as HTMLSelectElement).disabled,
+    );
+    expect(webrtcDisabled).toBe(true);
+    await clickButton(page, form, 'Check the proxy now');
+    await page.waitForFunction(
+      (f) =>
+        document
+          .querySelector(f)
+          ?.textContent?.includes(
+            'Uses Europe/Berlin · German (DE) · Frankfurt am Main, DE — from the proxy check just now.',
+          ),
+      { timeout: 10_000 },
+      form,
+    );
+    // A time zone chosen by hand wins over the proxy's.
+    const tzSelect = await page.$$(`${form} select`);
+    await tzSelect[2]?.select('Asia/Tokyo');
+    await page.waitForFunction(
+      (f) => document.querySelector(f)?.textContent?.includes('Uses Asia/Tokyo (your choice) · German (DE)'),
+      {},
+      form,
+    );
+    await tzSelect[2]?.select('');
+    await clickButton(page, form, 'Save privacy settings');
+    await toastContains(page, 'Privacy and environment settings saved.');
+    expect(await page.$eval(`${form} input[role=switch]`, (i) => (i as HTMLInputElement).checked)).toBe(true);
+    await page.close();
+  });
+
+  it('a profile created with a proxy matches it by default', async () => {
+    const page = await open('unified signedin');
+    await goTo(page, 'Proxies');
+    await clickButton(page, '.toolbar', 'Add proxy');
+    await page.waitForSelector('[role=dialog] form');
+    await page.type('[role=dialog] input[required][maxlength="80"]', 'Residential US');
+    await page.type('[role=dialog] input[required][maxlength="255"]', 'us.proxy-provider.example');
+    await page.type('[role=dialog] input[inputmode=numeric]', '8080');
+    await clickButton(page, '[role=dialog]', 'Add proxy');
+    await toastContains(page, 'Proxy “Residential US” added.');
+    await goTo(page, 'Profiles');
+    await waitWorkspaceRows(page);
+    await clickButton(page, '#main', 'New profile');
+    await page.waitForSelector('[role=dialog] form');
+    expect(await page.$('[role=dialog] input[role=switch]')).toBeNull();
+    // The proxy select is the last one in the dialog (after the folder).
+    await page.waitForFunction(() => {
+      const all = document.querySelectorAll('[role=dialog] select');
+      return (all[all.length - 1]?.querySelectorAll('option').length ?? 0) > 1;
+    });
+    await page.evaluate(() => {
+      const all = document.querySelectorAll<HTMLSelectElement>('[role=dialog] select');
+      const sel = all[all.length - 1];
+      if (!sel) return;
+      const value = sel.options[1]?.value ?? '';
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      setter?.call(sel, value);
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForSelector('[role=dialog] input[role=switch]');
+    expect(await page.$eval('[role=dialog] input[role=switch]', (i) => (i as HTMLInputElement).checked)).toBe(
+      true,
+    );
+    expect(await text(page, '[role=dialog]')).toContain('Match timezone, language and location to the proxy');
+    await page.type('[role=dialog] input[maxlength="120"]', 'Matched shop');
+    await clickButton(page, '[role=dialog]', 'Create profile');
+    await toastContains(page, 'Profile “Matched shop” created.');
     await page.close();
   });
 

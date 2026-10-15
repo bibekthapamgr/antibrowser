@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -30,6 +30,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (10, "automation", v10),
     (11, "product_model", v11),
     (12, "self_service", v12),
+    (13, "proxy_location", v13),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -821,4 +822,22 @@ fn v12(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          drop table cloud_state;
          alter table cloud_state_v12 rename to cloud_state;"
     ))
+}
+
+/// ADR-0027: where the check service estimated a proxy's exit address to be (country, city, IANA time zone, language,
+/// coordinates). Kept with the check record, so it is deleted with it after 7 days. All optional: older checks and
+/// services that give no location have none.
+fn v13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "alter table network_checks add column country text
+           check (country is null or (length(country) = 2 and country glob '[A-Z][A-Z]'));
+         alter table network_checks add column city text check (city is null or length(city) between 1 and 64);
+         alter table network_checks add column timezone text
+           check (timezone is null or (length(timezone) between 3 and 64 and timezone not glob '*[^A-Za-z0-9_/+-]*'));
+         alter table network_checks add column language text
+           check (language is null or language glob '[a-z][a-z]-[A-Z][A-Z]' or language glob '[a-z][a-z][a-z]-[A-Z][A-Z]');
+         alter table network_checks add column latitude real check (latitude is null or latitude between -90 and 90);
+         alter table network_checks add column longitude real
+           check (longitude is null or longitude between -180 and 180);",
+    )
 }

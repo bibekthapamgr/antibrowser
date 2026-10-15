@@ -431,6 +431,7 @@ fn connectivity_check_reports_latency_and_the_address_the_service_saw() {
         .block_on(check::run(&up, &service.ca.trust(), &target))
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(out.egress_ip, "198.51.100.23".parse().ok());
+    assert_eq!(out.geo, None, "this service gives no location");
     assert!(out.latency_ms < 10_000);
     assert_eq!(service.requests(), 1);
     // The service's certificate is verified too.
@@ -471,4 +472,47 @@ fn the_gateway_only_speaks_proxy_requests() {
             || browser_request(gw.port(), "GET http://a/ HTTP/1.1\r\n\r\n").is_empty(),
         "a stopped gateway accepts nothing"
     );
+}
+
+#[test]
+fn connectivity_check_reads_the_location_the_project_api_reports() {
+    // ADR-0027: the project's /v1/netcheck adds the exit address's estimated location; only valid values are kept.
+    let service = TestCheckService::start_with_body(
+        "check.pb.test",
+        "ip=198.51.100.23\nloc=DE\ncity=Berlin\ntz=Europe/Berlin\nlat=52.52\nlon=13.41\nlang=de-DE\nextra=1\n",
+    );
+    let proxy = TestProxy::http(ProxyOptions {
+        hosts: hosts(&[("check.pb.test", service.addr())]),
+        ..Default::default()
+    });
+    let net = net();
+    let target = CheckTarget {
+        host: "check.pb.test".into(),
+        port: 443,
+        path: "/v1/netcheck".into(),
+    };
+    let out = net
+        .block_on(check::run_within(
+            &proxy.upstream(None),
+            &service.ca.trust(),
+            &target,
+            Duration::from_secs(10),
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let geo = out.geo.unwrap_or_default();
+    assert_eq!(
+        (
+            geo.country.as_deref(),
+            geo.city.as_deref(),
+            geo.timezone.as_deref(),
+            geo.language.as_deref()
+        ),
+        (
+            Some("DE"),
+            Some("Berlin"),
+            Some("Europe/Berlin"),
+            Some("de-DE")
+        )
+    );
+    assert_eq!((geo.latitude, geo.longitude), (Some(52.52), Some(13.41)));
 }

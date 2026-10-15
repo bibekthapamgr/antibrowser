@@ -16,7 +16,7 @@ pub mod prefs;
 pub mod procs;
 pub mod state;
 
-pub use environment::{PrivacyConfig, TextSize, WebRtcPolicy, WindowSize};
+pub use environment::{PrivacyConfig, ProxyGeo, ProxyMatch, TextSize, WebRtcPolicy, WindowSize};
 pub use id::{
     ClientId, DeviceId, FilterId, ImportJobId, InvalidClientId, InvalidDeviceId, InvalidFilterId,
     InvalidImportJobId, InvalidMigrationRunId, InvalidNetworkCheckId, InvalidProfileId,
@@ -26,8 +26,8 @@ pub use id::{
 pub use inspect::{ProcRecord, ProcessInfo, ProcessInspector, SystemInspector};
 pub use launch::{
     ALLOWED_EXTRA_SWITCHES, BrowserInstall, LaunchError, LaunchRequest, LaunchSpec, Launcher,
-    MAX_START_URLS, NetworkLaunch, ProfileState, Spawned, SystemLauncher, prepare_launch,
-    valid_start_url,
+    MAX_START_URLS, NetworkLaunch, ProfileState, Spawned, SystemLauncher, apply_proxy_match,
+    prepare_launch, valid_start_url,
 };
 pub use layout::{LayoutError, ProfileDirs, ProfilesRoot, simplify_path};
 pub use lock::ProfileLock;

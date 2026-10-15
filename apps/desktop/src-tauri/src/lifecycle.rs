@@ -14,8 +14,10 @@
 //! anything starts) and the profile's loopback gateway is started; it lives until the browser closes.
 //!
 //! The browser is then prepared and started on a worker thread: a backup is taken first when the browser engine
-//! is about to be upgraded, profile settings are written into Chromium's Preferences, and the process is spawned
-//! from a structured argument list.
+//! is about to be upgraded, a profile that matches its proxy (ADR-0027) gets the proxy's time zone and language from
+//! a fresh check (repeated here for at most 10 s when the last one is older than a day; on failure the profile opens
+//! without the match and the person is told), profile settings are written into Chromium's Preferences, and the
+//! process is spawned from a structured argument list.
 
 use crate::events::{QUIT_REQUESTED, WARNING};
 use crate::ipc::{self, IpcError, limits};
@@ -25,8 +27,9 @@ use crate::supervisor::{GRACEFUL_TIMEOUT, PollEvent, StartConflict, StopError};
 use pb_runtime::backup::BackupError;
 use pb_runtime::procs;
 use pb_runtime::{
-    BrowserInstall, BrowserPrefs, LaunchRequest, NetworkLaunch, PrivacyPrefs, ProfileId,
-    ProfileLock, ProfileState, RunState, environment, prefs, prepare_launch,
+    BrowserInstall, BrowserPrefs, LaunchRequest, NetworkLaunch, PermissionDefault, PrivacyPrefs,
+    ProfileId, ProfileLock, ProfileState, RunState, apply_proxy_match, environment, prefs,
+    prepare_launch,
 };
 use pb_storage::LocalStore;
 use pb_storage::RuntimeInstallation;
@@ -310,7 +313,7 @@ impl AppState {
         store: &LocalStore,
         id: &ProfileId,
         op: &str,
-        spec: pb_runtime::LaunchSpec,
+        mut spec: pb_runtime::LaunchSpec,
         profile: pb_storage::LocalProfile,
         upgrade_backup: bool,
         previous_version: Option<String>,
@@ -354,6 +357,36 @@ impl AppState {
         };
         let proxied = profile.proxy_id.is_some();
         let env = &profile.privacy;
+        // ADR-0027: time zone and language from the proxy's location (manual values win).
+        let matching = proxied && env.match_proxy;
+        let matched = if matching {
+            let found = self.launch_geo(store, &profile);
+            let m = environment::proxy_match(env, proxied, found.geo.as_ref());
+            let tz_wanted = env.timezone.is_none()
+                && environment::Platform::current() != environment::Platform::Windows;
+            let missing = (env.language.is_none() && m.language.is_none())
+                || (tz_wanted && m.timezone.is_none());
+            if missing {
+                let reason = found.problem.unwrap_or_else(|| "NO_LOCATION".to_owned());
+                let _ = store.audit(
+                    Some(id),
+                    "network",
+                    "match_unavailable",
+                    None,
+                    Some(&reason),
+                );
+                self.events.emit_json(
+                    WARNING,
+                    json!({ "code": "PROXY_MATCH_UNAVAILABLE", "profile_id": id.as_str(), "reason": reason,
+                            "partial": !m.is_empty() }),
+                );
+            }
+            apply_proxy_match(&mut spec, &m);
+            m
+        } else {
+            environment::ProxyMatch::default()
+        };
+        let accept = env.language.as_deref().or(matched.language.as_deref());
         let browser_prefs = BrowserPrefs {
             display_name,
             colour: profile.client_colour.clone(),
@@ -365,13 +398,18 @@ impl AppState {
             download_dir: download_dir.map(Into::into),
             camera: profile.camera,
             microphone: profile.microphone,
-            location: profile.location,
+            // Matching the proxy: websites are refused this computer's location unless the person allowed it.
+            location: if matching && profile.location == PermissionDefault::Ask {
+                PermissionDefault::Block
+            } else {
+                profile.location
+            },
             privacy: PrivacyPrefs {
-                webrtc_policy: environment::effective_webrtc(env, proxied && profile.fail_closed)
+                webrtc_policy: environment::effective_webrtc(env, proxied, profile.fail_closed)
                     .pref_value(),
                 block_third_party_cookies: env.block_third_party_cookies,
                 do_not_track: env.do_not_track,
-                accept_languages: env.language.as_deref().map(environment::accept_languages),
+                accept_languages: accept.map(environment::accept_languages),
                 font_sizes: env.text_size.font_sizes(),
                 // Prefetching and preconnecting would open connections the user did not ask for.
                 disable_network_prediction: proxied,

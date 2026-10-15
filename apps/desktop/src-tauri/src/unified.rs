@@ -80,13 +80,15 @@ impl AppState {
 
     /// Makes sure this computer has a copy of a workspace profile: the existing one; or its newest backup restored
     /// into a new local profile; or, for a profile that was never backed up (just created), an empty local profile
-    /// linked to it at once. `proxy` (this computer only) is set on a new copy.
+    /// linked to it at once. `proxy` (this computer only) is set on a new copy; with it, `match_proxy` (default on,
+    /// ADR-0027) makes the copy take its time zone and language from the proxy's location.
     pub fn workspace_profile_prepare(
         &self,
         org_id: &str,
         org_profile_id: &str,
         name: &str,
         proxy: Option<&ProxyId>,
+        match_proxy: bool,
     ) -> Result<ProfileView, IpcError> {
         if !id_ok("org", org_id) || !id_ok("prf", org_profile_id) {
             return Err(ipc::INVALID_ARGUMENT);
@@ -106,7 +108,22 @@ impl AppState {
         match proxy {
             Some(proxy) => {
                 let id = ProfileId::parse(&made.id).map_err(|_| ipc::INTERNAL)?;
-                self.assign_proxy(&id, Some(proxy), true, made.version)
+                let assigned = self.assign_proxy(&id, Some(proxy), true, made.version)?;
+                if !match_proxy || assigned.privacy.match_proxy {
+                    return Ok(assigned);
+                }
+                let privacy = pb_runtime::PrivacyConfig {
+                    match_proxy: true,
+                    ..assigned.privacy.clone()
+                };
+                self.update_profile(
+                    &id,
+                    assigned.version,
+                    crate::state::ProfileChanges {
+                        privacy: Some(&privacy),
+                        ..Default::default()
+                    },
+                )
             }
             None => Ok(made),
         }
@@ -120,7 +137,7 @@ impl AppState {
         org_profile_id: &str,
         name: &str,
     ) -> Result<WorkspaceOpen, IpcError> {
-        let view = self.workspace_profile_prepare(org_id, org_profile_id, name, None)?;
+        let view = self.workspace_profile_prepare(org_id, org_profile_id, name, None, false)?;
         let local = ProfileId::parse(&view.id).map_err(|_| ipc::INTERNAL)?;
         let store = self.store()?;
         if !self.sync_restoring(&store, &local) {

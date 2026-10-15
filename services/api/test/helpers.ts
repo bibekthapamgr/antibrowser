@@ -9,6 +9,7 @@ import { localKeyProvider, type RootKeyProvider } from '../src/backup/keys.ts';
 import { MemoryObjectStore, type ObjectStore, s3ObjectStore } from '../src/backup/objects.ts';
 import { createPool } from '../src/db.ts';
 import { FIXTURES, type FixtureUserKey } from '../src/fixtures.ts';
+import type { GeoLookup } from '../src/geo.ts';
 import type { IdTokenVerifier } from '../src/oidc.ts';
 import { nonce, TEST_CLIENT_ID, TEST_ISSUER, type TestIdp, testIdp } from './idp.ts';
 
@@ -63,6 +64,8 @@ export interface HarnessOptions {
   webIdTokens?: IdTokenVerifier;
   /** R4: the download page's source. */
   downloads?: () => Promise<PublicDownloads>;
+  /** ADR-0027: the IP geolocation lookup behind /v1/netcheck. */
+  geo?: GeoLookup;
 }
 
 export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -92,6 +95,7 @@ export async function harness(opts: HarnessOptions = {}): Promise<Harness> {
     ...(opts.consoleClientId ? { consoleIdTokens: idp.verifierFor(opts.consoleClientId) } : {}),
     ...(opts.webIdTokens ? { webIdTokens: opts.webIdTokens } : {}),
     ...(opts.downloads ? { downloads: opts.downloads } : {}),
+    ...(opts.geo ? { geo: opts.geo } : {}),
   };
   const idTokens = opts.idTokens ?? idp.verifier;
   const app = await buildApp(

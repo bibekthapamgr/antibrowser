@@ -934,9 +934,10 @@ pub fn validate_privacy<Rt: Runtime>(
     state: S<'_>,
     config: PrivacyConfig,
     fail_closed_proxy: Option<bool>,
+    proxied: Option<bool>,
 ) -> R<PrivacyValidation> {
     caller(&webview)?;
-    Ok(state.validate_privacy(&config, fail_closed_proxy.unwrap_or(false)))
+    Ok(state.validate_privacy(&config, fail_closed_proxy.unwrap_or(false), proxied))
 }
 
 /// Languages, time zones, window limits and presets offered in the environment settings.
@@ -1329,7 +1330,7 @@ pub fn workspace_copies<Rt: Runtime>(
 }
 
 /// A copy of a workspace profile on this computer (restored from its newest backup, or empty when it has none yet),
-/// optionally with a proxy of this computer.
+/// optionally with a proxy of this computer (`match_proxy`, default on: time zone and language follow the proxy).
 #[tauri::command]
 pub async fn workspace_profile_prepare<Rt: Runtime>(
     app: AppHandle<Rt>,
@@ -1338,6 +1339,7 @@ pub async fn workspace_profile_prepare<Rt: Runtime>(
     org_profile_id: String,
     name: String,
     proxy_id: Option<String>,
+    match_proxy: Option<bool>,
 ) -> R<ProfileView> {
     caller(&webview)?;
     let state = blocking_state(&app);
@@ -1347,7 +1349,13 @@ pub async fn workspace_profile_prepare<Rt: Runtime>(
             .map(ProxyId::parse)
             .transpose()
             .map_err(|_| ipc::INVALID_ARGUMENT)?;
-        state.workspace_profile_prepare(&org_id, &org_profile_id, &name, proxy.as_ref())
+        state.workspace_profile_prepare(
+            &org_id,
+            &org_profile_id,
+            &name,
+            proxy.as_ref(),
+            match_proxy.unwrap_or(true),
+        )
     })
     .await
     .map_err(|_| ipc::INTERNAL)?

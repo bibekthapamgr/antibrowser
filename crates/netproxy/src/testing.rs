@@ -545,6 +545,11 @@ pub struct TestCheckService {
 impl TestCheckService {
     /// `reported_ip` is what the service claims to see (the tests' "egress address").
     pub fn start(name: &str, reported_ip: &str) -> Self {
+        Self::start_with_body(name, &format!("fl=1\nip={reported_ip}\nts=0\n"))
+    }
+
+    /// Answers every request with this trace body (e.g. the project API's location lines, ADR-0027).
+    pub fn start_with_body(name: &str, body: &str) -> Self {
         let rt = runtime();
         let ca = TestCa::new(&[name]);
         let listener = rt
@@ -554,7 +559,7 @@ impl TestCheckService {
         let acceptor = ca.acceptor();
         let requests: Arc<Mutex<u64>> = Arc::default();
         let count = requests.clone();
-        let ip = reported_ip.to_owned();
+        let ip = body.to_owned();
         rt.spawn(async move {
             loop {
                 let Ok((s, _)) = listener.accept().await else {
@@ -574,7 +579,7 @@ impl TestCheckService {
                         }
                     }
                     *count.lock().unwrap() += 1;
-                    let body = format!("fl=1\nip={ip}\nts=0\n");
+                    let body = ip;
                     let _ = tls
                         .write_all(
                             format!(

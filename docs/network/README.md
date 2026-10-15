@@ -6,6 +6,7 @@
 | [environment-presets.md](environment-presets.md) | Privacy, permission and environment settings, how each is applied per OS, and the presets |
 | [leak-test-evidence.md](leak-test-evidence.md) | Real-browser leak tests (DNS, UDP/QUIC, TCP, WebRTC, environment) on Windows, macOS and Linux |
 | [ADR-0012](../adr/0012-proxy-gateway-and-privacy-controls.md) | Design decisions: loopback gateway, fail-closed, logins in the keychain, checks, no rotation |
+| [ADR-0027](../adr/0027-match-profile-to-proxy-location.md) | Matching a profile's time zone and language to its proxy's location (server-side geo from DB-IP Lite) |
 
 What a proxy does and does not do (also in the UI): a proxy changes the network path a profile uses and the address
 websites see. It does not make a profile undetectable, does not change the device a website sees, and does not
@@ -34,8 +35,18 @@ protect an account from being restricted. Use proxies only where the website's t
    gateway port and use its proxy. Such programs can already read the profile's data (security model, disclosure 1).
 9. **Linux keychain.** Linux builds use the kernel keyring, which forgets proxy logins at logout or reboot; the app
    asks for them again. Linux is a development platform only.
-10. **Connectivity checks** contact a third-party service through the proxy (interim: Cloudflare's `/cdn-cgi/trace`)
-    only when you press Test; it sees the proxy's exit address. Our own check endpoint replaces it later.
+10. **Connectivity checks** contact a check service through the proxy: the account server's `/v1/netcheck` when one
+    is configured (https; ADR-0027), otherwise Cloudflare's `/cdn-cgi/trace`. It sees the proxy's exit address.
+    Checks run when you press Test and, for a profile that matches its proxy, before it opens when the last check is
+    older than a day (at most 10 s).
+13. **Matching the proxy's location is an estimate and only configuration** (ADR-0027). A profile with “Match
+    timezone, language and location to the proxy” takes its time zone and language from the check service's estimate
+    for the exit address (DB-IP City Lite: country-level is usually right, the city often is not), keeps WebRTC on the
+    proxy and blocks websites from this computer's location. It does not change canvas, WebGL, audio, fonts,
+    `navigator` properties, screen or hardware values, and it does not make a profile undetectable. On Windows the
+    browser keeps the computer's time zone (shown as “partly applied”). Without an account server the check gives the
+    country only, so nothing is matched and the profile says so when it opens. IP geolocation by
+    [DB-IP](https://db-ip.com) (CC BY 4.0).
 11. **Sleep and network changes.** Each browser connection opens a new connection to the proxy, so nothing stale
     survives sleep/wake or a network change; connections that were open at that moment fail and the page retries.
     The outage/recovery tests cover this behaviour; an actual OS sleep/wake cycle has **not** been tested yet (CI

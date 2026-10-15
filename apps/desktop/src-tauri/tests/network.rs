@@ -598,11 +598,11 @@ fn connectivity_checks_record_latency_exit_address_and_failures() {
     f.state
         .set_network_settings(pb_desktop_lib::network::NetworkSettings {
             trust: service.ca.trust(),
-            check: CheckTarget {
+            check: Some(CheckTarget {
                 host: "check.pb.test".into(),
                 port: 443,
                 path: "/cdn-cgi/trace".into(),
-            },
+            }),
         });
     workspace_with_profile(&f);
     allow_local_proxies(&f);
@@ -892,6 +892,193 @@ fn privacy_and_environment_settings_are_validated_and_applied_at_launch() {
         Value::Null,
         "settings back at their default are removed"
     );
+}
+
+// ---------------------------------------------------------------------------------------------- match the proxy
+
+/// ADR-0027: a profile that matches its proxy takes the time zone and language the check service reported for the
+/// exit address (checking first when there is no fresh check), keeps WebRTC on the proxy and refuses websites this
+/// computer's location; manual values win; without a location it opens anyway and the person is told.
+#[test]
+fn a_matching_profile_takes_time_zone_and_language_from_the_proxy_check() {
+    let f = fixture();
+    keychain(&f);
+    let service = TestCheckService::start_with_body(
+        "check.pb.test",
+        "ip=203.0.113.7\nloc=JP\ncity=Tokyo\ntz=Asia/Tokyo\nlat=35.69\nlon=139.69\nlang=ja-JP\n",
+    );
+    let proxy = TestProxy::http(ProxyOptions {
+        hosts: hosts(&[("check.pb.test", service.addr())]),
+        ..Default::default()
+    });
+    f.state
+        .set_network_settings(pb_desktop_lib::network::NetworkSettings {
+            trust: service.ca.trust(),
+            check: Some(CheckTarget {
+                host: "check.pb.test".into(),
+                port: 443,
+                path: "/v1/netcheck".into(),
+            }),
+        });
+    let profile_id = workspace_with_profile(&f);
+    allow_local_proxies(&f);
+    let px = local_proxy(&f, "Tokyo", &proxy, None);
+
+    // The check records the location; the proxy list shows it.
+    let check = ok(invoke(&f, "test_proxy", json!({ "proxyId": px })));
+    assert_eq!(
+        check["geo"],
+        json!({ "country": "JP", "city": "Tokyo", "timezone": "Asia/Tokyo", "language": "ja-JP",
+                "latitude": 35.69, "longitude": 139.69 })
+    );
+    let listed = ok(invoke(&f, "list_proxies", json!({})));
+    assert_eq!(
+        listed[0]["last_check"]["geo"]["timezone"],
+        json!("Asia/Tokyo")
+    );
+
+    // Matching off (existing profiles): nothing from the proxy.
+    assign(&f, &profile_id, Some(&px), true);
+    launch(&f, &profile_id);
+    assert!(!args(&f).iter().any(|a| a.starts_with("--lang=")));
+    stop(&f, &profile_id);
+
+    // Matching on, with a fresh check: no new check, the proxy's zone and language are used.
+    let v = ok(invoke(
+        &f,
+        "validate_privacy",
+        json!({ "config": { "match_proxy": true }, "proxied": true }),
+    ));
+    let report = v["report"].to_string();
+    assert!(
+        report.contains("match_proxy") && report.contains("set by matching the proxy"),
+        "{report}"
+    );
+    let no_proxy = ok(invoke(
+        &f,
+        "validate_privacy",
+        json!({ "config": { "match_proxy": true }, "proxied": false }),
+    ));
+    assert!(no_proxy["report"].to_string().contains("no proxy"));
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "privacy": { "match_proxy": true }, "location": "ask" }),
+    ));
+    let checks_before = service.requests();
+    launch(&f, &profile_id);
+    assert_eq!(service.requests(), checks_before, "a fresh check is reused");
+    let a = args(&f);
+    let lang = a.iter().position(|x| x == "--lang=ja-JP");
+    let dash = a.iter().position(|x| x == "--");
+    assert!(lang.is_some() && (dash.is_none() || lang < dash), "{a:?}");
+    let env = f
+        .launcher
+        .last_env
+        .lock()
+        .map(|e| e.clone())
+        .unwrap_or_default();
+    let tz: Vec<_> = env
+        .iter()
+        .filter(|(k, _)| k == "TZ")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    if cfg!(windows) {
+        assert!(tz.is_empty(), "Windows ignores TZ; it is reported as such");
+    } else {
+        assert_eq!(tz, ["Asia/Tokyo"]);
+    }
+    let p = prefs(&f, &profile_id);
+    assert_eq!(p["intl"]["accept_languages"], json!("ja-JP,ja"));
+    assert_eq!(
+        p["webrtc"]["ip_handling_policy"],
+        json!("disable_non_proxied_udp")
+    );
+    assert_eq!(
+        p["profile"]["default_content_setting_values"]["geolocation"],
+        json!(2),
+        "websites are refused this computer's location"
+    );
+    assert!(warnings(&f, "PROXY_MATCH_UNAVAILABLE").is_empty());
+    stop(&f, &profile_id);
+
+    // A manual language wins; a stale check (older than a day) is repeated before the launch.
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "privacy": { "match_proxy": true, "language": "en-GB" } }),
+    ));
+    rusqlite::Connection::open(f.data().join("local.db"))
+        .and_then(|c| {
+            c.execute(
+                "update network_checks set checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 days')",
+                [],
+            )
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    let before = service.requests();
+    launch(&f, &profile_id);
+    assert_eq!(
+        service.requests(),
+        before + 1,
+        "the stale check was repeated"
+    );
+    let a = args(&f);
+    assert!(
+        a.iter().any(|x| x == "--lang=en-GB") && !a.iter().any(|x| x == "--lang=ja-JP"),
+        "{a:?}"
+    );
+    assert_eq!(
+        prefs(&f, &profile_id)["intl"]["accept_languages"],
+        json!("en-GB,en")
+    );
+    stop(&f, &profile_id);
+
+    // The proxy stops working: the profile still opens (blocked by fail-closed as usual), without the match, and
+    // the person is told why.
+    rusqlite::Connection::open(f.data().join("local.db"))
+        .and_then(|c| c.execute("delete from network_checks", []))
+        .unwrap_or_else(|e| panic!("{e}"));
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "privacy": { "match_proxy": true } }),
+    ));
+    proxy.stop();
+    launch(&f, &profile_id);
+    assert!(!args(&f).iter().any(|x| x.starts_with("--lang=")));
+    let told = warnings(&f, "PROXY_MATCH_UNAVAILABLE");
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0]["reason"], json!("PROXY_UNREACHABLE"));
+    // Even without a location, WebRTC stays on the proxy and the location permission stays blocked.
+    let p = prefs(&f, &profile_id);
+    assert_eq!(
+        p["webrtc"]["ip_handling_policy"],
+        json!("disable_non_proxied_udp")
+    );
+    assert_eq!(
+        p["profile"]["default_content_setting_values"]["geolocation"],
+        json!(2)
+    );
+}
+
+#[test]
+fn checks_use_the_account_servers_netcheck_when_one_is_configured() {
+    use pb_desktop_lib::network::server_check_target;
+    let t = server_check_target("https://pb.example.com").unwrap_or_else(|| panic!("target"));
+    assert_eq!(
+        (t.host.as_str(), t.port, t.path.as_str()),
+        ("pb.example.com", 443, "/v1/netcheck")
+    );
+    let t =
+        server_check_target("https://pb.example.com:8443/api").unwrap_or_else(|| panic!("target"));
+    assert_eq!((t.port, t.path.as_str()), (8443, "/api/v1/netcheck"));
+    for bad in ["http://pb.example.com", "https://203.0.113.5", "not a url"] {
+        assert!(server_check_target(bad).is_none(), "{bad}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------- restart

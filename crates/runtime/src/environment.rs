@@ -7,6 +7,13 @@
 //!
 //! Support differs by operating system (see [`report`]): a setting the browser cannot apply on this OS is shown as
 //! unavailable rather than claimed. The real-browser tests (`tests/browser.rs`) check each one per OS.
+//!
+//! **Match the proxy** (`match_proxy`, ADR-0027): for a profile with a proxy, the time zone and page language follow
+//! the location the check service estimated for the proxy's exit address, WebRTC may use only the proxy, and
+//! websites are refused this computer's location (the permission is blocked unless the user allowed it). This keeps
+//! the profile from showing this computer's own time zone, language and location next to the proxy's address. It is
+//! still only configuration: canvas, WebGL, audio, fonts, `navigator` properties and other device signals are not
+//! changed, the estimate can be wrong, and on Windows the browser keeps the computer's time zone.
 
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +94,85 @@ pub struct PrivacyConfig {
     pub reduced_motion: bool,
     /// The preset last applied, for display only.
     pub preset: Option<String>,
+    /// With a proxy: time zone and language follow the proxy's exit address (from its last check; manual `language`
+    /// and `timezone` win), WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it).
+    pub match_proxy: bool,
+}
+
+/// Where the check service estimated a proxy's exit address to be (ADR-0027). Each value was validated when the
+/// check answer was read, and is validated again before it becomes a browser setting.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProxyGeo {
+    /// ISO 3166-1 alpha-2.
+    pub country: Option<String>,
+    pub city: Option<String>,
+    /// IANA time zone name.
+    pub timezone: Option<String>,
+    /// BCP 47 language tag (`en-US`).
+    pub language: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+}
+
+/// A time zone name safe to pass as `TZ`: `UTC` or `Area/Location[/Sub]` in ASCII letters, digits and `_+-`.
+pub fn valid_zone_name(s: &str) -> bool {
+    if s == "UTC" {
+        return true;
+    }
+    let mut parts = s.split('/');
+    let area = parts.next().unwrap_or_default();
+    let rest: Vec<&str> = parts.collect();
+    s.len() <= 64
+        && (1..=2).contains(&rest.len())
+        && (2..=20).contains(&area.len())
+        && area.starts_with(|c: char| c.is_ascii_uppercase())
+        && area.bytes().all(|b| b.is_ascii_alphabetic())
+        && rest.iter().all(|p| {
+            (1..=30).contains(&p.len())
+                && p.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'-'))
+        })
+}
+
+/// A language tag safe for `--lang` and Accept-Language: `ll-CC` or `lll-CC`.
+pub fn valid_locale_tag(s: &str) -> bool {
+    s.split_once('-').is_some_and(|(l, r)| {
+        (2..=3).contains(&l.len())
+            && l.bytes().all(|b| b.is_ascii_lowercase())
+            && r.len() == 2
+            && r.bytes().all(|b| b.is_ascii_uppercase())
+    })
+}
+
+/// What matching the proxy sets for one launch. Empty when matching is off, the profile has no proxy, or the check
+/// gave no usable location; a field the user set by hand is never replaced.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyMatch {
+    pub language: Option<String>,
+    pub timezone: Option<String>,
+}
+
+impl ProxyMatch {
+    pub fn is_empty(&self) -> bool {
+        self.language.is_none() && self.timezone.is_none()
+    }
+}
+
+/// The time zone and language a launch takes from the proxy's location (`geo`: the proxy's fresh check).
+pub fn proxy_match(c: &PrivacyConfig, proxied: bool, geo: Option<&ProxyGeo>) -> ProxyMatch {
+    let Some(geo) = geo.filter(|_| c.match_proxy && proxied) else {
+        return ProxyMatch::default();
+    };
+    ProxyMatch {
+        language: geo
+            .language
+            .clone()
+            .filter(|l| c.language.is_none() && valid_locale_tag(l)),
+        timezone: geo
+            .timezone
+            .clone()
+            .filter(|z| c.timezone.is_none() && valid_zone_name(z)),
+    }
 }
 
 /// Page languages offered (BCP 47 tag, English name).
@@ -246,6 +332,21 @@ pub fn report(c: &PrivacyConfig, platform: Platform) -> Vec<FieldReport> {
             message,
         })
     };
+    if c.match_proxy {
+        if platform == Platform::Windows {
+            push(
+                "match_proxy",
+                Support::Partial,
+                "With a proxy, the page language follows the proxy's location, WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it). On Windows the browser keeps the computer's time zone.",
+            );
+        } else {
+            push(
+                "match_proxy",
+                Support::Applied,
+                "With a proxy, the time zone and page language follow the proxy's location, WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it). Other device details are not changed.",
+            );
+        }
+    }
     if c.timezone.is_some() {
         if platform == Platform::Windows {
             push(
@@ -431,9 +532,10 @@ pub fn presets() -> Vec<Preset> {
     ]
 }
 
-/// The WebRTC policy actually used: a proxy with fail-closed routing forces "proxy only".
-pub fn effective_webrtc(c: &PrivacyConfig, fail_closed_proxy: bool) -> WebRtcPolicy {
-    if fail_closed_proxy {
+/// The WebRTC policy actually used: a proxy with fail-closed routing, or matching the proxy, forces "proxy only"
+/// (the real address is never offered over UDP).
+pub fn effective_webrtc(c: &PrivacyConfig, proxied: bool, fail_closed: bool) -> WebRtcPolicy {
+    if proxied && (fail_closed || c.match_proxy) {
         WebRtcPolicy::DisableNonProxiedUdp
     } else {
         c.webrtc
@@ -524,10 +626,117 @@ mod tests {
     fn proxies_force_proxy_only_webrtc() {
         let c = PrivacyConfig::default();
         assert_eq!(
-            effective_webrtc(&c, true),
+            effective_webrtc(&c, true, true),
             WebRtcPolicy::DisableNonProxiedUdp
         );
-        assert_eq!(effective_webrtc(&c, false), WebRtcPolicy::Default);
+        assert_eq!(effective_webrtc(&c, true, false), WebRtcPolicy::Default);
+        assert_eq!(effective_webrtc(&c, false, true), WebRtcPolicy::Default);
+        let matching = PrivacyConfig {
+            match_proxy: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            effective_webrtc(&matching, true, false),
+            WebRtcPolicy::DisableNonProxiedUdp,
+            "matching the proxy never lets WebRTC use this computer's own route"
+        );
+        assert_eq!(
+            effective_webrtc(&matching, false, false),
+            WebRtcPolicy::Default
+        );
         assert_eq!(accept_languages("de-DE"), "de-DE,de");
+    }
+
+    fn berlin() -> ProxyGeo {
+        ProxyGeo {
+            country: Some("DE".into()),
+            city: Some("Berlin".into()),
+            timezone: Some("Europe/Berlin".into()),
+            language: Some("de-DE".into()),
+            latitude: Some(52.52),
+            longitude: Some(13.41),
+        }
+    }
+
+    #[test]
+    fn matching_takes_the_proxy_location_but_manual_values_win() {
+        let on = PrivacyConfig {
+            match_proxy: true,
+            ..Default::default()
+        };
+        let geo = berlin();
+        assert_eq!(
+            proxy_match(&on, true, Some(&geo)),
+            ProxyMatch {
+                language: Some("de-DE".into()),
+                timezone: Some("Europe/Berlin".into()),
+            }
+        );
+        // Off, no proxy, or no location: nothing.
+        assert!(proxy_match(&PrivacyConfig::default(), true, Some(&geo)).is_empty());
+        assert!(proxy_match(&on, false, Some(&geo)).is_empty());
+        assert!(proxy_match(&on, true, None).is_empty());
+        // A value the user chose is kept; only the other half follows the proxy.
+        let manual = PrivacyConfig {
+            timezone: Some("Asia/Kathmandu".into()),
+            ..on.clone()
+        };
+        assert_eq!(
+            proxy_match(&manual, true, Some(&geo)),
+            ProxyMatch {
+                language: Some("de-DE".into()),
+                timezone: None,
+            }
+        );
+        // Stored values are checked again before they become settings.
+        let hostile = ProxyGeo {
+            timezone: Some("../../etc/localtime".into()),
+            language: Some("de --no-sandbox".into()),
+            ..berlin()
+        };
+        assert!(proxy_match(&on, true, Some(&hostile)).is_empty());
+        // Zones outside the preset list are fine when they come from the proxy (any IANA name).
+        let lagos = ProxyGeo {
+            timezone: Some("America/Argentina/Buenos_Aires".into()),
+            language: Some("es-AR".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            proxy_match(&on, true, Some(&lagos)).timezone.as_deref(),
+            Some("America/Argentina/Buenos_Aires")
+        );
+    }
+
+    #[test]
+    fn matching_is_reported_honestly_per_platform() {
+        let on = PrivacyConfig {
+            match_proxy: true,
+            ..Default::default()
+        };
+        let support = |p| {
+            report(&on, p)
+                .into_iter()
+                .find(|r| r.field == "match_proxy")
+                .map(|r| (r.support, r.message))
+        };
+        let (win, win_msg) = support(Platform::Windows).unwrap_or((Support::Applied, ""));
+        assert_eq!(win, Support::Partial);
+        assert!(win_msg.contains("keeps the computer's time zone"));
+        assert_eq!(
+            support(Platform::Linux).map(|s| s.0),
+            Some(Support::Applied)
+        );
+        for p in [Platform::Windows, Platform::MacOs, Platform::Linux] {
+            let msg = support(p).map(|s| s.1).unwrap_or_default().to_lowercase();
+            assert!(
+                !msg.contains("undetect") && !msg.contains("fingerprint"),
+                "{msg}"
+            );
+        }
+        // The old field still deserialises (absent = off) and unknown fields are still refused.
+        let c: PrivacyConfig =
+            serde_json::from_str(r#"{"match_proxy": true}"#).unwrap_or_else(|e| panic!("{e}"));
+        assert!(c.match_proxy);
+        assert!(!PrivacyConfig::default().match_proxy);
     }
 }

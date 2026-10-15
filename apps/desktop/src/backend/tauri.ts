@@ -86,10 +86,12 @@ export function tauriBackend(): Backend {
         call('sync_restore', snapshotId ? { profileId, snapshotId, asCopy } : { profileId, asCopy }),
       restoreHere: (orgId, orgProfileId, name) => call('sync_restore_here', { orgId, orgProfileId, name }),
       copies: (orgId) => call('workspace_copies', { orgId }),
-      prepare: (orgId, orgProfileId, name, proxyId) =>
+      prepare: (orgId, orgProfileId, name, proxyId, matchProxy) =>
         call(
           'workspace_profile_prepare',
-          proxyId ? { orgId, orgProfileId, name, proxyId } : { orgId, orgProfileId, name },
+          proxyId
+            ? { orgId, orgProfileId, name, proxyId, ...(matchProxy === undefined ? {} : { matchProxy }) }
+            : { orgId, orgProfileId, name },
         ),
       openWorkspaceProfile: (orgId, orgProfileId, name) =>
         call('workspace_profile_open', { orgId, orgProfileId, name }),
@@ -175,7 +177,11 @@ export function tauriBackend(): Backend {
       checks: (proxyId) => call('list_proxy_checks', { proxyId }),
       assign: (profileId, proxyId, failClosed, expectedVersion) =>
         call('assign_proxy', { profileId, proxyId, failClosed, expectedVersion }),
-      validatePrivacy: (config, failClosedProxy) => call('validate_privacy', { config, failClosedProxy }),
+      validatePrivacy: (config, failClosedProxy, proxied) =>
+        call(
+          'validate_privacy',
+          proxied === undefined ? { config, failClosedProxy } : { config, failClosedProxy, proxied },
+        ),
       privacyOptions: () => call('get_privacy_options', {}),
     },
     system: {

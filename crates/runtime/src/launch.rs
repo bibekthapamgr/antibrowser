@@ -10,7 +10,8 @@
 //!    (headless CI runs); nothing from the UI ever becomes a switch;
 //! 8. proxy routing and environment settings (milestone 05) become switches only from typed, validated values: the
 //!    proxy is always the manager's loopback gateway (never an address or login from the request), languages and
-//!    time zones come from fixed lists, window sizes are bounded;
+//!    time zones come from fixed lists, window sizes are bounded; a language and time zone taken from the proxy's
+//!    check (ADR-0027, [`apply_proxy_match`]) must be a plain `ll-CC` tag and an IANA-shaped name;
 //! 9. the only extension switch ever added is `--disable-extensions` (an organization policy in enforce mode,
 //!    milestone 09); switches that load or allow extensions (`--load-extension`, `--disable-extensions-except`) are
 //!    never accepted;
@@ -237,6 +238,32 @@ pub fn prepare_launch(
         env,
         devtools: request.automation,
     })
+}
+
+/// Adds what matching the proxy decided (ADR-0027) to a prepared launch: `--lang` (before the URL separator) and
+/// `TZ` (not on Windows, which ignores it). A value that is not a plain tag or zone name, or a setting the profile
+/// already has, is left alone.
+pub fn apply_proxy_match(spec: &mut LaunchSpec, m: &crate::environment::ProxyMatch) {
+    use crate::environment::{valid_locale_tag, valid_zone_name};
+    if let Some(lang) = m.language.as_deref().filter(|l| valid_locale_tag(l))
+        && !spec
+            .args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--lang="))
+    {
+        let at = spec
+            .args
+            .iter()
+            .position(|a| a == "--")
+            .unwrap_or(spec.args.len());
+        spec.args.insert(at, format!("--lang={lang}").into());
+    }
+    if let Some(tz) = m.timezone.as_deref().filter(|z| valid_zone_name(z))
+        && Platform::current() != Platform::Windows
+        && !spec.env.iter().any(|(k, _)| k == "TZ")
+    {
+        spec.env.push(("TZ".to_owned(), tz.to_owned()));
+    }
 }
 
 fn flag(name: &str, path: &Path) -> OsString {
@@ -764,6 +791,91 @@ mod tests {
             },
         );
         assert!(matches!(err, Err(LaunchError::BadEnvironment)));
+        Ok(())
+    }
+
+    #[test]
+    fn the_proxy_match_adds_only_validated_settings_before_the_urls() -> Result<(), LaunchError> {
+        let (_tmp, root, browser) = setup();
+        let urls = vec!["https://example.test/".to_owned()];
+        let manual = PrivacyConfig {
+            language: Some("en-GB".into()),
+            ..Default::default()
+        };
+        let prepare = |env: Option<&PrivacyConfig>| {
+            prepare_launch(
+                &root,
+                Some(&browser),
+                ProfileState {
+                    exists: true,
+                    running: false,
+                },
+                LaunchRequest {
+                    profile_id: &id(),
+                    start_urls: &urls,
+                    switches: &[],
+                    network: Some(NetworkLaunch {
+                        gateway_port: 40124,
+                    }),
+                    environment: env,
+                    extensions_disabled: false,
+                    automation: false,
+                },
+            )
+        };
+        let m = crate::environment::ProxyMatch {
+            language: Some("fil-PH".into()),
+            timezone: Some("Asia/Manila".into()),
+        };
+        let mut spec = prepare(None)?;
+        apply_proxy_match(&mut spec, &m);
+        let args: Vec<String> = spec
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let lang = args.iter().position(|a| a == "--lang=fil-PH");
+        let dash = args.iter().position(|a| a == "--");
+        assert!(lang.is_some() && lang < dash, "{args:?}");
+        let tz = spec
+            .env
+            .iter()
+            .find(|(k, _)| k == "TZ")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            tz,
+            if cfg!(windows) {
+                None
+            } else {
+                Some("Asia/Manila")
+            }
+        );
+        // A manual language stays; nothing is added twice.
+        let mut kept = prepare(Some(&manual))?;
+        apply_proxy_match(&mut kept, &m);
+        let langs: Vec<String> = kept
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .filter(|a| a.starts_with("--lang="))
+            .collect();
+        assert_eq!(langs, ["--lang=en-GB"]);
+        // Unvalidated values never reach the command line or the environment.
+        let mut safe = prepare(None)?;
+        apply_proxy_match(
+            &mut safe,
+            &crate::environment::ProxyMatch {
+                language: Some("en --no-sandbox".into()),
+                timezone: Some("/etc/localtime".into()),
+            },
+        );
+        assert!(
+            !safe
+                .args
+                .iter()
+                .any(|a| a.to_string_lossy().contains("sandbox"))
+        );
+        assert!(safe.env.iter().all(|(k, _)| k != "TZ"));
         Ok(())
     }
 

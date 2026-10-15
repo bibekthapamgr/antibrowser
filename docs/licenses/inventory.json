@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14T15:32:48.578Z",
+  "generated_at": "2026-10-15T13:36:12.895Z",
   "dependencies": [
     {
       "ecosystem": "cargo",
@@ -3831,6 +3831,12 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@photostructure/tz-lookup",
+      "version": "11.7.0",
+      "license": "CC0-1.0"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@pinojs/redact",
       "version": "0.4.0",
       "license": "MIT"
@@ -4311,8 +4317,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "maxmind",
+      "version": "5.0.7",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
       "name": "mitt",
       "version": "3.0.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "mmdb-lib",
+      "version": "3.0.3",
       "license": "MIT"
     },
     {
@@ -4662,6 +4680,12 @@
       "name": "thread-stream",
       "version": "4.2.0",
       "license": "MIT"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tiny-lru",
+      "version": "13.0.0",
+      "license": "BSD-3-Clause"
     },
     {
       "ecosystem": "npm",

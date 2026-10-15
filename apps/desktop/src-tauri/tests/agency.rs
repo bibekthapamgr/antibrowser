@@ -573,6 +573,7 @@ fn health_cards_say_when_they_were_checked_and_never_speak_about_accounts() {
             None,
             Some(40),
             None,
+            None,
         )
         .unwrap_or_else(|e| panic!("{e}"));
     let fresh = ok(invoke(&f, "get_health", json!({})));

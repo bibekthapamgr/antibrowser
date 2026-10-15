@@ -56,6 +56,14 @@ Every staff sign-in needs the one-time code; the server refuses password-only si
   It restores into an isolated, temporary cluster and never touches the running database. Record the result in
   [restore-evidence.md](restore-evidence.md).
 
+### IP geolocation for the proxy check (ADR-0027)
+- `vps-setup.sh` downloads DB-IP's free City Lite database into `/var/lib/pb-geo/` and sets `GEOIP_DB` for the API;
+  `pb-geo-refresh.timer` refreshes it monthly (the API picks up the new file within 10 minutes, no restart).
+- Status: `bash /usr/local/libexec/pb-geo status`; refresh now: `bash /usr/local/libexec/pb-geo refresh`. A failed
+  download keeps the current file; with no file the check answers with the address only.
+- Licence CC BY 4.0: keep "IP geolocation by DB-IP" (link to https://db-ip.com) on the website footer and the
+  desktop Proxies screen.
+
 ## 7. The preflight
 `bash /home/pb/antibrowser/scripts/deploy/preflight.sh` — every line is PASS, FAIL or WARN with a reason; the meaning
 and fix of each check is in [preflight-report.md](preflight-report.md). Customers come only when there is no FAIL.

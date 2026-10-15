@@ -635,6 +635,10 @@
                       "type": "null"
                     }
                   ]
+                },
+                "match_proxy": {
+                  "type": "boolean",
+                  "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
                 }
               },
               "additionalProperties": false
@@ -1175,6 +1179,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -1531,6 +1539,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -1858,6 +1870,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -2478,6 +2494,10 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "match_proxy": {
+                    "type": "boolean",
+                    "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
                   }
                 },
                 "additionalProperties": false
@@ -4291,6 +4311,10 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "match_proxy": {
+                      "type": "boolean",
+                      "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
                     }
                   },
                   "additionalProperties": false
@@ -6028,6 +6052,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -7794,6 +7822,97 @@
                     },
                     "checked_at": {
                       "type": "string"
+                    },
+                    "geo": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "country",
+                            "city",
+                            "timezone",
+                            "language",
+                            "latitude",
+                            "longitude"
+                          ],
+                          "properties": {
+                            "country": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[A-Z]{2}$",
+                                  "description": "ISO 3166-1 alpha-2"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "city": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 64
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "timezone": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 64,
+                                  "pattern": "^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "language": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[a-z]{2,3}-[A-Z]{2}$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "latitude": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": -90,
+                                  "maximum": 90
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "longitude": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": -180,
+                                  "maximum": 180
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   }
                 },
@@ -8046,6 +8165,97 @@
                   },
                   "checked_at": {
                     "type": "string"
+                  },
+                  "geo": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "country",
+                          "city",
+                          "timezone",
+                          "language",
+                          "latitude",
+                          "longitude"
+                        ],
+                        "properties": {
+                          "country": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Z]{2}$",
+                                "description": "ISO 3166-1 alpha-2"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "city": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "timezone": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 64,
+                                "pattern": "^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "language": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[a-z]{2,3}-[A-Z]{2}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "latitude": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "longitude": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 }
               },
@@ -8306,6 +8516,97 @@
                   },
                   "checked_at": {
                     "type": "string"
+                  },
+                  "geo": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "country",
+                          "city",
+                          "timezone",
+                          "language",
+                          "latitude",
+                          "longitude"
+                        ],
+                        "properties": {
+                          "country": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Z]{2}$",
+                                "description": "ISO 3166-1 alpha-2"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "city": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "timezone": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 64,
+                                "pattern": "^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "language": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[a-z]{2,3}-[A-Z]{2}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "latitude": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "longitude": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 }
               },
@@ -8409,6 +8710,97 @@
           },
           "checked_at": {
             "type": "string"
+          },
+          "geo": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "country",
+                  "city",
+                  "timezone",
+                  "language",
+                  "latitude",
+                  "longitude"
+                ],
+                "properties": {
+                  "country": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Z]{2}$",
+                        "description": "ISO 3166-1 alpha-2"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "city": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timezone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "language": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z]{2,3}-[A-Z]{2}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "latitude": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": -90,
+                        "maximum": 90
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "longitude": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": -180,
+                        "maximum": 180
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -8490,6 +8882,97 @@
             },
             "checked_at": {
               "type": "string"
+            },
+            "geo": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "country",
+                    "city",
+                    "timezone",
+                    "language",
+                    "latitude",
+                    "longitude"
+                  ],
+                  "properties": {
+                    "country": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Z]{2}$",
+                          "description": "ISO 3166-1 alpha-2"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "city": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64,
+                          "pattern": "^(UTC|[A-Z][A-Za-z]{1,19}(/[A-Za-z0-9_+-]{1,30}){1,2})$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "language": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[a-z]{2,3}-[A-Z]{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "latitude": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "longitude": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -8851,6 +9334,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -9137,12 +9624,20 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
           },
           "failClosedProxy": {
             "type": "boolean"
+          },
+          "proxied": {
+            "type": "boolean",
+            "description": "The profile has a proxy (matching is reported for it)."
           }
         }
       },
@@ -9397,6 +9892,10 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "match_proxy": {
+                      "type": "boolean",
+                      "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
                     }
                   },
                   "additionalProperties": false
@@ -11998,6 +12497,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -13878,6 +14381,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -19365,6 +19872,10 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "match_proxy": {
+                      "type": "boolean",
+                      "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
                     }
                   },
                   "additionalProperties": false
@@ -19847,6 +20358,10 @@
           "proxyId": {
             "type": "string",
             "pattern": "^prx_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "matchProxy": {
+            "type": "boolean",
+            "description": "With proxyId (default true): time zone and language follow the proxy."
           }
         }
       },
@@ -20171,6 +20686,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "match_proxy": {
+                "type": "boolean",
+                "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
               }
             },
             "additionalProperties": false
@@ -21053,6 +21572,32 @@
             },
             "reason": {
               "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "profile_id",
+            "reason",
+            "partial"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "PROXY_MATCH_UNAVAILABLE"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "partial": {
+              "type": "boolean"
             }
           }
         },

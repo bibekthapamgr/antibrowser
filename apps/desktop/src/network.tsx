@@ -4,6 +4,9 @@
  *
  * Wording rules: a proxy changes the network path a profile uses; presets are configuration and QA shortcuts.
  * Nothing here claims to make a profile undetectable or safe from bans.
+ *
+ * ADR-0027: a check also shows where the check service estimated the exit address to be, and a profile can match its
+ * time zone and language to that location ("Match timezone, language and location to the proxy").
  */
 import { type FormEvent, useEffect, useId, useMemo, useState } from 'react';
 import type {
@@ -16,13 +19,15 @@ import type {
   PrivacyValidation,
   ProfileView,
   ProxyEdit,
+  ProxyGeo,
   ProxyInput,
   ProxyView,
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog } from './components.tsx';
 import { parseProxyLine } from './proxy-line.ts';
-import { type Notify, when } from './status.tsx';
+import { type Notify, relative, when } from './status.tsx';
+import { Toggle } from './ui.tsx';
 
 // ---------------------------------------------------------------------------------------------- shared
 /** What went wrong, and what to do about it, for each error a proxy check or launch can report. */
@@ -55,6 +60,45 @@ const TYPE_LABEL: Record<ProxyView['type'], string> = { http: 'HTTP', https: 'HT
 
 const timeOf = (iso: string) => when(iso);
 
+const displayName = (type: 'region' | 'language', code: string): string => {
+  try {
+    return new Intl.DisplayNames(['en'], { type }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+};
+/** `US` → "United States". */
+export const countryName = (cc: string) => displayName('region', cc);
+/** `en-US` → "English (US)". */
+export const languageLabel = (tag: string) => {
+  const [base, region] = tag.split('-');
+  const name = base ? displayName('language', base) : tag;
+  return region ? `${name} (${region})` : name;
+};
+/** "New York, US", or the country's name when the city is unknown. */
+export const placeLabel = (g: ProxyGeo) =>
+  g.city && g.country ? `${g.city}, ${g.country}` : g.country ? countryName(g.country) : (g.city ?? '');
+
+/** Where the check service estimated the exit address to be. */
+export function GeoLine({ geo }: { geo: ProxyGeo | null | undefined }) {
+  if (!geo) return null;
+  const parts = [
+    geo.country
+      ? geo.city
+        ? `${geo.city}, ${countryName(geo.country)}`
+        : countryName(geo.country)
+      : geo.city,
+    geo.timezone?.replaceAll('_', ' '),
+    geo.language ? languageLabel(geo.language) : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <span className="small" data-geo>
+      Location (estimate): {parts.join(' · ')}
+    </span>
+  );
+}
+
 export function CheckResult({ check }: { check: NetworkCheck | null }) {
   if (!check) return <span className="muted">Not tested yet</span>;
   if (check.result === 'ok')
@@ -66,7 +110,7 @@ export function CheckResult({ check }: { check: NetworkCheck | null }) {
         <span>
           exit address <span className="mono">{check.egress_ip ?? 'unknown'}</span>
         </span>{' '}
-        <span className="muted small">{timeOf(check.checked_at)}</span>
+        <GeoLine geo={check.geo} /> <span className="muted small">{timeOf(check.checked_at)}</span>
       </span>
     );
   return (
@@ -120,7 +164,9 @@ export function ProxiesScreen(props: { backend: Backend; refreshKey: number; not
       const c = await backend.network.testProxy(p.id);
       notify(
         c.result === 'ok'
-          ? `${p.name} works: ${c.latency_ms} ms, exit address ${c.egress_ip ?? 'unknown'}.`
+          ? `${p.name} works: ${c.latency_ms} ms, exit address ${c.egress_ip ?? 'unknown'}${
+              c.geo ? ` (${placeLabel(c.geo)})` : ''
+            }.`
           : `${p.name}: ${proxyErrorText(c.error_code)}`,
         c.result === 'ok' ? 'info' : 'error',
       );
@@ -151,8 +197,14 @@ export function ProxiesScreen(props: { backend: Backend; refreshKey: number; not
       </header>
       <p className="muted small">
         Logins are kept in this computer's secure storage (Keychain or Credential Manager) and are never
-        shown, exported or written to logs. Checks are started by you and contact a test service through the
-        proxy to measure the delay and see the exit address; results are kept for 7 days.
+        shown, exported or written to logs. Checks contact a test service through the proxy to measure the
+        delay, see the exit address and (with your account server) estimate where that address is; results are
+        kept for 7 days. Profiles that match their proxy are also checked when they open, at most once a day.
+        IP geolocation by{' '}
+        <a href="https://db-ip.com" target="_blank" rel="noreferrer">
+          DB-IP
+        </a>
+        .
       </p>
 
       {proxies === null ? (
@@ -555,6 +607,7 @@ function ChecksDialog(props: { backend: Backend; proxy: ProxyView; onClose: () =
                 <th scope="col">Result</th>
                 <th scope="col">Delay</th>
                 <th scope="col">Exit address</th>
+                <th scope="col">Location (estimate)</th>
               </tr>
             </thead>
             <tbody>
@@ -570,6 +623,7 @@ function ChecksDialog(props: { backend: Backend; proxy: ProxyView; onClose: () =
                   </td>
                   <td>{c.latency_ms !== null ? `${c.latency_ms} ms` : '—'}</td>
                   <td className="mono">{c.egress_ip ?? '—'}</td>
+                  <td>{c.geo ? placeLabel(c.geo) || '—' : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -709,7 +763,9 @@ export function NetworkSection(props: {
       const c = await backend.network.testProxy(chosen.id);
       notify(
         c.result === 'ok'
-          ? `${chosen.name} works: ${c.latency_ms} ms, exit address ${c.egress_ip ?? 'unknown'}.`
+          ? `${chosen.name} works: ${c.latency_ms} ms, exit address ${c.egress_ip ?? 'unknown'}${
+              c.geo ? ` (${placeLabel(c.geo)})` : ''
+            }.`
           : `${chosen.name}: ${proxyErrorText(c.error_code)}`,
         c.result === 'ok' ? 'info' : 'error',
       );
@@ -805,6 +861,7 @@ const fullConfig = (c: PrivacyConfig): Required<PrivacyConfig> => ({
   text_size: c.text_size ?? 'default',
   reduced_motion: c.reduced_motion ?? false,
   preset: c.preset ?? null,
+  match_proxy: c.match_proxy ?? false,
 });
 
 const SUPPORT_LABEL: Record<FieldReport['support'], string> = {
@@ -812,6 +869,47 @@ const SUPPORT_LABEL: Record<FieldReport['support'], string> = {
   partial: 'Partly applied: ',
   unavailable: 'Not available on this computer: ',
 };
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/** "Uses America/New_York · English (US) · New York, US — from the proxy check 2 h ago." */
+export function matchSummary(
+  config: Pick<PrivacyConfig, 'language' | 'timezone'>,
+  proxied: boolean,
+  check: NetworkCheck | null | undefined,
+  platform: PrivacyOptions['platform'] | undefined,
+): { text: string; located: boolean } {
+  if (!proxied)
+    return {
+      text: 'This profile has no proxy yet. Once it has one, its time zone and language follow the proxy’s location.',
+      located: false,
+    };
+  const geo = check?.result === 'ok' ? check.geo : null;
+  if (!check || !geo || (!geo.timezone && !geo.language))
+    return {
+      text: 'No location from the proxy yet. It is checked when the profile opens (up to 10 seconds); if that fails, the profile opens with this computer’s time zone and language, and you are told.',
+      located: false,
+    };
+  const tz = config.timezone
+    ? `${config.timezone.replaceAll('_', ' ')} (your choice)`
+    : platform === 'windows'
+      ? 'this computer’s time zone (Windows keeps it)'
+      : (geo.timezone?.replaceAll('_', ' ') ?? 'this computer’s time zone');
+  const lang = config.language
+    ? `${languageLabel(config.language)} (your choice)`
+    : geo.language
+      ? languageLabel(geo.language)
+      : 'the browser’s language';
+  const place = placeLabel(geo);
+  const age = relative(check.checked_at);
+  const stale = Date.now() - new Date(check.checked_at).getTime() > DAY_MS;
+  return {
+    text: `Uses ${[tz, lang, place].filter(Boolean).join(' · ')} — from the proxy check ${
+      /^\d/.test(age) || age === 'Just now' || age === 'Yesterday' ? age.toLowerCase() : `of ${age}`
+    }.${stale ? ' It is checked again when the profile opens.' : ''}`,
+    located: true,
+  };
+}
 
 function FieldNote({ report, field }: { report: FieldReport[]; field: string }) {
   const r = report.find((x) => x.field === field);
@@ -835,7 +933,12 @@ export function PrivacySection(props: {
   const [config, setConfig] = useState(() => fullConfig(p.privacy));
   const [validation, setValidation] = useState<PrivacyValidation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const failClosedProxy = Boolean(p.proxy_id) && p.fail_closed;
+  const [proxy, setProxy] = useState<ProxyView | null>(null);
+  const [checking, setChecking] = useState(false);
+  const matchId = useId();
+  const matchHelp = useId();
+  const proxied = Boolean(p.proxy_id);
+  const failClosedProxy = proxied && p.fail_closed;
   const saved = useMemo(() => JSON.stringify(fullConfig(p.privacy)), [p.privacy]);
   const dirty = JSON.stringify(config) !== saved;
 
@@ -850,7 +953,7 @@ export function PrivacySection(props: {
     let live = true;
     const t = setTimeout(() => {
       backend.network
-        .validatePrivacy(config, failClosedProxy)
+        .validatePrivacy(config, failClosedProxy, proxied)
         .then((v) => live && setValidation(v))
         .catch(() => undefined);
     }, 150);
@@ -858,11 +961,42 @@ export function PrivacySection(props: {
       live = false;
       clearTimeout(t);
     };
-  }, [backend, config, failClosedProxy]);
+  }, [backend, config, failClosedProxy, proxied]);
+  // The profile's proxy and its last check, for the "match the proxy" summary (reloaded when the profile changes).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: p.version reloads the proxy's last check
+  useEffect(() => {
+    let live = true;
+    if (!p.proxy_id) {
+      setProxy(null);
+      return;
+    }
+    backend.network
+      .proxies()
+      .then((list) => live && setProxy(list.find((x) => x.id === p.proxy_id) ?? null))
+      .catch(() => live && setProxy(null));
+    return () => {
+      live = false;
+    };
+  }, [backend, p.proxy_id, p.version]);
 
   const set = <K extends keyof PrivacyConfig>(k: K, v: Required<PrivacyConfig>[K]) =>
     setConfig((c) => ({ ...c, [k]: v, preset: null }));
   const report = validation?.report ?? [];
+  const matching = config.match_proxy;
+  const summary = matchSummary(config, proxied, proxy?.last_check, options?.platform);
+
+  const checkNow = async () => {
+    if (!proxy) return;
+    setChecking(true);
+    try {
+      const c = await backend.network.testProxy(proxy.id);
+      setProxy({ ...proxy, last_check: c });
+      if (c.result !== 'ok') notify(`${proxy.name}: ${proxyErrorText(c.error_code)}`, 'error');
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+    setChecking(false);
+  };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -892,13 +1026,42 @@ export function PrivacySection(props: {
           zone or window size. They do not make the profile look like a different device, and nothing is
           randomised.
         </p>
+        <div className="match-proxy">
+          <label className="choice" htmlFor={matchId}>
+            <Toggle
+              id={matchId}
+              checked={matching}
+              describedBy={matchHelp}
+              onChange={(v) => setConfig((c) => ({ ...c, match_proxy: v }))}
+            />
+            Match timezone, language and location to the proxy
+          </label>
+          <p id={matchHelp} className={matching && proxied && !summary.located ? 'warn small' : 'small'}>
+            {matching
+              ? summary.text
+              : 'Off: the profile uses the settings below (or this computer’s) whatever its proxy is.'}
+          </p>
+          {matching && proxied && !summary.located && proxy && (
+            <button type="button" className="link-button" disabled={checking} onClick={() => void checkNow()}>
+              {checking ? 'Checking…' : 'Check the proxy now'}
+            </button>
+          )}
+          <FieldNote report={report} field="match_proxy" />
+          {matching && (
+            <p className="muted small">
+              Websites are refused this computer’s location (unless you allow it under Website permissions),
+              and WebRTC uses only the proxy. The location is an estimate for the proxy’s address; other
+              device details are not changed. Choose a language or time zone below to override it.
+            </p>
+          )}
+        </div>
         <label>
           Preset
           <select
             value={config.preset ?? ''}
             onChange={(e) => {
               const pr = presets.find((x) => x.id === e.target.value);
-              if (pr) setConfig(fullConfig(pr.config));
+              if (pr) setConfig({ ...fullConfig(pr.config), match_proxy: config.match_proxy });
             }}
           >
             <option value="">{config.preset ? 'Custom' : 'Custom (choose a preset to fill in)'}</option>
@@ -913,9 +1076,9 @@ export function PrivacySection(props: {
           <p className="muted small">{presets.find((x) => x.id === config.preset)?.description}</p>
         )}
         <label>
-          Page language
+          {matching ? 'Page language (override)' : 'Page language'}
           <select value={config.language ?? ''} onChange={(e) => set('language', e.target.value || null)}>
-            <option value="">Browser default</option>
+            <option value="">{matching && proxied ? 'From the proxy' : 'Browser default'}</option>
             {options?.languages.map((l) => (
               <option key={l.tag} value={l.tag}>
                 {l.name}
@@ -925,9 +1088,9 @@ export function PrivacySection(props: {
         </label>
         <FieldNote report={report} field="language" />
         <label>
-          Time zone
+          {matching ? 'Time zone (override)' : 'Time zone'}
           <select value={config.timezone ?? ''} onChange={(e) => set('timezone', e.target.value || null)}>
-            <option value="">This computer’s time zone</option>
+            <option value="">{matching && proxied ? 'From the proxy' : 'This computer’s time zone'}</option>
             {options?.time_zones.map((z) => (
               <option key={z} value={z}>
                 {z.replaceAll('_', ' ')}
@@ -985,8 +1148,8 @@ export function PrivacySection(props: {
         <label>
           WebRTC address sharing (calls and live video)
           <select
-            value={failClosedProxy ? 'disable_non_proxied_udp' : config.webrtc}
-            disabled={failClosedProxy}
+            value={failClosedProxy || (matching && proxied) ? 'disable_non_proxied_udp' : config.webrtc}
+            disabled={failClosedProxy || (matching && proxied)}
             onChange={(e) => set('webrtc', e.target.value as Required<PrivacyConfig>['webrtc'])}
           >
             <option value="default">Browser default</option>

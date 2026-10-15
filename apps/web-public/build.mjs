@@ -100,7 +100,7 @@ ${content}
 <div><h2>Legal</h2><ul><li><a href="/legal/privacy/">Privacy</a></li><li><a href="/legal/terms/">Terms</a></li><li><a href="/legal/refund/">Refunds</a></li></ul></div>
 </nav>
 </div>
-<div class="wrap foot-base small muted"><span>© ${YEAR} Ten Tech Solutions LLC</span><span>Windows 10/11 (x64) and macOS 13+ on Apple silicon</span></div>
+<div class="wrap foot-base small muted"><span>© ${YEAR} Ten Tech Solutions LLC</span><span>Windows 10/11 (x64) and macOS 13+ on Apple silicon</span><span>IP geolocation by <a href="https://db-ip.com">DB-IP</a></span></div>
 </footer>
 </body>
 </html>
