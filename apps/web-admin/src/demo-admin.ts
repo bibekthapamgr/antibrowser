@@ -553,7 +553,7 @@ export function adminDemo(opts: {
       const o: AdminOperations = {
         generated_at: iso(Date.now()),
         server: {
-          api_version: '0.17.0',
+          api_version: '0.18.0',
           environment: 'demo',
           database_migration: '0016_business_admin.sql',
           worker_last_seen: iso(Date.now() - 40_000),

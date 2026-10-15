@@ -1,6 +1,6 @@
 {
   "name": "@pb/web-customer",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "description": "Customer portal (R4, ADR-0023): sign up and onboarding (R2), overview, billing and checkout, team, account. Served by the API at /app/ with the portal's cookie session; it never holds a token.",

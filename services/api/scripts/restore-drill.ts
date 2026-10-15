@@ -5,14 +5,16 @@
  *
  * Usage (as the pb user, with the API environment for the root key):
  *   node --env-file=/etc/project-browser/api.env scripts/restore-drill.ts --socket <dir> --port <n> --db <name>
- *        --objects <dir> [--marker <id>] [--orgs org_…,org_…]
+ *        --objects <dir> [--marker <id>] [--orgs org_…,org_…] [--workspace org_…]
+ * R6: --workspace rehearses restoring that one workspace (every profile's newest snapshot); the two-organization
+ * isolation checks then run only when --orgs names two organizations.
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig } from '@pb/config/env';
 import pg from 'pg';
 import { localKeyProvider } from '../src/backup/keys.ts';
-import { checkRestore } from '../src/backup/restore-check.ts';
+import { checkRestore, checkWorkspace } from '../src/backup/restore-check.ts';
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -53,25 +55,27 @@ try {
   const { rows: latest } = await owner.query<{ at: string | null }>(
     'select max(created_at)::text as at from app.recovery_markers',
   );
-  const report = await checkRestore({
-    owner,
-    app,
-    kms,
-    orgs: arg('--orgs')?.split(','),
-    async readObject(key) {
-      if (!/^[A-Za-z0-9_./-]+$/.test(key) || key.split('/').includes('..')) return null;
-      try {
-        return await readFile(join(objects, key));
-      } catch {
-        return null;
-      }
-    },
-  });
-  const ok = report.ok && (!markerId || marker !== null);
+  const readObject = async (key: string) => {
+    if (!/^[A-Za-z0-9_./-]+$/.test(key) || key.split('/').includes('..')) return null;
+    try {
+      return await readFile(join(objects, key));
+    } catch {
+      return null;
+    }
+  };
+  const workspaceId = arg('--workspace');
+  const orgs = arg('--orgs')?.split(',').filter(Boolean);
+  const workspace = workspaceId ? await checkWorkspace({ owner, kms, orgId: workspaceId, readObject }) : null;
+  const report =
+    !workspace || (orgs && orgs.length >= 2)
+      ? await checkRestore({ owner, app, kms, orgs, readObject })
+      : { ok: true, tenants: [], isolation: [] };
+  const ok = report.ok && (!workspace || workspace.ok) && (!markerId || marker !== null);
   console.log(
     JSON.stringify(
       {
         ...report,
+        workspace,
         ok,
         marker_found: markerId ? marker !== null : null,
         latest_marker_at: latest[0]?.at ?? null,

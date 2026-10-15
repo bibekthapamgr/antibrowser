@@ -21,6 +21,11 @@
 #      The same settings give the worker its mail server (email.env) for invitation and welcome e-mails.
 #      Staff sign in to the console through their own flow: password AND a one-time code every time (no single
 #      sign-on from a customer session). Public signup never creates staff: staff roles live in the API's database.
+#   8. R6 (ADR-0025), staging/production servers (/etc/project-browser/environment from vps-setup.sh PB_ENV): the
+#      realm is that environment's own (project-browser-prod / -staging), Keycloak answers at https://ID_HOST through
+#      the TLS proxy (public-setup.sh; proxy headers, fixed host name), and every client's redirect, origin and the
+#      API's settings use the public addresses of /etc/project-browser/public.env. Its administration stays on
+#      127.0.0.1 (SSH tunnel). Billing returns to https://SITE_HOST.
 #
 # Usage (as root):
 #   bash keycloak-setup.sh --owner-email you@example.com [--otp]   install or update; creates your account
@@ -51,7 +56,6 @@ REDIRECT=projectbrowser://auth/callback
 CONSOLE_CLIENT_ID=project-browser-console
 CONSOLE_ORIGIN=http://127.0.0.1:$API_PORT
 CONSOLE_REDIRECT=$CONSOLE_ORIGIN/console/
-ISSUER=$KC_BASE/realms/$REALM
 UNIT=/etc/systemd/system/keycloak.service
 ENV_DIR=/etc/project-browser
 ADMIN_FILE=$ENV_DIR/keycloak-admin           # Keycloak administrator password (root only)
@@ -61,9 +65,31 @@ OIDC_ENV=$ENV_DIR/oidc.env
 # R2: the customer portal, e-mail and the staff sign-in flow.
 WEB_CLIENT_ID=project-browser-web
 WEB_ORIGIN=$CONSOLE_ORIGIN
+[[ $PUBLIC == 1 ]] && WEB_ORIGIN=https://$SITE_HOST
 WEB_REDIRECT=$WEB_ORIGIN/v1/web/auth/callback
 SMTP_ENV=$ENV_DIR/smtp.env      # yours: the mail server (see the summary for the format)
 EMAIL_ENV=$ENV_DIR/email.env    # generated: the worker's mail settings and the API's e-mail sealing key
+# R6: staging/production use the public addresses (public.env) and their own realm.
+PB_ENV=$(sed -n 's/^PB_ENV=//p' "$ENV_DIR/environment" 2>/dev/null || true)
+PUBLIC=0; KC_PUBLIC_URL=$KC_BASE; PUB_CURL=(); SITE_HOST="" ADMIN_HOST="" ID_HOST=""
+if [[ $PB_ENV == staging || $PB_ENV == prod ]]; then
+  PUBLIC=1
+  REALM=project-browser-$PB_ENV
+  while IFS='=' read -r key value; do
+    [[ $key =~ ^(SITE_HOST|ADMIN_HOST|ID_HOST)$ ]] || continue
+    value=${value%$'\r'}; value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}
+    printf -v "$key" '%s' "${value// /}"
+  done < "$ENV_DIR/public.env"
+  [[ -n $SITE_HOST && -n $ADMIN_HOST && -n $ID_HOST ]] || { echo "STOPPED: $ENV_DIR/public.env is incomplete (run vps-setup.sh)" >&2; exit 1; }
+  KC_PUBLIC_URL=https://$ID_HOST
+  CONSOLE_ORIGIN=https://$ADMIN_HOST
+  CONSOLE_REDIRECT=$CONSOLE_ORIGIN/console/
+  # Checks from this server reach the public names through the proxy on this machine (no hairpin through the
+  # provider's network); with TLS_MODE=internal (tests) the private authority is trusted for them.
+  for h in "$SITE_HOST" "$ADMIN_HOST" "$ID_HOST"; do PUB_CURL+=(--resolve "$h:443:127.0.0.1"); done
+  [[ -s $ENV_DIR/public-ca.pem ]] && PUB_CURL+=(--cacert "$ENV_DIR/public-ca.pem")
+fi
+ISSUER=$KC_PUBLIC_URL/realms/$REALM
 APP_DIR=/home/pb/antibrowser
 THEME_SRC=$APP_DIR/scripts/deploy/keycloak-theme/pb
 STAFF_FLOW=pb-staff-browser
@@ -199,6 +225,7 @@ reset_password() {  # e-mail -> ACCOUNT_TEXT
 SMTP_HOST="" SMTP_PORT="" SMTP_SECURITY="" SMTP_USER="" SMTP_PASSWORD="" SMTP_FROM="" SMTP_FROM_NAME=""
 read_smtp() {  # -> returns 0 when $SMTP_ENV describes a usable mail server
   [[ -s $SMTP_ENV ]] || return 1
+  chown root:root "$SMTP_ENV"; chmod 600 "$SMTP_ENV"  # it holds the mail password: root only, however it was created
   local key value
   while IFS='=' read -r key value; do
     [[ $key =~ ^SMTP_(HOST|PORT|SECURITY|USER|PASSWORD|FROM|FROM_NAME)$ ]] || continue
@@ -251,7 +278,7 @@ if [[ $CMD == email-status ]]; then
   echo "    Keycloak e-mails (newest first; addresses not shown):"
   js 'd.map(e => `      ${new Date(e.time).toISOString()}  ${e.type}${e.error ? "  " + e.error : ""}`).join("\n") || "      (none in the last 7 days)"' < "$WORK/body"
   echo "    Worker e-mails (invitations, welcome) in the last 7 days:"
-  (cd /tmp && runuser -u postgres -- "$PG_BIN/psql" -qAtF "  " -d pb_dev -c \
+  (cd /tmp && runuser -u postgres -- "$PG_BIN/psql" -qAtF "  " -d "$(sed -nE 's#^MIGRATION_DATABASE_URL=.*/([A-Za-z0-9_]+)(\?.*)?$#\1#p' "$ENV_DIR/api.env")" -c \
     "select '      ' || kind, state, coalesce(last_error, ''), count(*) from app.email_tasks
       where created_at > now() - interval '7 days' group by 1, 2, 3 order by 1, 2") || warn "could not read the e-mail queue"
   exit 0
@@ -390,12 +417,17 @@ db-password=$DB_PW
 http-enabled=true
 http-host=127.0.0.1
 http-port=$KC_PORT
-hostname=$KC_BASE
+hostname=$KC_PUBLIC_URL
 cache=local
 health-enabled=false
 metrics-enabled=false
 EOF
 )
+if (( PUBLIC )); then
+  # R6: behind the TLS proxy on this machine (public-setup.sh). It sets X-Forwarded-* itself and ignores what clients
+  # send, so Keycloak sees the real scheme (https) and client address.
+  conf_text+=$'\n'"proxy-headers=xforwarded"
+fi
 if [[ ! -f $CONF || "$(<"$CONF")" != "$conf_text" ]]; then
   (umask 027; printf '%s\n' "$conf_text" > "$CONF")
   CHANGED=1
@@ -440,7 +472,7 @@ fi
 if [[ -f $BOOTSTRAP_ENV ]]; then CHANGED=1; fi
 unit_text=$(cat <<EOF
 [Unit]
-Description=Keycloak sign-in provider for Project Browser (test server)
+Description=Keycloak sign-in provider for Project Browser ($([[ $PUBLIC == 1 ]] && echo "$PB_ENV" || echo "test server"))
 After=network-online.target $PG_SERVICE.service
 Wants=network-online.target
 Requires=$PG_SERVICE.service
@@ -733,6 +765,10 @@ STAFF_MFA_AMR=otp
 SESSION_SIGNING_KEY='$key'
 EOF
 )
+if (( PUBLIC )); then
+  # R6: customers come back from Stripe's pages to the public site; the session tokens name this environment.
+  env_text+=$'\n'"BILLING_RETURN_URL=https://$SITE_HOST/v1/billing/return"
+fi
 API_CHANGED=0
 if [[ ! -f $OIDC_ENV || "$(<"$OIDC_ENV")" != "$env_text" ]]; then
   (umask 077; printf '%s\n' "$env_text" > "$OIDC_ENV")
@@ -809,13 +845,13 @@ ok "the customer portal is served at $WEB_ORIGIN/app/ and signs in with '$WEB_CL
 
 # ----------------------------------------------------------------------------- checks
 step "Checks"
-disc=$(curl -fsS "$ISSUER/.well-known/openid-configuration") || die "no OpenID configuration at $ISSUER"
+disc=$(curl -fsS "${PUB_CURL[@]}" "$ISSUER/.well-known/openid-configuration") || die "no OpenID configuration at $ISSUER"
 [[ $(js 'd.issuer' <<<"$disc") == "$ISSUER" ]] || die "the provider names another issuer than $ISSUER"
 js 'd.code_challenge_methods_supported.includes("S256") || undefined' <<<"$disc" >/dev/null || die "the provider does not offer PKCE S256"
 ok "discovery: issuer $ISSUER, PKCE S256"
 auth_try() {  # query -> "<HTTP status> <Location>"
   local status
-  status=$(curl -sS -o /dev/null -D "$WORK/headers" -w '%{http_code}' "$ISSUER/protocol/openid-connect/auth?$1")
+  status=$(curl -sS "${PUB_CURL[@]}" -o /dev/null -D "$WORK/headers" -w '%{http_code}' "$ISSUER/protocol/openid-connect/auth?$1")
   printf '%s %s' "$status" "$(sed -n 's/^[Ll]ocation: *//p' "$WORK/headers" | tr -d '\r')"
 }
 q="response_type=code&client_id=$CLIENT_ID&scope=openid&state=check&nonce=check"
@@ -849,11 +885,31 @@ listening=$(ss -ltnpH | { grep -E "pid=($pids)," || true; } | awk '{print $4}' |
 public=$(tr ' ' '\n' <<<"$listening" | { grep -vE '^(127\.0\.0\.1|\[::1\]|\[::ffff:127\.0\.0\.1\]):' || true; } | { grep . || true; })
 [[ -z $public ]] || die "Keycloak listens on a public address: $public"
 ok "Keycloak listens on ${listening% } only (not reachable from the internet)"
+if (( PUBLIC )); then
+  for path in /admin/ /realms/master/.well-known/openid-configuration; do
+    code=$(curl -sS "${PUB_CURL[@]}" -o /dev/null -w '%{http_code}' "https://$ID_HOST$path")
+    [[ $code == 404 ]] || die "https://$ID_HOST$path answers HTTP $code: Keycloak's administration must not be public"
+  done
+  ok "https://$ID_HOST serves the realm $REALM only; administration and the master realm are refused (404)"
+fi
 rss=$(ps -o rss= -u "$KC_USER" | awk '{s+=$1} END {print int(s/1024)}')
 ok "Keycloak uses about $rss MB of memory now"
 
 # ----------------------------------------------------------------------------- summary
 step "Done"
+if (( PUBLIC )); then
+  cat <<EOF
+    Keycloak:  $KC_HOME   |   systemctl status keycloak   |   logs: journalctl -u keycloak -f
+    Sign-in:   $ISSUER ($PB_ENV realm; clients $CLIENT_ID, $CONSOLE_CLIENT_ID, $WEB_CLIENT_ID)
+    Portal:    $WEB_ORIGIN/app/ (create an account, download the app)   |   staff console: $CONSOLE_REDIRECT
+    Admin:     not public. From your computer: ssh -N -L $KC_PORT:127.0.0.1:$KC_PORT root@<this-server>
+               then http://127.0.0.1:$KC_PORT/admin/ , user '$KC_ADMIN_USER', password: cat $ADMIN_FILE (on the server)
+    Accounts:  bash $SELF add-user someone@example.com [--otp]   |   bash $SELF reset-password someone@example.com
+    E-mail:    $SMTP_ENV (yours, root only), then re-run vps-setup.sh   |   status: bash $SELF email-status
+EOF
+  [[ -n $ACCOUNT_TEXT ]] && printf '%s\n' "$ACCOUNT_TEXT"
+  exit 0
+fi
 cat <<EOF
     Keycloak:  $KC_HOME   |   systemctl status keycloak   |   logs: journalctl -u keycloak -f
     Sign-in:   $ISSUER (client $CLIENT_ID; support console: $CONSOLE_CLIENT_ID)

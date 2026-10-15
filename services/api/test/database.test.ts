@@ -7,6 +7,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seedWith } from '../scripts/seed.ts';
 import { FIXTURES } from '../src/fixtures.ts';
+import { RLS_EXEMPT_TABLES } from '../src/preflight.ts';
 import { type Harness, harness } from './helpers.ts';
 import { LEGACY } from './legacy-fixtures.ts';
 
@@ -173,33 +174,8 @@ describe('roles', () => {
     // R5: the catalog (state, published prices, drafts, publications), restrictions, case notes, release requests,
     // the staff role → permission table and worker heartbeats — platform data used by the staff-only admin routes
     // (every cross-workspace reader checks the staff permission in the database too) and the public catalog.
-    expect(rows.map((r) => r.relname)).toEqual([
-      'account_restrictions',
-      'billing_alerts',
-      'billing_webhook_events',
-      'break_glass_grants',
-      'catalog_publications',
-      'catalog_state',
-      'contact_requests',
-      'email_tasks',
-      'outbox_events',
-      'plan_drafts',
-      'plan_prices',
-      'plans',
-      'platform_audit',
-      'platform_audit_head',
-      'platform_staff',
-      'processed_events',
-      'recovery_markers',
-      'release_action_requests',
-      'staff_role_permissions',
-      'staff_sessions',
-      'support_access_requests',
-      'support_notes',
-      'trial_claims',
-      'web_auth_requests',
-      'worker_heartbeats',
-    ]);
+    // R6: the same list is what the production preflight accepts (src/preflight.ts).
+    expect(rows.map((r) => r.relname)).toEqual([...RLS_EXEMPT_TABLES]);
     for (const table of [
       'outbox_events',
       'processed_events',

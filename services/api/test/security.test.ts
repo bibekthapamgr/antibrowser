@@ -11,8 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../scripts/migrate.ts';
 import { auditHead, exportAudit, verifyChain, verifyWholeChain } from '../src/audit-chain.ts';
 import { localKeyProvider, type RootKeyProvider } from '../src/backup/keys.ts';
-import { checkRestore } from '../src/backup/restore-check.ts';
+import { checkRestore, checkWorkspace } from '../src/backup/restore-check.ts';
 import { FIXTURES } from '../src/fixtures.ts';
+import { REQUIRED_SCHEMA } from '../src/routes/health.ts';
 import { type Harness, harness } from './helpers.ts';
 import { backup } from './sync-helpers.ts';
 
@@ -103,6 +104,55 @@ describe('restore verification (two tenants)', () => {
       const wrongKeys = await run({ kms: otherRoot });
       expect(wrongKeys.ok).toBe(false);
       expect(wrongKeys.tenants.every((t) => t.key !== 'ok')).toBe(true);
+
+      // R6: the one-workspace rehearsal checks every profile's newest snapshot of that workspace alone. A workspace
+      // of its own (the fixture tenants also hold snapshots other test files stored elsewhere).
+      const person = await h.signIn();
+      const made = await h.app.inject({
+        method: 'POST',
+        url: '/v1/organizations',
+        headers: person.headers,
+        payload: { name: `Restore rehearsal ${randomBytes(2).toString('hex')}` },
+      });
+      expect(made.statusCode, made.body).toBe(201);
+      const wsOrg: string = made.json().id;
+      for (let i = 0; i < 2; i++) {
+        const p = await profileIn(wsOrg, person.headers);
+        await backup(h, {
+          headers: person.headers,
+          org: wsOrg,
+          profile: p,
+          device: person.session.device.id,
+          base: 0,
+        });
+      }
+      const wsObjects = new Map([...memory.objects].map(([k, v]) => [k, v.bytes]));
+      const ws = await checkWorkspace({
+        owner,
+        kms: h.kms,
+        orgId: wsOrg,
+        readObject: async (k) => wsObjects.get(k) ?? null,
+      });
+      expect(ws.ok, JSON.stringify(ws, null, 2)).toBe(true);
+      expect(ws).toMatchObject({ checked: 2, profiles: 2, profiles_with_snapshot: 2, failures: [] });
+      expect(ws.members).toBeGreaterThan(0);
+      expect(ws.newest_committed_at).toEqual(expect.any(String));
+      const wsMissing = await checkWorkspace({
+        owner,
+        kms: h.kms,
+        orgId: wsOrg,
+        readObject: async () => null,
+      });
+      expect(wsMissing.ok).toBe(false);
+      expect(wsMissing.failures).toHaveLength(2);
+      expect(wsMissing.failures.every((f) => f.org_id === wsOrg && /missing/.test(f.object))).toBe(true);
+      const wsWrongKey = await checkWorkspace({
+        owner,
+        kms: otherRoot,
+        orgId: wsOrg,
+        readObject: async (k) => wsObjects.get(k) ?? null,
+      });
+      expect(wsWrongKey.ok).toBe(false);
     } finally {
       owner.release();
       app.release();
@@ -218,7 +268,13 @@ describe('production controls (milestone 12)', () => {
     const health = await h.app.inject({ method: 'GET', url: '/v1/health' });
     expect(health.json()).toEqual({ status: 'ok' });
     const ready = await h.app.inject({ method: 'GET', url: '/v1/ready' });
-    expect(ready.json()).toEqual({ status: 'ready' });
+    expect(ready.json()).toMatchObject({ status: 'ready', checks: { database: 'ok', schema: 'current' } });
+    // R6: the schema this build needs is the newest migration in the repository.
+    const newest = readdirSync(join(import.meta.dirname, '../../../infra/db/migrations'))
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .at(-1);
+    expect(REQUIRED_SCHEMA).toBe(newest);
     for (const r of [health, ready]) {
       expect(r.body).not.toMatch(/postgres|version|bucket|secret|key|host/i);
       expect(r.headers.server).toBeUndefined();

@@ -17,7 +17,8 @@ trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 
 KMS_FILE="${PB_KMS_FILE:-/etc/project-browser/kms-root.json}"
 NODE="${PB_NODE:-/opt/node/bin/node}"
-DB="${PB_DB:-pb_dev}"
+DB="${PB_DB:-$(sed -nE 's#^MIGRATION_DATABASE_URL=.*/([A-Za-z0-9_]+)(\?.*)?$#\1#p' /etc/project-browser/api.env 2>/dev/null)}"
+DB=${DB:-pb_dev}
 RESTART="${PB_RESTART:-1}"
 [[ -x $NODE ]] || NODE=$(command -v node || true)
 

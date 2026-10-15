@@ -81,6 +81,49 @@ describe('loadConfig', () => {
     OBJECT_STORE_ENDPOINT: 'https://s3.example',
   };
 
+  it('allows a same-server database only when it is named for the environment (R6)', () => {
+    const key = { KMS_LOCAL_KEY_FILE: keyFile({ 'root-1': realKey }, 'root-1') };
+    const local = (db: string) => ({
+      DATABASE_URL: `postgres://app@127.0.0.1:5432/${db}`,
+      WORKER_DATABASE_URL: `postgres://worker@localhost:5432/${db}?sslmode=disable`,
+    });
+    expect(() => loadConfig({ ...prod, ...key, ...local('pb_prod') })).not.toThrow();
+    expect(() => loadConfig({ ...prod, ...key, ...local('pb_dev') })).toThrow(/points at localhost/);
+    expect(() => loadConfig({ ...prod, ...key, ...local('pb') })).toThrow(/points at localhost/);
+  });
+
+  it('requires public https addresses for the portal, storage links and billing return in prod (R6)', () => {
+    const key = { KMS_LOCAL_KEY_FILE: keyFile({ 'root-1': realKey }, 'root-1') };
+    expect(() => loadConfig({ ...prod, ...key, WEB_ORIGIN: 'http://127.0.0.1:8080' })).toThrow(
+      /WEB_ORIGIN must use https/,
+    );
+    expect(() =>
+      loadConfig({ ...prod, ...key, OBJECT_STORE_PUBLIC_ENDPOINT: 'http://127.0.0.1:8333' }),
+    ).toThrow(/OBJECT_STORE_PUBLIC_ENDPOINT must be a public https address/);
+    const stripe = {
+      STRIPE_SECRET_KEY: ['sk', 'live', 'a'.repeat(24)].join('_'),
+      STRIPE_WEBHOOK_SECRETS: `whsec_${'b'.repeat(24)}`,
+    };
+    expect(() => loadConfig({ ...prod, ...key, ...stripe })).toThrow(
+      /BILLING_RETURN_URL must be the public https/,
+    );
+    expect(() =>
+      loadConfig({
+        ...prod,
+        ...key,
+        ...stripe,
+        BILLING_RETURN_URL: 'https://browser.example/v1/billing/return',
+      }),
+    ).not.toThrow();
+  });
+
+  it('keeps the staff second factor on outside dev/test (R6)', () => {
+    const key = { KMS_LOCAL_KEY_FILE: keyFile({ 'root-1': realKey }, 'root-1') };
+    expect(loadConfig({ ...prod, ...key }).console.requireMfa).toBe(true);
+    expect(() => loadConfig({ ...prod, ...key, STAFF_REQUIRE_MFA: 'false' })).toThrow(/cannot be turned off/);
+    expect(loadConfig({ ...base, APP_ENV: 'dev' }).console.requireMfa).toBe(false);
+  });
+
   it('accepts a complete prod config', () => {
     const cfg = loadConfig({ ...prod, KMS_LOCAL_KEY_FILE: keyFile({ 'root-1': realKey }, 'root-1') });
     expect(cfg.devAuth.enabled).toBe(false);
@@ -124,8 +167,12 @@ describe('loadConfig', () => {
       loadConfig({ ...prod, KMS_LOCAL_KEY_FILE: file, OBJECT_STORE_PUBLIC_ENDPOINT: 'http://s3.example' }),
     ).toThrow(/must use https/);
     expect(
-      loadConfig({ ...prod, KMS_LOCAL_KEY_FILE: file, OBJECT_STORE_ENDPOINT: 'http://127.0.0.1:8333' })
-        .objectStore?.endpoint,
+      loadConfig({
+        ...prod,
+        KMS_LOCAL_KEY_FILE: file,
+        OBJECT_STORE_ENDPOINT: 'http://127.0.0.1:8333',
+        OBJECT_STORE_PUBLIC_ENDPOINT: 'https://files.example',
+      }).objectStore?.endpoint,
     ).toBe('http://127.0.0.1:8333');
   });
 });

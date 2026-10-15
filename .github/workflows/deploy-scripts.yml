@@ -5,6 +5,9 @@ name: deploy scripts
 # the deployed API and the self-hosted Keycloak, then the update path (both scripts again: an earlier backup must
 # still restore and the root key must be kept), the account commands and a root key rotation. Linux only; runs when
 # these files change.
+# R6: a second job sets up a PRODUCTION server (PB_ENV=prod) behind the TLS proxy with public host names (resolved to
+# this runner, certificates from Caddy's private authority: TLS_MODE=internal) and checks it from the outside like a
+# new laptop would: signup, verification e-mail, sign-in, staff with a one-time code, the preflight report.
 on:
   push:
     branches: [main]
@@ -20,6 +23,9 @@ on:
       - 'services/api/scripts/storage-check.ts'
       - 'services/api/scripts/restore-drill.ts'
       - 'services/api/src/backup/restore-check.ts'
+      - 'services/api/scripts/preflight.ts'
+      - 'services/api/src/preflight.ts'
+      - 'packages/config/src/env.ts'
       - 'infra/db/migrations/**'
       - '.github/workflows/deploy-scripts.yml'
   workflow_dispatch:
@@ -252,10 +258,14 @@ jobs:
           printf '{"identities":[{"name":"r2","credentials":[{"accessKey":"r2ci","secretKey":"%s"}],"actions":["Admin","Read","List","Write","Tagging"]}]}' "$secret" > "$d/s3.json"
           # Every port (and its gRPC port, +10000) stays below the ephemeral range (32768+), where an outgoing
           # connection could already hold it.
-          sudo bash -c "nohup /opt/seaweedfs/current/weed server -dir='$d/data' -ip=127.0.0.1 -ip.bind=127.0.0.1 \
+          # Kept as a script: the failed-backup step below stops the stand-in and starts it again.
+          cat > "$d/start.sh" <<EOF
+          nohup /opt/seaweedfs/current/weed server -dir='$d/data' -ip=127.0.0.1 -ip.bind=127.0.0.1 \
             -master.port=21333 -volume.port=21090 -filer.port=21888 -s3 -s3.port=21443 -s3.port.iceberg=0 -s3.port.lance=0 \
             -s3.config='$d/s3.json' \
-            -s3.cert.file='$d/cert.pem' -s3.key.file='$d/key.pem' > '$d/weed.log' 2>&1 &"
+            -s3.cert.file='$d/cert.pem' -s3.key.file='$d/key.pem' >> '$d/weed.log' 2>&1 &
+          EOF
+          sudo bash "$d/start.sh"
           standin_failed() {
             echo "::error title=R2 stand-in::$1: $(sudo tail -n 15 "$d/weed.log" | grep -v 'masterclient' | tr '\n' ' ' | cut -c1-1500)"
             exit 1
@@ -322,6 +332,40 @@ jobs:
           sudo test ! -e /var/lib/pb-drill || { echo "::error title=restore drill::restored files were left behind"; exit 1; }
           ss -ltnH | grep -q ':5499 ' && { echo "::error title=restore drill::the drill cluster still listens"; exit 1; }
           echo "::notice title=Restore drill::$(jq -r '"database and snapshot objects restored from the off-site copy into an isolated cluster; two tenants linked (row, object, key) without cross-access; recovery point \(.recovery_point_seconds) s, recovery time \(.recovery_time_seconds) s"' "$RUNNER_TEMP/drill.json")"
+
+      - name: A failed backup is reported (R6)
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=failed backup::$1"; exit 1; }
+          d=$RUNNER_TEMP/r2
+          db=$(sudo sed -nE 's#^MIGRATION_DATABASE_URL=.*/([A-Za-z0-9_]+)(\?.*)?$#\1#p' /etc/project-browser/api.env)
+          sql() { (cd /tmp && sudo runuser -u postgres -- /usr/lib/postgresql/18/bin/psql -X -qtA -d "$db" -c "$1"); }
+          # R2 becomes unreachable (the stand-in stops); a change is written and its log segment closed.
+          for p in $(pgrep -x weed); do grep -qa -- "$d/data" "/proc/$p/cmdline" && sudo kill "$p"; done
+          sleep 2
+          sql "insert into app.recovery_markers (note) values ('failed backup check')" > /dev/null
+          sql "select pg_switch_wal()" > /dev/null
+          seen=0
+          for _ in $(seq 1 120); do
+            [ "$(sql "select coalesce(last_failed_time > coalesce(last_archived_time, 'epoch'), false) from pg_stat_archiver")" = t ] && { seen=1; break; }
+            sleep 1
+          done
+          [ "$seen" = 1 ] || fail "PostgreSQL did not record a failed archive attempt while R2 was down"
+          rc=0; sudo /usr/local/libexec/pb-backup status > "$RUNNER_TEMP/failing-status.txt" 2>&1 || rc=$?
+          [ "$rc" = 3 ] || fail "pb-backup status exited $rc while archiving fails (expected 3)"
+          grep -q "ALERT: log archiving to R2 is FAILING" "$RUNNER_TEMP/failing-status.txt" || fail "status did not say archiving fails"
+          # The staff console's operations page shows it too.
+          # R2 is back: the waiting log is archived and the alert clears by itself.
+          sudo bash "$d/start.sh"
+          for _ in $(seq 1 120); do curl -s -o /dev/null --cacert "$d/cert.pem" https://127.0.0.1:21443/ && break; sleep 1; done
+          ok=0
+          for _ in $(seq 1 180); do
+            [ "$(sql "select coalesce(last_archived_time > last_failed_time, false) from pg_stat_archiver")" = t ] && { ok=1; break; }
+            sleep 2
+          done
+          [ "$ok" = 1 ] || fail "archiving did not recover after R2 came back"
+          sudo /usr/local/libexec/pb-backup status > /dev/null || fail "pb-backup status still reports a failure after recovery"
+          echo "::notice title=Failed backup (R6)::R2 unreachable: PostgreSQL recorded the failed archive, pb-backup status raised an ALERT (exit 3); R2 back: the waiting log was archived and the alert cleared"
 
       - name: Deleted snapshot objects stay off-site for the retention window (milestone 12)
         run: |
@@ -437,6 +481,206 @@ jobs:
           for u in keycloak pb-api pb-worker pb-storage; do
             sudo journalctl -u "$u" -n 120 --no-pager || true
             # Raw logs are not always reachable; the most useful lines also go into annotations.
+            msg=$(sudo journalctl -u "$u" -n 200 --no-pager -o cat 2>/dev/null | grep -iE "error|exception|fail|refus|denied" \
+              | tail -10 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' || true)
+            [ -z "$msg" ] || echo "::error title=$u log::$msg"
+          done
+
+  public-server:
+    name: production server behind TLS (R6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      PB_REPO: https://github.com/${{ github.repository }}.git
+      PB_BRANCH: ${{ github.ref_name }}
+      PW_FILE: /root/pb-temp-password
+      PB_TOTP_DIR: /tmp/pb-ci-totp
+      PB_MAIL_DIR: /tmp/pb-ci-mail
+      SITE: site.pb-ci.test
+      ADMIN: admin.pb-ci.test
+      ID: id.pb-ci.test
+      FILES: files.pb-ci.test
+      # Node clients (the checks below) trust the proxy's private authority, as the server's own API does.
+      NODE_EXTRA_CA_CERTS: /etc/project-browser/public-ca.pem
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
+
+      - name: Start from a server without PostgreSQL; public names point at this machine
+        run: |
+          sudo systemctl stop postgresql || true
+          sudo apt-get purge -y -qq 'postgresql*' >/dev/null
+          sudo rm -rf /etc/postgresql /var/lib/postgresql
+          echo "127.0.0.1 $SITE $ADMIN $ID $FILES" | sudo tee -a /etc/hosts > /dev/null
+          sudo install -d -m 750 /etc/project-browser
+          printf '%s\n' "SITE_HOST=$SITE" "ADMIN_HOST=$ADMIN" "ID_HOST=$ID" "FILES_HOST=$FILES" \
+            'ACME_EMAIL=owner@example.test' 'TLS_MODE=internal' | sudo tee /etc/project-browser/public.env > /dev/null
+          sudo chmod 600 /etc/project-browser/public.env
+
+      - name: Mail server stand-in
+        run: |
+          mkdir -p "$PB_MAIL_DIR" "$PB_TOTP_DIR"
+          # Node from setup-node (the server setup installs its own later); the sink only listens on 127.0.0.1.
+          nohup node services/worker/test/smtp-sink.ts --port 2525 --dir "$PB_MAIL_DIR" > "$RUNNER_TEMP/smtp-sink.log" 2>&1 &
+          for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/2525) 2>/dev/null && break; sleep 0.5; done
+          printf '%s\n' 'SMTP_HOST=127.0.0.1' 'SMTP_PORT=2525' 'SMTP_SECURITY=none' 'SMTP_FROM=no-reply@example.test' \
+            'SMTP_FROM_NAME=Project Browser' | sudo tee /etc/project-browser/smtp.env > /dev/null
+          sudo chmod 644 /etc/project-browser/smtp.env   # keycloak-setup.sh must make it root-only itself
+
+      - name: vps-setup.sh with PB_ENV=prod (proxy, sign-in and preflight run from it)
+        run: |
+          scripts/ci/annotate.sh "vps-setup.sh (prod)" sudo env PB_ENV=prod PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" \
+            bash scripts/deploy/vps-setup.sh | tee "$RUNNER_TEMP/vps-setup.log"
+          systemctl is-active --quiet pb-api && systemctl is-active --quiet pb-proxy && systemctl is-active --quiet keycloak \
+            || { echo "::error title=prod setup::pb-api, pb-proxy or keycloak is not running"; exit 1; }
+          grep -q "Preflight report (prod)" "$RUNNER_TEMP/vps-setup.log" || { echo "::error title=prod setup::no preflight report"; exit 1; }
+
+      - name: Production configuration fails closed
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=prod config::$1"; exit 1; }
+          sudo grep -qx 'APP_ENV=prod' /etc/project-browser/api.env || fail "APP_ENV is not prod"
+          sudo grep -q '^DEV_AUTH' /etc/project-browser/api.env && fail "development sign-in settings in api.env"
+          sudo grep -qx 'STAFF_REQUIRE_MFA=true' /etc/project-browser/api.env || fail "staff MFA not required"
+          sudo grep -q '/pb_prod$' /etc/project-browser/api.env || fail "the prod database is not pb_prod"
+          [ "$(sudo stat -c '%a %U' /etc/project-browser/smtp.env)" = "600 root" ] || fail "smtp.env was not made root-only"
+          # The same configuration with development sign-in, http sign-in, a dev database, staff without a second
+          # factor or an http portal: each refused at start.
+          cat > /tmp/pb-cfgcheck.mjs <<'EOF'
+          const { loadConfig } = await import('/home/pb/antibrowser/packages/config/src/env.ts');
+          try {
+            loadConfig({ OIDC_ISSUER: 'https://id.example.test/realms/x', OIDC_CLIENT_ID: 'x', SESSION_SIGNING_KEY: '{}', ...process.env });
+            console.log('ACCEPTED');
+          } catch (e) { console.log(e.message); }
+          EOF
+          chmod 644 /tmp/pb-cfgcheck.mjs
+          check() {  # one setting changed -> refused with this message
+            out=$(sudo runuser -u pb -- env "$1" /opt/node/bin/node --env-file=/etc/project-browser/api.env /tmp/pb-cfgcheck.mjs 2>&1)
+            echo "$out" | grep -q "$2" || fail "not refused ($1): $(echo "$out" | tail -3 | tr '\n' ' ')"
+          }
+          out=$(sudo runuser -u pb -- /opt/node/bin/node --env-file=/etc/project-browser/api.env /tmp/pb-cfgcheck.mjs 2>&1)
+          [ "$out" = ACCEPTED ] || fail "the server's own configuration is refused: $out"
+          check DEV_AUTH_ENABLED=true "DEV_AUTH_ENABLED is only permitted"
+          check OIDC_ISSUER=http://127.0.0.1:8081/realms/x "OIDC_ISSUER must use https"
+          check "DATABASE_URL=postgres://pb_app:x@127.0.0.1:5432/pb_dev" "database URL points at localhost"
+          check STAFF_REQUIRE_MFA=false "STAFF_REQUIRE_MFA cannot be turned off"
+          check WEB_ORIGIN=http://127.0.0.1:8080 "WEB_ORIGIN must use https"
+          fake="dev.$(openssl rand -hex 8)"   # a made-up development token
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $fake" "https://$SITE/v1/me")
+          [ "$code" = 401 ] || fail "a made-up development token got HTTP $code"
+          echo "::notice title=Fails closed (R6)::prod refuses development sign-in, http sign-in, a dev database, staff without MFA and an http portal origin; dev tokens get 401"
+
+      - name: Only the public surfaces are public
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=public surface::$1"; exit 1; }
+          pub=$(ss -ltnH | awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]|\[::ffff:127\.0\.0\.1\]):' || true)
+          for port in 5432 8080 8081 8333 9333 8888 8090; do
+            echo "$pub" | grep -qE ":$port\$" && fail "port $port listens publicly"
+          done
+          echo "$pub" | grep -qE ':443$' || fail "nothing listens on 443"
+          want() { c=$(curl -s -o /dev/null -w '%{http_code}' "$1"); [ "$c" = "$2" ] || fail "$1 answered $c (expected $2)"; }
+          want "https://$SITE/" 200
+          want "https://$SITE/app/" 200
+          want "https://$SITE/v1/ready" 200
+          want "https://$SITE/console/" 404
+          want "https://$SITE/v1/admin/me" 404
+          want "https://$SITE/v1/support/auth/config" 404
+          want "https://$ADMIN/console/" 200
+          want "https://$ADMIN/v1/orgs" 404
+          want "https://$ADMIN/app/" 404
+          want "https://$ID/realms/project-browser-prod/.well-known/openid-configuration" 200
+          want "https://$ID/admin/" 404
+          want "https://$ID/realms/master/.well-known/openid-configuration" 404
+          want "https://$FILES/" 404
+          want "https://$FILES/pb-snapshots-dev/x" 404
+          c=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://$SITE/")
+          [[ "$c" == 30?" https://$SITE/" ]] || fail "http does not redirect to https ($c)"
+          curl -sSI "https://$SITE/" | grep -qi '^strict-transport-security: max-age=31536000' || fail "no HSTS"
+          curl -sSI "https://$SITE/" | grep -qi '^server:' && fail "the proxy names itself"
+          ready=$(curl -fsS "https://$SITE/v1/ready")
+          echo "$ready" | jq -e '(keys == ["checks","status"]) and .status == "ready" and .checks.schema == "current"' > /dev/null \
+            || fail "unexpected readiness answer: $ready"
+          # Spoofed client addresses are not believed: the proxy overwrites X-Forwarded-For.
+          cfg=$(curl -fsS "https://$SITE/v1/auth/config")
+          [ "$(echo "$cfg" | jq -r .issuer)" = "https://$ID/realms/project-browser-prod" ] || fail "the API offers another issuer: $cfg"
+          echo "::notice title=Public surface (R6)::website, portal, API, staff console, sign-in and snapshot links over TLS on their own names; staff paths, Keycloak administration, the master realm and other buckets answer 404; database, API, Keycloak and storage ports on loopback only"
+
+      - name: A new laptop signs up, verifies, signs in and downloads (no tunnel)
+        run: |
+          set -euo pipefail
+          pw=$(openssl rand -base64 18); echo "::add-mask::$pw"
+          PB_API="https://$SITE" PB_EMAIL=first.customer@example.test PB_PASSWORD="$pw" PB_ORG_FILE="$RUNNER_TEMP/org" \
+            scripts/ci/annotate.sh "signup over https" /opt/node/bin/node scripts/ci/signup-check.ts
+          PB_API="https://$SITE" PB_EMAIL=first.customer@example.test PB_PASSWORD="$pw" PB_HEADER_FILE="$RUNNER_TEMP/customer.header" \
+            scripts/ci/annotate.sh "desktop sign-in over https" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          curl -fsS "https://$SITE/v1/public/downloads" | jq -e '.status == "not_available"' > /dev/null \
+            || { echo "::error title=downloads::an unverified build is offered"; exit 1; }
+          echo "::notice title=New laptop (R6)::signup with e-mail verification, workspace and desktop sign-in over the public https names; the download page offers no unverified build"
+
+      - name: Staff sign in with a one-time code; the platform owner is made on the server
+        run: |
+          set -euo pipefail
+          scripts/ci/annotate.sh "add staff account" sudo env PB_TEMP_PASSWORD_FILE="$PW_FILE" \
+            bash scripts/deploy/keycloak-setup.sh add-user owner@example.test --otp > /dev/null
+          temp=$(sudo cat "$PW_FILE"); echo "::add-mask::$temp"
+          new=$(openssl rand -base64 18); echo "::add-mask::$new"
+          PB_API="https://$ADMIN" PB_CONSOLE=1 PB_EXPECT_STAFF=0 PB_EMAIL=owner@example.test PB_PASSWORD="$temp" \
+            PB_NEW_PASSWORD="$new" PB_EXPECT_PASSWORD_CHANGE=1 \
+            scripts/ci/annotate.sh "console sign-in (not staff yet)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          scripts/ci/annotate.sh "bootstrap-owner" sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && \
+            /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts bootstrap-owner owner@example.test'
+          PB_API="https://$ADMIN" PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EXPECT_ADMIN=1 PB_EMAIL=owner@example.test PB_PASSWORD="$new" \
+            scripts/ci/annotate.sh "console sign-in (platform owner, one-time code)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+
+      - name: Preflight report
+        run: |
+          set -euo pipefail
+          rc=0; sudo bash scripts/deploy/preflight.sh | tee "$RUNNER_TEMP/preflight.txt" || rc=$?
+          sudo cat /var/lib/pb-preflight/latest.json > "$RUNNER_TEMP/preflight.json"
+          st() { jq -r --arg id "$1" '.checks[] | select(.id == $id) | .status' "$RUNNER_TEMP/preflight.json"; }
+          bad=""
+          for id in https_issuer dev_auth_disabled public_registration email_delivery customer_admin_separation \
+                    database_rls env_files staff_mfa; do
+            [ "$(st "$id")" = pass ] || bad="$bad $id=$(st "$id")"
+          done
+          for id in readiness private_ports; do
+            case "$(st "$id")" in pass|warn) ;; *) bad="$bad $id=$(st "$id")" ;; esac
+          done
+          # Honest failures on this CI server: private certificates, no release key, the internal-only runtime, no
+          # verified download, no billing, no off-site backups.
+          for id in tls_mode release_keys runtime_eligibility artifact_eligibility webhook_signature backup_recency; do
+            [ "$(st "$id")" = fail ] || bad="$bad $id=$(st "$id")(expected fail)"
+          done
+          [ -z "$bad" ] || { cat "$RUNNER_TEMP/preflight.txt"; echo "::error title=preflight::unexpected results:$bad"; exit 1; }
+          [ "$rc" = 1 ] || { echo "::error title=preflight::exit code $rc with failing checks (expected 1)"; exit 1; }
+          # No secret value in the printed output or the saved report.
+          for k in DATABASE_URL MIGRATION_DATABASE_URL OBJECT_STORE_SECRET_ACCESS_KEY; do
+            v=$(sudo sed -n "s/^$k=//p" /etc/project-browser/api.env | sed -E 's#^postgres://[^:]+:([^@]+)@.*#\1#'); echo "::add-mask::$v"
+            if grep -qF -- "$v" "$RUNNER_TEMP/preflight.json" "$RUNNER_TEMP/preflight.txt"; then echo "::error title=preflight::a secret ($k) is in the report"; exit 1; fi
+          done
+          key=$(sudo sed -nE "s/^SESSION_SIGNING_KEY='.*\"d\":\"([^\"]+)\".*/\1/p" /etc/project-browser/oidc.env); echo "::add-mask::$key"
+          if grep -qF -- "$key" "$RUNNER_TEMP/preflight.json"; then echo "::error title=preflight::the session key is in the report"; exit 1; fi
+          echo "::notice title=Preflight (R6)::$(jq -r '"\(.counts.pass) pass, \(.counts.warn) warn, \(.counts.fail) fail: " + ([.checks[] | select(.status == "fail") | .id] | join(", ")) + " fail as expected on a CI server"' "$RUNNER_TEMP/preflight.json")"
+
+      - name: Update path keeps the production server
+        run: |
+          scripts/ci/annotate.sh "vps-setup.sh (prod update)" sudo env PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh > "$RUNNER_TEMP/update.log" 2>&1 \
+            || { tail -40 "$RUNNER_TEMP/update.log"; exit 1; }
+          sudo grep -qx 'PB_ENV=prod' /etc/project-browser/environment
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$RUNNER_TEMP/customer.header" "https://$SITE/v1/me")
+          [ "$code" = 200 ] || { echo "::error title=update::the customer's session stopped working (HTTP $code)"; exit 1; }
+          if sudo env PB_ENV=dev PB_REPO="$PB_REPO" PB_BRANCH="$PB_BRANCH" bash scripts/deploy/vps-setup.sh > "$RUNNER_TEMP/todev.log" 2>&1; then
+            echo "::error title=update::a production server was turned into a test server"; exit 1
+          fi
+          grep -q "it is never changed to dev" "$RUNNER_TEMP/todev.log" || { tail -5 "$RUNNER_TEMP/todev.log"; exit 1; }
+
+      - name: Service logs
+        if: failure()
+        run: |
+          for u in keycloak pb-api pb-worker pb-storage pb-proxy; do
+            sudo journalctl -u "$u" -n 120 --no-pager || true
             msg=$(sudo journalctl -u "$u" -n 200 --no-pager -o cat 2>/dev/null | grep -iE "error|exception|fail|refus|denied" \
               | tail -10 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' || true)
             [ -z "$msg" ] || echo "::error title=$u log::$msg"

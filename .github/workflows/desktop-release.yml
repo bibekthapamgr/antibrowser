@@ -17,6 +17,16 @@ name: desktop release
 # before anything is published. OS code signing: Windows installers are unsigned until a certificate is bought
 # (planned: a cloud signing service called from this job); macOS bundles are signed ad hoc (no Apple Developer
 # account), so they are not notarized.
+#
+# R6 (ADR-0025) distribution gates, from repository variables (Settings -> Secrets and variables -> Actions ->
+# Variables), never from customer settings:
+#   PB_DEFAULT_SERVER   the production server the app is built for (https://SITE_HOST): customers enter no address.
+#                       Required for stable; canary builds without it ask for a server like before.
+#   PB_OS_SIGNING       "true" once Windows Authenticode signing and Apple Developer ID notarization are set up.
+#   PB_UNSIGNED_PILOT   "true": the owner's explicit, labelled exception for a limited pilot without OS signing. The
+#                       release notes then say "Unsigned pilot build"; it never counts as the signed public release.
+# Stable also needs a browser runtime approved for customer distribution (runtimes/manifest.json, ADR-0010): passing
+# updater tests does not settle runtime licensing.
 on:
   workflow_dispatch:
     inputs:
@@ -81,9 +91,20 @@ jobs:
           VERSIONS: ${{ inputs.versions }}
           RUNTIME_SHA256: ${{ inputs.runtime_sha256 }}
           REASON: ${{ inputs.reason }}
+          DEFAULT_SERVER: ${{ vars.PB_DEFAULT_SERVER }}
+          OS_SIGNING: ${{ vars.PB_OS_SIGNING }}
+          UNSIGNED_PILOT: ${{ vars.PB_UNSIGNED_PILOT }}
         run: |
           set -euo pipefail
           fail() { echo "::error title=desktop release::$1"; exit 1; }
+          # R6 distribution gates: what reaches the stable (customer) channel.
+          if [ "$CHANNEL" = stable ] && { [ "$ACTION" = release ] || [ "$ACTION" = promote ]; }; then
+            [[ "$DEFAULT_SERVER" == https://* ]] || fail "stable: set the repository variable PB_DEFAULT_SERVER to the production address (https://...) so customers need no server address"
+            node -e 'const m = require("./runtimes/manifest.json"); if (m.distribution.customer_distribution !== true) { console.log(`::error title=Runtime not approved::${m.distribution.name} is not approved for customer distribution (ADR-0010). Resolve the runtime licensing gate before a stable release.`); process.exit(1); }'
+            if [ "$OS_SIGNING" != true ] && [ "$UNSIGNED_PILOT" != true ]; then
+              fail "stable: Windows/Apple signing is not set up (PB_OS_SIGNING). For a limited pilot the owner may set PB_UNSIGNED_PILOT=true: it is labelled an unsigned pilot build"
+            fi
+          fi
           node -e '
             const k = require("./apps/desktop/src-tauri/release-keys.json");
             if (!k.keys.length) { console.log("::error title=No release key::apps/desktop/src-tauri/release-keys.json is empty, so the app would trust no release. Add the release public key first (docs/security/update-runbook.md, first-time setup)."); process.exit(1); }'
@@ -146,6 +167,8 @@ jobs:
         working-directory: apps/desktop
         env:
           CI: "true"
+          # R6: the production address is compiled in (customers never type one); empty: the app asks for it.
+          PB_DEFAULT_SERVER: ${{ vars.PB_DEFAULT_SERVER }}
         run: |
           # macOS: one consistent ad-hoc signature over the bundle (no Apple Developer account; see the runbook).
           [ "${{ matrix.target }}" = macos-arm64 ] && export APPLE_SIGNING_IDENTITY="-"
@@ -311,12 +334,22 @@ jobs:
 
       - name: Publish the release
         if: needs.plan.outputs.build == 'true'
+        env:
+          OS_SIGNING: ${{ vars.PB_OS_SIGNING }}
         run: |
           set -euo pipefail
+          title="Project Browser $VERSION"
+          if [ "$OS_SIGNING" != true ]; then
+            # R6: an explicit label; such a build never claims the signed public-release gate.
+            title="$title (unsigned pilot build)"
+            { printf '> **Unsigned pilot build.** The installers are not signed with a Windows Authenticode certificate or\n'
+              printf '> notarized by Apple. Updates are still signed and verified by the app. Not the signed public release.\n\n'
+              cat dist/RELEASE_NOTES.md; } > dist/notes.tmp && mv dist/notes.tmp dist/RELEASE_NOTES.md
+          fi
           pre=(--prerelease)
           [ "$CHANNELS" = stable ] && pre=()
           gh release create "desktop-v$VERSION" "${pre[@]}" --target "$GITHUB_SHA" \
-            --title "Project Browser $VERSION" --notes-file dist/RELEASE_NOTES.md \
+            --title "$title" --notes-file dist/RELEASE_NOTES.md \
             dist/*.exe dist/*.exe.sig dist/*.app.tar.gz dist/*.app.tar.gz.sig dist/*.dmg \
             dist/SHA256SUMS dist/provenance.json dist/*.sbom.cdx.json
 

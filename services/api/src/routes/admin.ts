@@ -1177,7 +1177,7 @@ export function adminRoutes(app: App, deps: Deps): void {
             }[],
           }));
         const migration = await deps.pool
-          .query<{ name: string }>('select name from public.schema_migrations order by name desc limit 1')
+          .query<{ name: string }>('select app.schema_version() as name')
           .catch(() => ({ rows: [] as { name: string }[] }));
         const releaseReqs = await c.query<{
           id: string;
@@ -1197,7 +1197,7 @@ export function adminRoutes(app: App, deps: Deps): void {
         return {
           generated_at: new Date().toISOString(),
           server: {
-            api_version: '0.17.0',
+            api_version: '0.18.0',
             environment: deps.config.appEnv,
             database_migration: migration.rows[0]?.name ?? null,
             worker_last_seen: beat.rows[0]?.at ?? null,

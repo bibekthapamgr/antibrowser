@@ -18,11 +18,24 @@
 #      into /etc/project-browser/billing.env, installs the Stripe CLI (pinned, SHA-256 verified) as a forwarder of
 #      Stripe's test-mode events to the API, so this tunnel-only server needs no public webhook address.
 #
-# It never opens firewall ports, never changes SSH settings, never touches other firewall rules and never exposes
-# PostgreSQL, the storage or the API publicly. Access them through an SSH tunnel (printed at the end).
+# On a test (dev) server it never opens firewall ports, never changes SSH settings, never touches other firewall
+# rules and never exposes PostgreSQL, the storage or the API publicly. Access them through an SSH tunnel.
+#
+# R6 (ADR-0025): the same script sets up a STAGING or PRODUCTION server (one environment per server):
+#   PB_ENV=prod bash vps-setup.sh      (or staging; remembered in /etc/project-browser/environment)
+#   - its own database (pb_prod / pb_staging), storage bucket (pb-snapshots-prod), sign-in realm and secrets;
+#   - no development tokens, no fixture tenants, no test suite on the server, staff need a one-time code;
+#   - the public addresses from /etc/project-browser/public.env (yours) behind a TLS reverse proxy (public-setup.sh,
+#     run from here): only ports 80 and 443 are opened; PostgreSQL, the storage, Keycloak's administration and the
+#     service ports stay on 127.0.0.1;
+#   - Stripe: your live (prod) or test (staging) key and the signing secret of the webhook endpoint you add in the
+#     Stripe Dashboard (billing.env); no Stripe CLI forwarder;
+#   - ends with the preflight report (preflight.sh): named PASS/FAIL checks, no secret values.
+# A test (dev) server can be turned into staging or prod; a staging or prod server is never turned back into dev.
 #
 # Usage (as root):  bash vps-setup.sh [--skip-tests]
-# Env overrides:    PB_REPO (default git@github.com:bibekthapamgr/antibrowser.git), PB_BRANCH (main), PB_API_PORT (8080)
+# Env overrides:    PB_REPO (default git@github.com:bibekthapamgr/antibrowser.git), PB_BRANCH (main), PB_API_PORT (8080),
+#                   PB_ENV (dev | staging | prod; default: the environment this server already has, else dev)
 set -Eeuo pipefail
 trap 'echo "ERROR: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 
@@ -40,6 +53,8 @@ APP_HOME=/home/$APP_USER
 APP_DIR=$APP_HOME/antibrowser
 ENV_DIR=/etc/project-browser
 ENV_FILE=$ENV_DIR/api.env
+ENV_MARK=$ENV_DIR/environment
+PUBLIC_ENV=$ENV_DIR/public.env
 NODE_ROOT=/opt/node
 # github.com ed25519 host key fingerprint, published at
 # https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
@@ -73,6 +88,25 @@ case "$(uname -m)" in
 esac
 ok "${PRETTY_NAME:-$ID} ($FAMILY, $(uname -m)), $(nproc) CPU, $(free -m | awk '/^Mem:/{print $2}') MB RAM, $(df -Pm / | awk 'NR==2{print $4}') MB free disk"
 (( $(df -Pm / | awk 'NR==2{print $4}') > 3000 )) || die "need at least 3 GB free disk space"
+# R6: which environment this server runs. Chosen once (PB_ENV), remembered in $ENV_MARK.
+current_env=""
+[[ -f $ENV_MARK ]] && current_env=$(sed -n 's/^PB_ENV=//p' "$ENV_MARK")
+if [[ -z $current_env && -f $ENV_FILE ]]; then current_env=$(sed -n 's/^APP_ENV=//p' "$ENV_FILE"); fi
+PB_ENV=${PB_ENV:-${current_env:-dev}}
+[[ $PB_ENV =~ ^(dev|staging|prod)$ ]] || die "PB_ENV must be dev, staging or prod (got '$PB_ENV')"
+if [[ -n $current_env && $current_env != "$PB_ENV" ]]; then
+  [[ $current_env == dev ]] || die "this server is $current_env; it is never changed to $PB_ENV (set up another server instead)"
+  warn "this test server becomes $PB_ENV: its own database pb_$PB_ENV, bucket pb-snapshots-$PB_ENV, realm and secrets."
+  warn "the test data (database pb_dev, bucket pb-snapshots-dev) is left as it is and no longer used."
+fi
+LOCAL_ENV=0; [[ $PB_ENV == dev ]] && LOCAL_ENV=1
+DB_NAME=pb_$PB_ENV
+BUCKET=pb-snapshots-$PB_ENV
+if (( ! LOCAL_ENV )); then
+  RUN_TESTS=0
+  (( $(free -m | awk '/^Mem:/{print $2}') >= 3500 )) \
+    || warn "$PB_ENV with Keycloak, PostgreSQL and the storage on one server needs about 4 GB of memory; this one has less"
+fi
 
 # ----------------------------------------------------------------------------- base packages
 step "Base packages"
@@ -182,6 +216,19 @@ else
   as_pb git clone -q --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 ok "$(as_pb git -C "$APP_DIR" log -1 --format='%h %s')"
+if (( ! LOCAL_ENV )); then
+  install -d -m 750 -o root -g "$APP_USER" "$ENV_DIR"
+  if [[ ! -f $PUBLIC_ENV ]]; then
+    install -m 600 -o root -g root "$APP_DIR/scripts/deploy/public.env.example" "$PUBLIC_ENV"
+    die "fill in your public addresses in $PUBLIC_ENV (DNS must already point at this server), then run this again"
+  fi
+  # Parsed, never executed. Checked again (DNS, certificates) by public-setup.sh.
+  for k in SITE_HOST ADMIN_HOST ID_HOST FILES_HOST ACME_EMAIL; do
+    [[ -n $(sed -n "s/^$k=//p" "$PUBLIC_ENV" | tr -d '"'"'"' \r') ]] || die "$PUBLIC_ENV: $k is empty (see the comments in that file)"
+  done
+  printf 'PB_ENV=%s\n' "$PB_ENV" > "$ENV_MARK"; chmod 644 "$ENV_MARK"
+  ok "public addresses in $PUBLIC_ENV; this server is $PB_ENV from now on ($ENV_MARK)"
+fi
 as_pb bash -c "cd '$APP_DIR' && pnpm install --frozen-lockfile --reporter=silent"
 ok "dependencies installed (pnpm $(as_pb bash -c "cd '$APP_DIR' && pnpm --version"))"
 # Milestone 11: the internal support console, static files the API serves at /console/ (CONSOLE_DIR).
@@ -241,8 +288,8 @@ S3_KEY="pb$(randhex 8)"; S3_SECRET=$(randhex 24)
 S3_RO_KEY="pbro$(randhex 8)"; S3_RO_SECRET=$(randhex 24)
 install -d -m 750 -o root -g "$STORE_USER" "$STORE_CONF_DIR"
 umask 027
-printf '{"identities":[{"name":"project-browser","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]},{"name":"backup-readonly","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Read:pb-snapshots-dev","List:pb-snapshots-dev"]}]}\n' \
-  "$S3_KEY" "$S3_SECRET" "$S3_RO_KEY" "$S3_RO_SECRET" > "$STORE_CONF_DIR/s3.json"
+printf '{"identities":[{"name":"project-browser","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]},{"name":"backup-readonly","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Read:%s","List:%s"]}]}\n' \
+  "$S3_KEY" "$S3_SECRET" "$S3_RO_KEY" "$S3_RO_SECRET" "$BUCKET" "$BUCKET" > "$STORE_CONF_DIR/s3.json"
 install -d -m 750 -o root -g "$APP_USER" "$ENV_DIR"
 umask 077
 printf 'STORE_ENDPOINT=http://127.0.0.1:%s\nSTORE_READONLY_ACCESS_KEY_ID=%s\nSTORE_READONLY_SECRET_ACCESS_KEY=%s\n' \
@@ -305,6 +352,12 @@ chown "$APP_USER:$APP_USER" "$KMS_FILE"; chmod 600 "$KMS_FILE"
 # ----------------------------------------------------------------------------- database roles + secrets
 step "Database roles and secrets"
 (cd /tmp && runuser -u postgres -- "$PSQL" -q -v ON_ERROR_STOP=1 -f - < "$APP_DIR/infra/db/bootstrap-local.sql")
+if (( ! LOCAL_ENV )); then  # R6: this environment's own database
+  (cd /tmp && runuser -u postgres -- "$PSQL" -q -v ON_ERROR_STOP=1 -f -) <<SQL
+select 'create database $DB_NAME owner pb_owner'
+where not exists (select 1 from pg_database where datname = '$DB_NAME') \gexec
+SQL
+fi
 OWNER_PW=$(randhex 24); APP_PW=$(randhex 24); WORKER_PW=$(randhex 24); DEV_SECRET=$(randhex 32)
 (cd /tmp && runuser -u postgres -- "$PSQL" -q -v ON_ERROR_STOP=1 \
   -c "alter role pb_owner password '$OWNER_PW'" \
@@ -312,21 +365,24 @@ OWNER_PW=$(randhex 24); APP_PW=$(randhex 24); WORKER_PW=$(randhex 24); DEV_SECRE
   -c "alter role pb_worker password '$WORKER_PW'")
 install -d -m 750 -o root -g "$APP_USER" "$ENV_DIR"
 umask 027
-cat > "$ENV_FILE" <<EOF
+# R6: in staging/prod browsers and the desktop app reach the storage through the TLS proxy (FILES_HOST).
+STORE_PUBLIC=http://127.0.0.1:$S3_PORT
+if (( ! LOCAL_ENV )); then STORE_PUBLIC=https://$(sed -n 's/^FILES_HOST=//p' "$PUBLIC_ENV" | tr -d '"'"'"' \r'); fi
+{
+cat <<EOF
 # Generated by vps-setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ). Regenerated (new random secrets) on every run.
-# Test server: APP_ENV=dev with development tokens, so the API must stay on 127.0.0.1 (SSH tunnel only).
-APP_ENV=dev
+# The API listens on 127.0.0.1 only: on a test (dev) server through the SSH tunnel, in staging/prod behind the TLS
+# proxy (public-setup.sh). Sign-in settings and the session key are in oidc.env (keycloak-setup.sh).
+APP_ENV=$PB_ENV
 HOST=127.0.0.1
 PORT=$API_PORT
 LOG_LEVEL=info
-DATABASE_URL=postgres://pb_app:$APP_PW@127.0.0.1:5432/pb_dev
-WORKER_DATABASE_URL=postgres://pb_worker:$WORKER_PW@127.0.0.1:5432/pb_dev
-MIGRATION_DATABASE_URL=postgres://pb_owner:$OWNER_PW@127.0.0.1:5432/pb_dev
-DEV_AUTH_ENABLED=true
-DEV_AUTH_SECRET=$DEV_SECRET
+DATABASE_URL=postgres://pb_app:$APP_PW@127.0.0.1:5432/$DB_NAME
+WORKER_DATABASE_URL=postgres://pb_worker:$WORKER_PW@127.0.0.1:5432/$DB_NAME
+MIGRATION_DATABASE_URL=postgres://pb_owner:$OWNER_PW@127.0.0.1:5432/$DB_NAME
 OBJECT_STORE_ENDPOINT=http://127.0.0.1:$S3_PORT
-OBJECT_STORE_PUBLIC_ENDPOINT=http://127.0.0.1:$S3_PORT
-OBJECT_STORE_BUCKET=pb-snapshots-dev
+OBJECT_STORE_PUBLIC_ENDPOINT=$STORE_PUBLIC
+OBJECT_STORE_BUCKET=$BUCKET
 OBJECT_STORE_REGION=us-east-1
 OBJECT_STORE_ACCESS_KEY_ID=$S3_KEY
 OBJECT_STORE_SECRET_ACCESS_KEY=$S3_SECRET
@@ -335,14 +391,40 @@ KMS_LOCAL_KEY_FILE=$KMS_FILE
 CONSOLE_DIR=$CONSOLE_DIR
 PUBLIC_DIR=$PUBLIC_DIR
 EOF
+if (( LOCAL_ENV )); then
+  printf 'DEV_AUTH_ENABLED=true\nDEV_AUTH_SECRET=%s\n' "$DEV_SECRET"
+else
+  # One proxy (Caddy) in front: the client address is the one it saw. Every staff sign-in needs a one-time code.
+  printf 'TRUST_PROXY_HOPS=1\nSTAFF_REQUIRE_MFA=true\n'
+fi
+} > "$ENV_FILE"
 umask 022
 chown root:"$APP_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
 ok "random passwords set for pb_owner, pb_app, pb_worker; secrets in $ENV_FILE (root:pb 0640)"
 
-step "Migrations and fixture tenants"
-as_pb bash -c "cd '$APP_DIR' && node --env-file='$ENV_FILE' services/api/scripts/migrate.ts && node --env-file='$ENV_FILE' services/api/scripts/seed.ts" | sed 's/^/    /'
-# Buckets for this server and for the test suite; the API's own credentials write, read and delete a probe.
-as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/storage-check.ts pb-snapshots-test" | sed 's/^/    /'
+# Migrations stay backward compatible (ADR-0025): they run before the new code starts, and code still running keeps
+# working on the new schema until it is restarted.
+if (( LOCAL_ENV )); then
+  step "Migrations and fixture tenants"
+  as_pb bash -c "cd '$APP_DIR' && node --env-file='$ENV_FILE' services/api/scripts/migrate.ts && node --env-file='$ENV_FILE' services/api/scripts/seed.ts" | sed 's/^/    /'
+  # Buckets for this server and for the test suite; the API's own credentials write, read and delete a probe.
+  as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/storage-check.ts pb-snapshots-test" | sed 's/^/    /'
+else
+  step "Migrations ($PB_ENV: no fixture tenants)"
+  # These scripts check the whole configuration, which in staging/prod also needs the sign-in settings (oidc.env).
+  # Before keycloak-setup.sh has written them (the first run), placeholders satisfy that check for these two only.
+  MIG_ENV=$(mktemp -p /run pb-migrate.XXXXXX)
+  {
+    cat "$ENV_FILE"
+    if [[ -f $ENV_DIR/oidc.env ]]; then grep -E '^(OIDC_ISSUER|OIDC_CLIENT_ID|SESSION_SIGNING_KEY)=' "$ENV_DIR/oidc.env" || true; fi
+  } > "$MIG_ENV"
+  grep -q '^OIDC_ISSUER=' "$MIG_ENV" || printf 'OIDC_ISSUER=https://sign-in.not-configured.invalid\nOIDC_CLIENT_ID=setup\n' >> "$MIG_ENV"
+  grep -q '^SESSION_SIGNING_KEY=' "$MIG_ENV" || printf 'SESSION_SIGNING_KEY={"kty":"EC"}\n' >> "$MIG_ENV"
+  chown root:"$APP_USER" "$MIG_ENV"; chmod 640 "$MIG_ENV"
+  as_pb bash -c "cd '$APP_DIR' && node --env-file='$MIG_ENV' services/api/scripts/migrate.ts" | sed 's/^/    /'
+  as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$MIG_ENV' scripts/storage-check.ts" | sed 's/^/    /'
+  rm -f "$MIG_ENV"
+fi
 
 # ----------------------------------------------------------------------------- tests
 if [[ $RUN_TESTS == 1 ]]; then
@@ -379,7 +461,7 @@ fi
 chown root:"$APP_USER" "$SITE_ENV"; chmod 640 "$SITE_ENV"
 
 # ----------------------------------------------------------------------------- billing (milestone 11)
-step "Billing (Stripe test mode)"
+step "Billing (Stripe $([[ $PB_ENV == prod ]] && echo live || echo test) mode)"
 # Your settings live in billing.env (written once, never overwritten). The webhook signing secret is not yours to copy:
 # the Stripe CLI forwarder provides it (stripe-webhook.env, re-read on every run). Keys never appear on a command line.
 BILLING_ENV=$ENV_DIR/billing.env
@@ -393,6 +475,37 @@ case "$NODE_ARCH" in  # SHA-256 from stripe-linux-checksums.txt of the v1.52.2 r
   arm64) STRIPE_ASSET=linux_arm64;  STRIPE_SHA256=83cc7f95fa83f1f36109b161a8cfcf9aa9321b6f2709488187d05891711e4d8c ;;
 esac
 STRIPE_EVENTS=customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused,customer.subscription.resumed,checkout.session.completed,checkout.session.async_payment_succeeded,invoice.paid,invoice.payment_failed,invoice.payment_succeeded,invoice.finalized,invoice.updated,invoice.voided,invoice.marked_uncollectible,charge.refunded,charge.dispute.created
+if [[ ! -f $BILLING_ENV && $LOCAL_ENV == 0 ]]; then
+  (umask 027; cat > "$BILLING_ENV" <<'BILLING'
+# Billing settings (R6, staging/production). Written once by vps-setup.sh; from then on this file is YOURS.
+# prod takes a LIVE key (sk_live_... or a restricted rk_live_...); staging a TEST key. After any change, run
+# vps-setup.sh again. Type the values here on the server (e.g. with nano); never paste them into a chat or a ticket.
+#
+# 1. Your Stripe secret key (Stripe Dashboard -> Developers -> API keys).
+STRIPE_SECRET_KEY=
+#
+# 2. Products, prices and the customer portal with YOUR prices (amounts in dollars), as root:
+#      /opt/node/bin/node --env-file=/etc/project-browser/billing.env \
+#        /home/pb/antibrowser/services/api/scripts/stripe-setup.ts \
+#        --price starter=AMOUNT --price team=AMOUNT --price agency=AMOUNT --write /etc/project-browser/billing.env
+#    It fills in these two lines:
+BILLING_STRIPE_PRICES=
+STRIPE_PORTAL_CONFIGURATION=
+#
+# 3. The webhook: Stripe Dashboard -> Developers -> Webhooks -> Add endpoint
+#      URL:    https://<SITE_HOST>/v1/webhooks/billing        (SITE_HOST from public.env)
+#      Events: the list printed by vps-setup.sh (or docs/r6/operations-guide.md)
+#    then "Reveal" the signing secret (whsec_...) and put it here. Several, comma-separated, while you rotate one.
+STRIPE_WEBHOOK_SECRETS=
+#
+# Optional: let Stripe calculate tax (only after your tax registrations are set up in Stripe).
+BILLING_AUTOMATIC_TAX=false
+# Optional: days customer data is kept after cancellation (30-3650); empty = kept until an owner deletes it.
+BILLING_RETENTION_DAYS=
+BILLING
+  )
+  ok "created $BILLING_ENV (yours to fill in; never overwritten)"
+fi
 if [[ ! -f $BILLING_ENV ]]; then
   (umask 027; cat > "$BILLING_ENV" <<'BILLING'
 # Billing settings (milestone 11). Written once by vps-setup.sh; from then on this file is YOURS and never overwritten.
@@ -429,7 +542,26 @@ if [[ -z $stripe_key ]]; then
     rm -f /etc/systemd/system/pb-stripe-listen.service
   fi
   rm -f "$HOOK_ENV" "$CLI_ENV"
-  ok "billing not set up yet: put your Stripe TEST key into $BILLING_ENV, then run this script again"
+  ok "billing not set up yet: put your Stripe key into $BILLING_ENV, then run this script again"
+elif (( ! LOCAL_ENV )); then
+  # R6: staging and production receive Stripe's events at their public address (an endpoint you add in the Stripe
+  # Dashboard); the signature on every event is checked with that endpoint's secret. No forwarder.
+  mode=$([[ $PB_ENV == prod ]] && echo live || echo test)
+  [[ $stripe_key =~ ^(sk|rk)_${mode}_[A-Za-z0-9]{8,}$ ]] \
+    || die "$BILLING_ENV: $PB_ENV takes a Stripe ${mode^^} secret key only ((sk|rk)_${mode}_...)"
+  if [[ -f /etc/systemd/system/pb-stripe-listen.service ]]; then
+    systemctl disable -q --now pb-stripe-listen 2>/dev/null || true
+    rm -f /etc/systemd/system/pb-stripe-listen.service
+  fi
+  rm -f "$HOOK_ENV" "$CLI_ENV"
+  hook=$(sed -nE "s/^STRIPE_WEBHOOK_SECRETS=['\"]?([^'\" ]*)['\"]?[[:space:]]*$/\1/p" "$BILLING_ENV" | tail -1)
+  [[ $hook =~ ^whsec_[A-Za-z0-9]{16,}(,whsec_[A-Za-z0-9]{16,})*$ ]] \
+    || die "$BILLING_ENV: STRIPE_WEBHOOK_SECRETS must hold the signing secret (whsec_...) of your webhook endpoint
+         https://$(sed -n 's/^SITE_HOST=//p' "$PUBLIC_ENV")/v1/webhooks/billing with these events:
+         $STRIPE_EVENTS"
+  prices=$(sed -nE "s/^BILLING_STRIPE_PRICES=['\"]?(\{.*\})['\"]?[[:space:]]*$/\1/p" "$BILLING_ENV" | tail -1)
+  ok "Stripe $mode mode: key and webhook signing secret present (events arrive at the public webhook address)"
+  [[ -n $prices ]] || warn "no prices yet: run stripe-setup.ts with your amounts (see $BILLING_ENV), then this script again"
 elif [[ ! $stripe_key =~ ^(sk|rk)_test_[A-Za-z0-9]{8,}$ ]]; then
   die "$BILLING_ENV: this test server accepts a Stripe TEST secret key only (sk_test_... or rk_test_...)"
 else
@@ -629,12 +761,21 @@ fi
 # With the rules proven, the worker does not start without them (after a reboot as well).
 WORKER_UNIT_EXTRA="Wants=pb-egress.service"$'\n'"After=pb-egress.service"
 if (( EGRESS_OK )); then WORKER_UNIT_EXTRA="Requires=pb-egress.service"$'\n'"After=pb-egress.service"; fi
-unit pb-api "Project Browser API (test server)" "$APP_DIR/services/api" "src/server.ts" "" \
+SERVER_KIND=$([[ $PB_ENV == dev ]] && echo "test server" || echo "$PB_ENV")
+unit pb-api "Project Browser API ($SERVER_KIND)" "$APP_DIR/services/api" "src/server.ts" "" \
   "Wants=pb-egress.service"$'\n'"After=pb-egress.service"
-unit pb-worker "Project Browser outbox worker (test server)" "$APP_DIR/services/worker" "src/main.ts" "" \
+unit pb-worker "Project Browser outbox worker ($SERVER_KIND)" "$APP_DIR/services/worker" "src/main.ts" "" \
   "$WORKER_UNIT_EXTRA"
 systemctl daemon-reload
 systemctl enable -q pb-api pb-worker
+if (( ! LOCAL_ENV )); then
+  # R6: the TLS proxy and this environment's sign-in (realm, clients for the public addresses, session key) come
+  # first: the API refuses to start in staging/prod without an https issuer. Both run from root-owned copies.
+  install -m 700 -o root -g root "$APP_DIR/scripts/deploy/public-setup.sh" /root/.pb-public-setup.sh
+  bash /root/.pb-public-setup.sh || die "the public address setup failed (see above)"
+  install -m 700 -o root -g root "$APP_DIR/scripts/deploy/keycloak-setup.sh" /root/.pb-keycloak-setup.sh
+  bash /root/.pb-keycloak-setup.sh || die "the sign-in setup failed (see above)"
+fi
 systemctl restart pb-api pb-worker
 ok "pb-api and pb-worker enabled and restarted"
 LISTEN_SINCE=$(date '+%Y-%m-%d %H:%M:%S')
@@ -656,19 +797,30 @@ base="http://127.0.0.1:$API_PORT/v1"
 for _ in $(seq 1 30); do curl -fsS "$base/health" >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS "$base/health" >/dev/null || { journalctl -u pb-api -n 30 --no-pager; die "API did not become healthy"; }
 ok "health: $(curl -fsS "$base/health")"
-TOKEN=$(as_pb bash -c "cd '$APP_DIR' && node --env-file='$ENV_FILE' services/api/scripts/dev-token.ts acmeOwner")
-me=$(curl -fsS -H "authorization: Bearer $TOKEN" "$base/me")
-[[ $me == *'"role":"owner"'* ]] && ok "fixture login works (acmeOwner)" || die "unexpected /me response: $me"
-own=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $TOKEN" "$base/orgs/org_01J9ZSEED0ACME000000000000/profiles")
-other=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $TOKEN" "$base/orgs/org_01J9ZSEED0BETA000000000000/profiles")
-[[ $own == 200 && $other == 404 ]] && ok "own tenant 200, other tenant 404 (isolation holds)" || die "tenant check failed: own=$own other=$other"
+ready=$(curl -sS "$base/ready" || true)
+[[ $ready == *'"status":"ready"'* ]] && ok "ready: $ready" || die "the API is not ready: $ready"
+if (( LOCAL_ENV )); then
+  TOKEN=$(as_pb bash -c "cd '$APP_DIR' && node --env-file='$ENV_FILE' services/api/scripts/dev-token.ts acmeOwner")
+  me=$(curl -fsS -H "authorization: Bearer $TOKEN" "$base/me")
+  [[ $me == *'"role":"owner"'* ]] && ok "fixture login works (acmeOwner)" || die "unexpected /me response: $me"
+  own=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $TOKEN" "$base/orgs/org_01J9ZSEED0ACME000000000000/profiles")
+  other=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $TOKEN" "$base/orgs/org_01J9ZSEED0BETA000000000000/profiles")
+  [[ $own == 200 && $other == 404 ]] && ok "own tenant 200, other tenant 404 (isolation holds)" || die "tenant check failed: own=$own other=$other"
+else
+  # R6: no development tokens here; an invented one is refused.
+  fake="dev.$(randhex 8)"   # a made-up development token
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $fake" "$base/me")
+  [[ $code == 401 ]] && ok "development tokens are refused ($PB_ENV)" || die "a made-up development token got HTTP $code"
+fi
 sleep 2
 systemctl is-active --quiet pb-worker && ok "worker running" || { journalctl -u pb-worker -n 30 --no-pager; die "worker not running"; }
-if as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/snapshot-smoke.ts" > /tmp/pb-snapshot-smoke.log 2>&1; then
-  ok "$(tail -1 /tmp/pb-snapshot-smoke.log)"
-else
-  tail -5 /tmp/pb-snapshot-smoke.log; journalctl -u pb-worker -n 20 --no-pager
-  die "the snapshot round trip failed"
+if (( LOCAL_ENV )); then
+  if as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/snapshot-smoke.ts" > /tmp/pb-snapshot-smoke.log 2>&1; then
+    ok "$(tail -1 /tmp/pb-snapshot-smoke.log)"
+  else
+    tail -5 /tmp/pb-snapshot-smoke.log; journalctl -u pb-worker -n 20 --no-pager
+    die "the snapshot round trip failed"
+  fi
 fi
 console_csp=$(curl -fsS -D - -o /dev/null "http://127.0.0.1:$API_PORT/console/" | tr -d '\r' | sed -n 's/^content-security-policy: //Ip')
 [[ $console_csp == *"script-src 'self'"* && $console_csp == *"frame-ancestors 'none'"* ]] \
@@ -696,8 +848,38 @@ pub=$(ss -ltnH | awk '{print $4}' | grep -E ":(5432|$API_PORT|${STORE_PORTS// /|
 install -m 700 -o root -g root "$APP_DIR/scripts/deploy/backup-setup.sh" /root/.pb-backup-setup.sh
 bash /root/.pb-backup-setup.sh || die "the off-site backup setup failed (see above)"
 
+# ----------------------------------------------------------------------------- preflight report (R6)
+if (( ! LOCAL_ENV )); then
+  install -m 700 -o root -g root "$APP_DIR/scripts/deploy/preflight.sh" /root/.pb-preflight.sh
+  step "Preflight report ($PB_ENV)"
+  if bash /root/.pb-preflight.sh; then
+    ok "every required check passed"
+  else
+    warn "some required checks FAILED (above). The service runs, but it is not ready for customers until they pass."
+  fi
+fi
+
 # ----------------------------------------------------------------------------- summary
 step "Done"
+if (( ! LOCAL_ENV )); then
+  pub() { sed -n "s/^$1=//p" "$PUBLIC_ENV" | tr -d '"'"'"' \r'; }
+  cat <<EOF
+    Environment: $PB_ENV ($ENV_MARK)   |   code: $APP_DIR ($(as_pb git -C "$APP_DIR" log -1 --format=%h))
+    Website:     https://$(pub SITE_HOST)/          customer portal: https://$(pub SITE_HOST)/app/
+    Staff:       https://$(pub ADMIN_HOST)/console/  (password + one-time code)
+    Sign-in:     https://$(pub ID_HOST)/             (Keycloak administration is NOT public: SSH tunnel to 127.0.0.1:8081)
+    Services:    systemctl status pb-api pb-worker pb-storage keycloak pb-proxy
+    Preflight:   bash $APP_DIR/scripts/deploy/preflight.sh      (report: /var/lib/pb-preflight/latest.json)
+    Update:      \\cp -f $APP_DIR/scripts/deploy/vps-setup.sh /root/ && bash /root/vps-setup.sh
+    Billing:     $BILLING_ENV (yours)   |   Mail: $ENV_DIR/smtp.env (yours)   |   Off-site: $ENV_DIR/backup.env (yours)
+    Guide:       docs/r6/operations-guide.md
+EOF
+  if [[ $NEW_ROOT_KEY == 1 ]]; then
+    printf '\n\033[1;33m    IMPORTANT:\033[0m a new backup root key was created. Copy it off the server now and keep it offline:\n'
+    printf '      scp root@<this-server>:%s ./project-browser-root-key-%s.json\n' "$KMS_FILE" "$PB_ENV"
+  fi
+  exit 0
+fi
 TUNNEL_EXTRA=" -L $S3_PORT:127.0.0.1:$S3_PORT"; SIGN_IN_HINT=""
 if [[ -f $ENV_DIR/oidc.env ]]; then  # sign-in through the local Keycloak (keycloak-setup.sh) needs its port too
   kc_port=$(sed -nE 's|^OIDC_ISSUER=http://127\.0\.0\.1:([0-9]+)/.*|\1|p' "$ENV_DIR/oidc.env")

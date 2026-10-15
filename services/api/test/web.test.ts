@@ -402,6 +402,35 @@ describe('the cookie session', () => {
     await h.owner.query('update users set disabled_at = now() where id = $1', [id]);
     expect((await session(cookie.value)).statusCode).toBe(401);
   });
+
+  it('an idle or expired portal cookie is refused, and use within the limits slides only the idle window (R6)', async () => {
+    const hashOf = (v: string) => createHash('sha256').update(v).digest('hex');
+    const idle = (await webSignIn(person())).cookie;
+    expect((await session(idle.value)).statusCode).toBe(200);
+    const before = await h.owner.query<{ idle: Date; abs: Date }>(
+      'select idle_expires_at as idle, expires_at as abs from web_sessions where id_hash = $1',
+      [hashOf(idle.value)],
+    );
+    expect(before.rowCount).toBe(1);
+    // Past the idle window (no request for longer than the idle limit): refused, even though the absolute limit is far.
+    await h.owner.query(
+      "update web_sessions set idle_expires_at = now() - interval '1 second' where id_hash = $1",
+      [hashOf(idle.value)],
+    );
+    expect((await session(idle.value)).statusCode).toBe(401);
+    // Past the absolute limit: refused however recently it was used.
+    const old = (await webSignIn(person())).cookie;
+    await h.owner.query(
+      "update web_sessions set expires_at = now() - interval '1 second', idle_expires_at = now() + interval '10 minutes' where id_hash = $1",
+      [hashOf(old.value)],
+    );
+    expect((await session(old.value)).statusCode).toBe(401);
+    const after = await h.owner.query<{ abs: Date }>(
+      'select expires_at as abs from web_sessions where id_hash = $1',
+      [hashOf(old.value)],
+    );
+    expect(after.rows[0]?.abs.getTime()).toBeLessThan(Date.now());
+  });
 });
 
 describe('the portal page', () => {

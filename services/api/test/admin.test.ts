@@ -695,3 +695,44 @@ describe('note redaction', () => {
     });
   });
 });
+
+describe('staff second factor at sign-in (R6)', () => {
+  it('refuses a password-only staff sign-in when STAFF_REQUIRE_MFA is on, and accepts one with a one-time code', async () => {
+    const strict = await harness({ consoleClientId: CONSOLE, env: { STAFF_REQUIRE_MFA: 'true' } });
+    try {
+      const person = await strict.signIn();
+      await addStaff(db, person.person.email, ['support'], 'mfa test');
+      const attempt = async (amr: string[]) => {
+        await strict.owner.query("delete from rate_limit_counters where bucket = 'staff.signin.ip'");
+        const n = nonce();
+        const token = await strict.idp.idToken({
+          sub: person.person.sub,
+          nonce: n,
+          email: person.person.email,
+          aud: CONSOLE,
+          amr,
+        });
+        return strict.app.inject({
+          method: 'POST',
+          url: '/v1/support/sessions',
+          payload: { id_token: token, nonce: n },
+        });
+      };
+      const pwd = await attempt(['pwd']);
+      expect(pwd.statusCode).toBe(403);
+      expect(pwd.json().code).toBe('MFA_REQUIRED');
+      expect(pwd.body).not.toMatch(/access_token/);
+      const refused = await db.query(
+        `select details->>'reason' as reason from platform_audit
+          where actor_user_id = $1 and action = 'staff.sign_in_refused' order by at desc limit 1`,
+        [person.session.user.id],
+      );
+      expect(refused.rows[0]?.reason).toBe('mfa_required');
+      const otp = await attempt(['pwd', 'otp']);
+      expect(otp.statusCode, otp.body).toBe(201);
+      expect(otp.json().access_token).toEqual(expect.any(String));
+    } finally {
+      await strict.close();
+    }
+  });
+});

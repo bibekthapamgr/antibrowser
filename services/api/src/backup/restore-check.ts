@@ -66,6 +66,96 @@ export async function newestSnapshots(owner: pg.ClientBase, orgs?: string[]): Pr
   return rows.sort((a, b) => (a.org_id < b.org_id ? -1 : 1)).slice(0, orgs ? orgs.length : rows.length);
 }
 
+/** row ↔ object ↔ key for one snapshot; the organization key is returned for the isolation checks (or zeroed). */
+async function verifySnapshot(
+  opts: Pick<RestoreCheckOptions, 'owner' | 'kms' | 'readObject'>,
+  s: SnapshotRow,
+): Promise<{ result: TenantResult; orgKey: Awaited<ReturnType<typeof orgKeyById>> | null }> {
+  const result: TenantResult = { org_id: s.org_id, snapshot_id: s.id, object: 'ok', key: 'ok' };
+  const bytes = await opts.readObject(s.object_key);
+  if (!bytes) result.object = 'missing from the restored objects';
+  else if (String(bytes.length) !== s.size_bytes) result.object = `size ${bytes.length}, row ${s.size_bytes}`;
+  else if (createHash('sha256').update(bytes).digest('hex') !== s.sha256) result.object = 'SHA-256 differs';
+  else {
+    const h = parseSealedHeader(bytes.subarray(0, 12 + SEAL_MAX_HEADER));
+    if (!h) result.object = 'not a sealed snapshot';
+    else if (h.org_id !== s.org_id || h.profile_id !== s.profile_id || h.object_id !== s.id)
+      result.object = 'the header names another organization, profile or snapshot';
+    else if (h.key_version !== s.sealed_key_version) result.object = 'the header names another key version';
+  }
+  let orgKey: Awaited<ReturnType<typeof orgKeyById>> | null = null;
+  try {
+    orgKey = await orgKeyById(opts.owner as pg.PoolClient, opts.kms, s.org_id, s.key_version_id);
+    const dek = unwrapDataKey(orgKey, s.wrapped_dek, {
+      orgId: s.org_id,
+      profileId: s.profile_id,
+      snapshotId: s.id,
+      keyVersionId: s.key_version_id,
+    });
+    if (dek.length !== 32) result.key = 'the data key has the wrong length';
+    dek.fill(0);
+  } catch (e) {
+    result.key = `the keys do not unwrap (${e instanceof Error ? e.message : 'error'})`;
+  }
+  return { result, orgKey };
+}
+
+export interface WorkspaceRestoreReport {
+  ok: boolean;
+  org_id: string;
+  /** Profiles in the restored workspace, and how many of them have a committed snapshot. */
+  profiles: number;
+  profiles_with_snapshot: number;
+  members: number;
+  /** Every profile's newest committed snapshot was checked (row ↔ object ↔ key). */
+  checked: number;
+  failures: TenantResult[];
+  /** The newest committed snapshot in the restored copy (compare with the live one for the snapshot lag). */
+  newest_committed_at: string | null;
+}
+
+/**
+ * R6: a one-workspace restore rehearsal. For one organization of the restored copy, every profile's newest committed
+ * snapshot must have its object (size, SHA-256, sealed header) and its keys must unwrap under the root key: what an
+ * owner would need to get that workspace back. Nothing is decrypted or printed beyond ids and counts.
+ */
+export async function checkWorkspace(
+  opts: Pick<RestoreCheckOptions, 'owner' | 'kms' | 'readObject'> & { orgId: string },
+): Promise<WorkspaceRestoreReport> {
+  const { rows } = await opts.owner.query<SnapshotRow>(
+    `select distinct on (profile_id) id, org_id, profile_id, object_key, sha256, size_bytes::text, key_version_id,
+            sealed_key_version, wrapped_dek
+       from app.snapshot_manifests
+      where status = 'committed' and wrapped_dek is not null and org_id = $1
+      order by profile_id, committed_at desc, id desc`,
+    [opts.orgId],
+  );
+  const counts = await opts.owner.query<{ profiles: number; members: number; newest: string | null }>(
+    `select (select count(*)::int from app.profiles where org_id = $1) as profiles,
+            (select count(*)::int from app.memberships where org_id = $1) as members,
+            (select to_char(max(committed_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+               from app.snapshot_manifests where org_id = $1 and status = 'committed') as newest`,
+    [opts.orgId],
+  );
+  const failures: TenantResult[] = [];
+  for (const s of rows) {
+    const { result, orgKey } = await verifySnapshot(opts, s);
+    orgKey?.key.fill(0);
+    if (result.object !== 'ok' || result.key !== 'ok') failures.push(result);
+  }
+  const c = counts.rows[0];
+  return {
+    ok: failures.length === 0 && (c?.members ?? 0) > 0,
+    org_id: opts.orgId,
+    profiles: c?.profiles ?? 0,
+    profiles_with_snapshot: rows.length,
+    members: c?.members ?? 0,
+    checked: rows.length,
+    failures,
+    newest_committed_at: c?.newest ?? null,
+  };
+}
+
 const fails = async (f: () => Promise<unknown> | unknown): Promise<boolean> => {
   try {
     await f();
@@ -87,33 +177,8 @@ export async function checkRestore(opts: RestoreCheckOptions): Promise<RestoreCh
   const tenants: TenantResult[] = [];
   const keys = new Map<string, Awaited<ReturnType<typeof orgKeyById>>>();
   for (const s of snaps) {
-    const result: TenantResult = { org_id: s.org_id, snapshot_id: s.id, object: 'ok', key: 'ok' };
-    const bytes = await opts.readObject(s.object_key);
-    if (!bytes) result.object = 'missing from the restored objects';
-    else if (String(bytes.length) !== s.size_bytes)
-      result.object = `size ${bytes.length}, row ${s.size_bytes}`;
-    else if (createHash('sha256').update(bytes).digest('hex') !== s.sha256) result.object = 'SHA-256 differs';
-    else {
-      const h = parseSealedHeader(bytes.subarray(0, 12 + SEAL_MAX_HEADER));
-      if (!h) result.object = 'not a sealed snapshot';
-      else if (h.org_id !== s.org_id || h.profile_id !== s.profile_id || h.object_id !== s.id)
-        result.object = 'the header names another organization, profile or snapshot';
-      else if (h.key_version !== s.sealed_key_version) result.object = 'the header names another key version';
-    }
-    try {
-      const orgKey = await orgKeyById(opts.owner as pg.PoolClient, opts.kms, s.org_id, s.key_version_id);
-      keys.set(s.org_id, orgKey);
-      const dek = unwrapDataKey(orgKey, s.wrapped_dek, {
-        orgId: s.org_id,
-        profileId: s.profile_id,
-        snapshotId: s.id,
-        keyVersionId: s.key_version_id,
-      });
-      if (dek.length !== 32) result.key = 'the data key has the wrong length';
-      dek.fill(0);
-    } catch (e) {
-      result.key = `the keys do not unwrap (${e instanceof Error ? e.message : 'error'})`;
-    }
+    const { result, orgKey } = await verifySnapshot(opts, s);
+    if (orgKey) keys.set(s.org_id, orgKey);
     tenants.push(result);
   }
 

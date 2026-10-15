@@ -1,6 +1,6 @@
 {
   "name": "@pb/web-admin",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "description": "Internal support console (milestone 11): staff sign-in, organization billing overview, time-bound sensitive access with approval, entitlement overrides, reconciliation alerts, platform audit. Served by the API at /console/.",

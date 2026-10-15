@@ -112,6 +112,11 @@ export interface AppConfig {
      * otp,hwk,swk,mfa). Admin routes need a console session whose sign-in carried one of them.
      */
     mfaAmr: string[];
+    /**
+     * R6: refuse every staff sign-in without a second factor (STAFF_REQUIRE_MFA). Always on in staging and prod;
+     * dev/test default off so the fixture identity provider can sign in with a password only.
+     */
+    requireMfa: boolean;
   };
   /** R2 (ADR-0021): the terms a new workspace owner accepts (a version label; the text lives on the website). */
   onboarding: { termsVersion: string; termsUrl: string | null };
@@ -198,8 +203,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       }
     }
     for (const url of [databaseUrl, workerDatabaseUrl]) {
-      if (/@(localhost|127\.0\.0\.1)[:/]/.test(url)) {
-        problems.push(`database URL points at localhost in ${appEnv}`);
+      // R6: a small single-server deployment runs its database on the same machine. That is allowed only for a
+      // database named for this environment (pb_prod, pb_staging), so a dev or fixture database is never reused.
+      const name = /\/([A-Za-z0-9_]+)(\?.*)?$/.exec(url)?.[1] ?? '';
+      if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url) && !name.endsWith(`_${appEnv}`)) {
+        problems.push(
+          `database URL points at localhost in ${appEnv} (a same-server database must be named *_${appEnv})`,
+        );
       }
     }
   }
@@ -268,6 +278,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
     ] as const) {
       if (url && !secureOrLoopback(url, local)) problems.push(`${name} must use https`);
     }
+    // R6: browsers and desktop apps use the public endpoint (presigned links): https outside dev/test.
+    if (!local && !objectStore.publicEndpoint.startsWith('https://')) {
+      problems.push(`OBJECT_STORE_PUBLIC_ENDPOINT must be a public https address in ${appEnv}`);
+    }
   } else if (!local) {
     problems.push(`OBJECT_STORE_BUCKET is required in ${appEnv}`);
   }
@@ -289,6 +303,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
     problems.push('STAFF_MFA_AMR must list second-factor amr values (e.g. otp), never pwd');
   }
 
+  const requireMfaRaw = env.STAFF_REQUIRE_MFA ?? (local ? 'false' : 'true');
+  if (requireMfaRaw !== 'true' && requireMfaRaw !== 'false')
+    problems.push('STAFF_REQUIRE_MFA must be true or false');
+  if (!local && requireMfaRaw === 'false')
+    problems.push(`STAFF_REQUIRE_MFA cannot be turned off in ${appEnv}`);
+  const requireMfa = requireMfaRaw !== 'false';
+
   const termsVersion = env.TERMS_VERSION || '2026-10-14';
   if (!/^[A-Za-z0-9._-]{1,32}$/.test(termsVersion))
     problems.push('TERMS_VERSION must be 1-32 of A-Z a-z 0-9 . _ -');
@@ -302,6 +323,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     }
     if (parsed && (parsed.origin !== webOrigin || !secureOrLoopback(webOrigin, local)))
       problems.push('WEB_ORIGIN must be an https origin (scheme://host[:port], nothing after it)');
+    // R6: outside dev/test the portal is public: its cookies are Secure, so a loopback http origin is refused too.
+    if (parsed && !local && parsed.protocol !== 'https:')
+      problems.push(`WEB_ORIGIN must use https in ${appEnv}`);
   }
   const webClient = env.OIDC_WEB_CLIENT_ID || null;
   if (webClient && (!oidc || !webOrigin))
@@ -368,7 +392,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     kms,
     webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
     billing,
-    console: { dir: consoleDir, oidcClientId: consoleClient, mfaAmr },
+    console: { dir: consoleDir, oidcClientId: consoleClient, mfaAmr, requireMfa },
     onboarding: { termsVersion, termsUrl: env.TERMS_URL || null },
     web,
     email: { taskKey, smtpUrl, from: emailFrom },
@@ -436,6 +460,9 @@ function loadBilling(
   }
   const returnUrl = env.BILLING_RETURN_URL || 'http://127.0.0.1:8080/v1/billing/return';
   if (!secureOrLoopback(returnUrl, local)) problems.push('BILLING_RETURN_URL must use https');
+  // R6: customers come back from Stripe's pages to this address, so outside dev/test it is the public https one.
+  if (stripe && !local && !returnUrl.startsWith('https://'))
+    problems.push(`BILLING_RETURN_URL must be the public https address in ${appEnv}`);
   const retention = env.BILLING_RETENTION_DAYS ? Number(env.BILLING_RETENTION_DAYS) : null;
   if (retention !== null && (!Number.isInteger(retention) || retention < 30 || retention > 3650)) {
     problems.push('BILLING_RETENTION_DAYS must be an integer between 30 and 3650');

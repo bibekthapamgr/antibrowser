@@ -280,6 +280,9 @@ export function supportRoutes(app: App, deps: Deps): void {
         const sessionId = newId('staffSession');
         // R5: whether this sign-in used a second factor (the provider's amr claim); admin routes require it.
         const mfa = identity.amr.some((v) => deps.config.console.mfaAmr.includes(v));
+        // R6: outside dev/test every staff sign-in must carry a second factor (the provider's signed amr claim,
+        // checked here on the server), not only the admin routes.
+        if (!mfa && deps.config.console.requireMfa) return { refused: 'mfa_required' as const };
         await c.query(
           `insert into staff_sessions (id, user_id, auth_time, expires_at, mfa)
            values ($1, $2, $3, now() + make_interval(secs => $4), $5)`,
@@ -294,7 +297,13 @@ export function supportRoutes(app: App, deps: Deps): void {
         });
         return { sessionId, roles: s.roles, name: s.display_name };
       });
-      if ('refused' in out) throw await refuse(out.refused, user.user_id);
+      if ('refused' in out) {
+        const err = await refuse(out.refused, user.user_id);
+        if (out.refused === 'mfa_required') {
+          throw new ApiError('MFA_REQUIRED', 'Staff sign-in needs your one-time code; sign in again with it');
+        }
+        throw err;
+      }
       const token = await deps.sessions.signStaff(
         { userId: user.user_id, staffSessionId: out.sessionId, authTime: identity.authTime },
         STAFF_SESSION_SECONDS,

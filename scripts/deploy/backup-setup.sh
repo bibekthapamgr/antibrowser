@@ -39,7 +39,10 @@ LIBEXEC=/usr/local/libexec/pb-backup
 BACKUP_USER=pb-backup
 STANZA=pb
 RCLONE_VERSION=v1.75.2
-OBJECT_BUCKET=pb-snapshots-dev
+# R6: this server's snapshot bucket (pb-snapshots-dev, -staging or -prod), as the API is configured.
+OBJECT_BUCKET=$(sed -n 's/^OBJECT_STORE_BUCKET=//p' "$ENV_DIR/api.env" 2>/dev/null || true)
+OBJECT_BUCKET=${OBJECT_BUCKET:-pb-snapshots-dev}
+[[ $OBJECT_BUCKET =~ ^pb-snapshots-(dev|staging|prod)$ ]] || { echo "unexpected OBJECT_STORE_BUCKET in $ENV_DIR/api.env" >&2; exit 1; }
 ARCHIVE_QUEUE_MAX=2GiB
 
 step() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
@@ -392,12 +395,18 @@ status() {
   if [[ -f $STATE_DIR/objects.json ]]; then sed 's/^/    /' "$STATE_DIR/objects.json"; else echo "    not copied yet"; fi
   echo "Timers:"
   systemctl list-timers 'pb-backup-*' --no-pager | sed 's/^/    /'
+  # R6: a failing backup is said plainly (and the exit code is 3), not left to be read from the numbers above.
+  if [[ $(psql_su -c "select coalesce(last_failed_time > coalesce(last_archived_time, 'epoch'), false) from pg_stat_archiver") == t ]]; then
+    echo "ALERT: log archiving to R2 is FAILING (the newest attempt failed). Check R2 (token, bucket, network):"
+    echo "       journalctl -u $(pg_service) -n 50 | grep -i archive ; the staff console's Operations page shows it too."
+    return 3
+  fi
 }
 
 case "${1:-setup}" in
   db-backup) shift; db_backup "${1:-auto}"; exit 0 ;;
   objects) objects_copy; exit 0 ;;
-  status) status; exit 0 ;;
+  status) rc=0; status || rc=$?; exit "$rc" ;;
   backup-now)
     load_backup_env; configured || die "off-site backups are not set up (fill in $BACKUP_ENV)"
     as_pg pgbackrest --stanza=$STANZA --type="${2:-full}" backup; ok "database backup done"

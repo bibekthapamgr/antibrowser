@@ -5,6 +5,20 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.18.0 — 2026-10-15 (R6: public deployment, security and release readiness)
+Added (see ADR-0025; nothing removed or renamed)
+- `GET /v1/ready` now answers with safe status words only: `{"status": "ready" | "not_ready", "checks": {"database":
+  "ok" | "unreachable", "schema": "current" | "behind" | "unknown", "worker": "ok" | "stale" | "unknown"}}`, and HTTP
+  503 when not ready (database unreachable, or a schema older than this build needs). It is the only public status
+  endpoint.
+
+Changed (visible to clients)
+- Outside dev/test every staff sign-in (`POST /v1/support/sessions`) needs a second factor in the identity provider's
+  signed `amr` claim; a password-only sign-in is refused with `MFA_REQUIRED` (403). Before, only the admin routes and
+  business roles required it.
+- Staging/production configuration refuses to start with an http portal origin, an http public storage endpoint or an
+  http billing return address (they were allowed for loopback hosts).
+
 ## 0.17.0 — 2026-10-15 (R5: business-owner administration and catalog publishing)
 Added (see ADR-0024; nothing removed or renamed)
 - `/v1/admin` for platform staff (console tokens only; each route names a staff permission and needs a session opened

@@ -1,6 +1,6 @@
 {
   "name": "@pb/web-public",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "description": "Public website (R4, ADR-0023): home, pricing, download, help, contact, security and the owner's legal pages. Prerendered static HTML (node build.mjs) served by the API at / (PUBLIC_DIR); prices and downloads come from the API at view time.",

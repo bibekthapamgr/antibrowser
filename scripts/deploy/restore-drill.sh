@@ -12,7 +12,13 @@
 #   5. measures the recovery point (marker age when the drill began restoring) and recovery time (restore + checks),
 #      writes a report to /var/lib/pb-backup/drills/, then stops the cluster and deletes every restored file.
 #
-# Usage (as root):  bash restore-drill.sh [--no-seed]     (--no-seed: do not create fixture snapshots first)
+# R6: --workspace org_… rehearses getting ONE workspace back: every profile's newest snapshot of it is restored from
+# the off-site copy and checked (row <-> object <-> key), and the report records its snapshot lag (how much newer the
+# live workspace's newest snapshot is than the restored one). On staging/production servers no fixture snapshots are
+# made: the drill uses the real data and the real off-site path, and it never touches the running database.
+#
+# Usage (as root):  bash restore-drill.sh [--no-seed] [--workspace org_…]
+#                     --no-seed: do not create fixture snapshots first (always so on staging/production)
 #                   bash restore-drill.sh --last          (the newest drill report)
 # The drill runs as a background service (pb-restore-drill): a dropped SSH connection does not stop it. Running the
 # command again while it runs follows it instead of starting another.
@@ -32,7 +38,18 @@ RCLONE=/opt/rclone/current/rclone
 RCLONE_CONF=/etc/pb-backup/rclone.conf
 STANZA=pb
 SEED=1
-[[ "${1:-}" == "--no-seed" ]] && SEED=0
+WORKSPACE=""
+args=("$@")
+while (( $# )); do
+  case $1 in
+    --no-seed) SEED=0; shift ;;
+    --workspace) WORKSPACE=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --last) shift ;;
+    *) echo "unknown argument: $1 (usage: restore-drill.sh [--no-seed] [--workspace org_…] | --last)" >&2; exit 2 ;;
+  esac
+done
+set -- "${args[@]}"
+[[ -z $WORKSPACE || $WORKSPACE =~ ^org_[0-9A-HJKMNP-TV-Z]{26}$ ]] || { echo "--workspace needs an organization id (org_…)" >&2; exit 2; }
 
 step() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
@@ -111,6 +128,16 @@ step "Restore drill"
   || die "off-site backups are not set up (fill in /etc/project-browser/backup.env and run vps-setup.sh)"
 DB=$(sed -nE 's#^MIGRATION_DATABASE_URL=.*/([A-Za-z0-9_]+)(\?.*)?$#\1#p' "$ENV_FILE")
 [[ -n $DB ]] || die "cannot read the database name from $ENV_FILE"
+APP_ENV=$(sed -n 's/^APP_ENV=//p' "$ENV_FILE")
+OBJECT_BUCKET=$(sed -n 's/^OBJECT_STORE_BUCKET=//p' "$ENV_FILE")
+[[ -n $OBJECT_BUCKET ]] || die "cannot read the storage bucket from $ENV_FILE"
+if [[ $APP_ENV != dev ]] && (( SEED )); then
+  echo "    $APP_ENV server: no fixture snapshots are made; the drill checks the real data"
+  SEED=0
+fi
+if [[ -n $WORKSPACE ]]; then
+  [[ $(psql_live -c "select count(*) from app.organizations where id = '$WORKSPACE'") == 1 ]] || die "there is no workspace $WORKSPACE"
+fi
 R2_BUCKET=$(sed -n 's/^R2_BUCKET=//p' "$STATE_DIR/bucket.env")
 CA_ARGS=()
 CA=$(systemctl show pb-backup-objects.service -p Environment --value | tr ' ' '\n' | sed -n 's/^BACKUP_CA_FILE=//p')
@@ -132,6 +159,10 @@ if (( SEED )); then
 fi
 MARKER=$(psql_live -c "insert into app.recovery_markers (note) values ('restore drill $DRILL_START') returning id")
 MARKER_AT=$(now)
+LIVE_NEWEST=""
+if [[ -n $WORKSPACE ]]; then
+  LIVE_NEWEST=$(psql_live -c "select coalesce(extract(epoch from max(committed_at))::text, '') from app.snapshot_manifests where org_id = '$WORKSPACE' and status = 'committed'")
+fi
 # Close the log segment holding the marker; it must be in R2 before the restore starts.
 seg=$(psql_live -c "select pg_walfile_name(pg_switch_wal())")
 # The objects of those snapshots go off-site too (the timer does this every 2 minutes).
@@ -190,12 +221,20 @@ ok "database restored and recovered in $(elapsed "$RESTORE_START" "$RESTORED") s
 # ----------------------------------------------------------------------------- 3. objects from the off-site copy
 ORGS=$(psql_drill -c "select string_agg(org_id, ',' order by org_id) from (select org_id from app.snapshot_manifests where status = 'committed' and wrapped_dek is not null group by org_id order by max(committed_at) desc limit 2) t")
 KEYS=$(psql_drill -c "select distinct on (org_id) object_key from app.snapshot_manifests where status = 'committed' and wrapped_dek is not null and org_id = any(string_to_array('$ORGS', ',')) order by org_id, committed_at desc, id desc")
-printf '%s\n' "$KEYS" > "$DRILL/objects.list"; chmod 644 "$DRILL/objects.list"
-runuser -u pb-backup -- bash -c "umask 027; '$RCLONE' --config '$RCLONE_CONF' ${CA_ARGS[*]:-} copy 'r2:$R2_BUCKET/objects/pb-snapshots-dev' '$DRILL/objects' --files-from '$DRILL/objects.list' --retries 3"
+if [[ -n $WORKSPACE ]]; then  # every profile's newest snapshot of the rehearsed workspace
+  KEYS+=$'\n'$(psql_drill -c "select distinct on (profile_id) object_key from app.snapshot_manifests where status = 'committed' and wrapped_dek is not null and org_id = '$WORKSPACE' order by profile_id, committed_at desc, id desc")
+fi
+printf '%s\n' "$KEYS" | sed '/^$/d' | sort -u > "$DRILL/objects.list"; chmod 644 "$DRILL/objects.list"
+runuser -u pb-backup -- bash -c "umask 027; '$RCLONE' --config '$RCLONE_CONF' ${CA_ARGS[*]:-} copy 'r2:$R2_BUCKET/objects/$OBJECT_BUCKET' '$DRILL/objects' --files-from '$DRILL/objects.list' --retries 3"
 ok "$(wc -l < "$DRILL/objects.list") snapshot objects restored from r2:$R2_BUCKET/objects"
 
 # ----------------------------------------------------------------------------- 4. checks
-REPORT=$(as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/restore-drill.ts --socket '$DRILL/run' --port $DRILL_PORT --db '$DB' --objects '$DRILL/objects' --marker '$MARKER' --orgs '$ORGS'") \
+ORG_ARGS="--orgs '$ORGS'"
+if [[ -n $WORKSPACE ]]; then
+  ORG_ARGS="--workspace '$WORKSPACE'"
+  [[ $ORGS == *,* ]] && ORG_ARGS+=" --orgs '$ORGS'"
+fi
+REPORT=$(as_pb bash -c "cd '$APP_DIR/services/api' && node --env-file='$ENV_FILE' scripts/restore-drill.ts --socket '$DRILL/run' --port $DRILL_PORT --db '$DB' --objects '$DRILL/objects' --marker '$MARKER' $ORG_ARGS") \
   && CHECK=pass || CHECK=fail
 VERIFIED=$(now)
 echo "$REPORT" | sed 's/^/    /'
@@ -211,11 +250,17 @@ BACKUP=$(as_pg pgbackrest --stanza=$STANZA --output=json info | "$NODE" -e '
 install -d -m 750 -o root -g root "$STATE_DIR/drills"
 OUT=$STATE_DIR/drills/$(date -u +%Y%m%dT%H%M%SZ).json
 "$NODE" -e '
-  const [start, check, rpo, rto, backup, marker, orgs, report] = process.argv.slice(1);
+  const [start, check, rpo, rto, backup, marker, orgs, report, env, bucket, ws, liveNewest] = process.argv.slice(1);
   let r = null; try { r = JSON.parse(report); } catch {}
-  console.log(JSON.stringify({ drill_started_at: start, result: check, recovery_point_seconds: Number(rpo),
-    recovery_time_seconds: Number(rto), newest_backup: backup, marker_id: marker, tenants: orgs.split(","),
-    checks: r }, null, 2));' "$DRILL_START" "$CHECK" "$RPO" "$RTO" "$BACKUP" "$MARKER" "$ORGS" "$REPORT" > "$OUT"
+  const restoredNewest = r && r.workspace && r.workspace.newest_committed_at;
+  const lag = ws && liveNewest && restoredNewest
+    ? Math.max(0, Math.round(Number(liveNewest) - Date.parse(restoredNewest) / 1000))
+    : null;
+  console.log(JSON.stringify({ drill_started_at: start, environment: env, result: check,
+    recovery_point_seconds: Number(rpo), recovery_time_seconds: Number(rto), targets: { rpo_seconds: 900, rto_seconds: 14400 },
+    newest_backup: backup, offsite_objects: bucket, marker_id: marker, tenants: orgs.split(",").filter(Boolean),
+    workspace: ws || null, workspace_snapshot_lag_seconds: lag, checks: r }, null, 2));' \
+  "$DRILL_START" "$CHECK" "$RPO" "$RTO" "$BACKUP" "$MARKER" "$ORGS" "$REPORT" "$APP_ENV" "r2:$R2_BUCKET/objects/$OBJECT_BUCKET" "$WORKSPACE" "$LIVE_NEWEST" > "$OUT"
 chmod 640 "$OUT"
 cleanup
 trap - EXIT
@@ -226,8 +271,16 @@ if [[ $CHECK != pass ]]; then
     for (const t of r.tenants || []) if (t.object !== "ok" || t.key !== "ok")
       console.error(`    FAILED ${t.org_id} snapshot ${t.snapshot_id}: object ${t.object}; key ${t.key}`);
     for (const i of r.isolation || []) if (!i.ok) console.error(`    FAILED isolation: ${i.name}`);
+    for (const f of (r.workspace && r.workspace.failures) || [])
+      console.error(`    FAILED workspace ${f.org_id} snapshot ${f.snapshot_id}: object ${f.object}; key ${f.key}`);
+    if (r.workspace && r.workspace.members === 0) console.error("    FAILED the restored workspace has no members");
     if (r.marker_found === false) console.error("    FAILED the recovery marker is missing");' "$REPORT" >&2
   die "the restore checks failed (report: $OUT)"
 fi
 ok "restore drill passed: recovery point ${RPO} s before the restore began (target 15 min), recovery time ${RTO} s (target 4 h)"
+if [[ -n $WORKSPACE ]]; then
+  "$NODE" -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const w = r.checks.workspace;
+    console.log(`    \x1b[32mok\x1b[0m  workspace ${w.org_id}: ${w.checked} profile snapshot(s) of ${w.profiles} profile(s) restored and checked, ` +
+      `${w.members} member(s); snapshot lag ${r.workspace_snapshot_lag_seconds ?? "unknown"} s`);' "$OUT"
+fi
 ok "report: $OUT  |  the isolated cluster and every restored file were deleted"
