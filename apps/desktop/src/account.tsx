@@ -99,6 +99,52 @@ export function AccountScreen(props: {
     );
   }
   const signedIn = account.status === 'signed_in';
+  // A build made for a server (PB_DEFAULT_SERVER), or a saved address: customers see Sign in / Create account
+  // first; the address stays available but folded away under "Server".
+  const serverForm = (
+    <form
+      className={account.server_url ? 'stack' : 'card stack'}
+      onSubmit={submitServer}
+      aria-labelledby="server-title"
+    >
+      <h2 id="server-title">Organization server</h2>
+      <div className="row">
+        <label className="grow">
+          Server address
+          <input
+            type="url"
+            value={server}
+            placeholder="https://browser.example.com"
+            spellCheck={false}
+            autoComplete="url"
+            aria-describedby={serverHelp}
+            onChange={(e) => setServer(e.target.value)}
+          />
+        </label>
+        <button
+          type="submit"
+          className="pb-button"
+          disabled={busy || server.trim() === (account.server_url ?? '')}
+        >
+          Save
+        </button>
+        {account.server_url && (
+          <button
+            type="button"
+            className="pb-button"
+            disabled={busy}
+            onClick={() => (account.status === 'signed_out' ? void saveServer(null) : setConfirmServer(null))}
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
+      <p id={serverHelp} className="muted small">
+        Your administrator gives you this address. It must start with https:// (http:// only for a server on
+        this computer).
+      </p>
+    </form>
+  );
 
   return (
     <section className="screen account" aria-labelledby="account-title">
@@ -112,46 +158,7 @@ export function AccountScreen(props: {
         </div>
       </header>
 
-      <form className="card stack" onSubmit={submitServer} aria-labelledby="server-title">
-        <h2 id="server-title">Organization server</h2>
-        <div className="row">
-          <label className="grow">
-            Server address
-            <input
-              type="url"
-              value={server}
-              placeholder="https://browser.example.com"
-              spellCheck={false}
-              autoComplete="url"
-              aria-describedby={serverHelp}
-              onChange={(e) => setServer(e.target.value)}
-            />
-          </label>
-          <button
-            type="submit"
-            className="pb-button"
-            disabled={busy || server.trim() === (account.server_url ?? '')}
-          >
-            Save
-          </button>
-          {account.server_url && (
-            <button
-              type="button"
-              className="pb-button"
-              disabled={busy}
-              onClick={() =>
-                account.status === 'signed_out' ? void saveServer(null) : setConfirmServer(null)
-              }
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
-        <p id={serverHelp} className="muted small">
-          Your administrator gives you this address. It must start with https:// (http:// only for a server on
-          this computer).
-        </p>
-      </form>
+      {!account.server_url && serverForm}
 
       <section className="card stack" aria-labelledby="signin-title">
         <h2 id="signin-title">Sign-in</h2>
@@ -237,11 +244,20 @@ export function AccountScreen(props: {
             <p className="muted small">
               {account.server_url
                 ? 'Both open in your web browser; Project Browser never sees your password. A new account gets its own workspace with a free trial, or joins the team that invited you.'
-                : 'Save the organization server address first.'}
+                : 'Enter your organization server address above and save it first.'}
             </p>
           </>
         )}
       </section>
+
+      {account.server_url && (
+        <details className="card server-details">
+          <summary>
+            Server: <span className="muted">{account.server_url}</span>
+          </summary>
+          {serverForm}
+        </details>
+      )}
 
       {signedIn && account.user && (
         <>

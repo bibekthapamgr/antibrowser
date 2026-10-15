@@ -1189,6 +1189,9 @@ describe('account and organizations (milestone 06)', () => {
     await page.type('input[type=url]', 'https://browser.example.test');
     await clickButton(page, 'form[aria-labelledby=server-title]', 'Save');
     await toastContains(page, 'Server saved.');
+    // With a server saved (or built in), only Sign in / Create account are in view; the address folds away.
+    await page.waitForSelector('details.server-details:not([open]) form[aria-labelledby=server-title]');
+    expect(await text(page, 'details.server-details summary')).toContain('https://browser.example.test');
     await clickButton(page, '#main', 'Sign in');
     // R2: onboarding completes by itself (a returning person: their workspace is selected) and Profiles opens.
     await toastContains(page, 'Signed in. Demo Agency opens first.');
