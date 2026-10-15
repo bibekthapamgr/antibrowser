@@ -58,7 +58,7 @@ and change nothing (tests in `crates/sync`).
 |---|---|---|---|
 | Same device, new folder | **Kept** on all three OSes | Kept | Same OS user, same key store |
 | Windows → another Windows PC | **Kept** (carried, re-keyed) | Kept | Sessions carried inside the encrypted snapshot; a fresh DPAPI key is minted for the destination and the cookies re-encrypted under it (ADR-0028) |
-| Mac → another Mac | **Kept** (carried, re-keyed) | Kept | Sessions carried inside the encrypted snapshot; re-encrypted under the destination's Keychain Safe Storage key |
+| Mac → another Mac | **Kept** (carried, re-keyed) | Kept | Sessions carried inside the encrypted snapshot; re-encrypted under the destination Mac's deterministic mock-keychain key (`--use-mock-keychain`, ADR-0028) |
 | Windows ↔ Mac | **Kept** (carried, re-keyed) | Kept | The carried plaintext is OS-independent, so it re-encrypts under either scheme |
 | Any pair involving Linux | Lost across devices | Kept | Linux is development-only; its password store is not machine-bound, so it is not representative and never promised |
 | Windows app-bound (`v20`) cookies | Not carried → sign in again | Kept | App-bound encryption binds the key to an elevation service the standalone runtime does not run; such values are skipped, never downgraded. Chrome for Testing uses the `v10` per-profile key, so this does not arise in practice |

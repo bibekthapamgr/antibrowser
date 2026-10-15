@@ -195,6 +195,14 @@ pub fn prepare_launch(
         // manager reports a crash from the exit record without one.
         "--disable-breakpad".into(),
     ];
+    // macOS: use Chromium's deterministic mock keychain for the cookie store key instead of the login Keychain
+    // (ADR-0028). Neither the browser nor the manager then triggers a Keychain authorization prompt, and a
+    // workspace profile's own sessions can be carried to another enrolled Mac. At-rest protection on this device
+    // rests on the user account / FileVault and the app's data-folder permissions (as on Linux's basic store),
+    // never on a Keychain item; the derived key is fixed and public, so cookies are not promised secret at rest.
+    if Platform::current() == Platform::MacOs {
+        args.push("--use-mock-keychain".into());
+    }
     if let Some(n) = request.network {
         // Everything, including loopback addresses, goes to the gateway; QUIC (UDP) is never used.
         args.push(format!("--proxy-server=http://127.0.0.1:{}", n.gateway_port).into());
@@ -405,6 +413,39 @@ mod tests {
 
     fn id() -> ProfileId {
         ProfileId::parse("prf_01J9ZSEED0A010000000000000").unwrap_or_else(|_| panic!("id"))
+    }
+
+    #[test]
+    fn macos_uses_the_mock_keychain_for_the_cookie_store_key() -> Result<(), LaunchError> {
+        // ADR-0028: on macOS every launch opts into Chromium's deterministic mock keychain, so neither the browser
+        // nor the manager touches the login Keychain (no authorization prompt) and a workspace profile's sessions
+        // can be carried to another enrolled Mac. On other systems the switch is never added.
+        let (_tmp, root, browser) = setup();
+        let spec = prepare_launch(
+            &root,
+            Some(&browser),
+            ProfileState {
+                exists: true,
+                running: false,
+            },
+            LaunchRequest {
+                profile_id: &id(),
+                start_urls: &[],
+                switches: &[],
+                network: None,
+                environment: None,
+                extensions_disabled: false,
+                automation: false,
+            },
+        )?;
+        let present = spec.args.iter().any(|a| a == "--use-mock-keychain");
+        assert_eq!(
+            present,
+            Platform::current() == Platform::MacOs,
+            "the mock-keychain switch is added only on macOS: {:?}",
+            spec.args
+        );
+        Ok(())
     }
 
     #[test]

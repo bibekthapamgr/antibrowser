@@ -1,10 +1,11 @@
 //! Cross-device session carry for workspace profiles (ADR-0028, supersedes the "sessions do not travel" line of
 //! ADR-0002).
 //!
-//! Chromium encrypts each cookie's value at rest with a key held by the source computer's OS (a login-Keychain
-//! item on macOS, a DPAPI-protected per-profile key on Windows, a password store on Linux). That key never leaves
-//! the computer, so a sealed snapshot restored on a teammate's computer kept the cookie *rows* but not their usable
-//! values: the teammate was asked to sign in again.
+//! Chromium encrypts each cookie's value at rest with a key held by the source computer's OS (a DPAPI-protected
+//! per-profile key on Windows; on macOS a deterministic mock-keychain password since the manager always launches
+//! with `--use-mock-keychain`, ADR-0028; a password store on Linux). On Windows that key is bound to the Windows
+//! user and does not leave the computer, so a sealed snapshot restored on a teammate's computer kept the cookie
+//! *rows* but not their usable values: the teammate was asked to sign in again.
 //!
 //! This module carries a workspace profile's OWN stored sessions across enrolled devices of the same workspace,
 //! at the owner's request, without weakening anything:
@@ -319,7 +320,7 @@ impl CookieKey {
     }
 }
 
-/// Derives a 16-byte AES-128 key from a Safe Storage password exactly as Chromium does (PBKDF2-HMAC-SHA1,
+/// Derives a 16-byte AES-128 key from a cookie-store password exactly as Chromium does (PBKDF2-HMAC-SHA1,
 /// salt `saltysalt`). macOS uses 1003 iterations; Linux uses 1.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn cbc_key_from_password(password: &[u8], iterations: u32) -> Zeroizing<[u8; 16]> {
@@ -354,65 +355,37 @@ fn destination_key(_user_data: &Path) -> Option<CookieKey> {
 
 // ------------------------------------------------------------------------------------------------------- macOS
 
-/// Candidate Keychain (service, account) pairs for the browser's Safe Storage password, most specific first. An
-/// explicit override lets the manager (which knows the installed browser) or a test name the exact item.
+/// The password Chromium's OSCrypt derives the cookie key from when launched with `--use-mock-keychain`, which the
+/// manager always passes on macOS (ADR-0028, `pb_runtime::launch`). Verified against Chromium source for the pinned
+/// runtime (Chrome for Testing 155): `crypto/mock_apple_keychain.cc` defines `kPassword[] = "my_password"` and its
+/// `FindGenericPassword` returns it with `*passwordLength = arraysize(kPassword)` = 12 (**including the trailing
+/// NUL**); `components/os_crypt/.../keychain_password_mac.mm` `GetPassword()` builds the password as
+/// `std::string(passwordData, passwordLength)`, i.e. exactly those 12 bytes. So the PBKDF2 input is
+/// `b"my_password\0"`, not `b"my_password"`.
+///
+/// Because this key is fixed and public, the cookie store at rest on this device is no more secret than the file
+/// itself: its protection is the user account / FileVault and the app's data-folder permissions, the same footing
+/// as Linux's basic password store. Cross-device carry still only ever happens inside the end-to-end-encrypted
+/// workspace snapshot. The real-browser portability test on the macOS runner proves these bytes match Chromium's.
 #[cfg(target_os = "macos")]
-fn mac_safe_storage_candidates() -> Vec<(String, String)> {
-    let mut v = Vec::new();
-    if let (Ok(s), Ok(a)) = (
-        std::env::var("PB_COOKIE_SAFE_STORAGE_SERVICE"),
-        std::env::var("PB_COOKIE_SAFE_STORAGE_ACCOUNT"),
-    ) {
-        v.push((s, a));
-    }
-    for (s, a) in [
-        (
-            "Google Chrome for Testing Safe Storage",
-            "Google Chrome for Testing",
-        ),
-        ("Chromium Safe Storage", "Chromium"),
-        ("Chrome Safe Storage", "Chrome"),
-    ] {
-        v.push((s.to_owned(), a.to_owned()));
-    }
-    v
-}
+const MOCK_KEYCHAIN_PASSWORD: &[u8] = b"my_password\0";
 
 #[cfg(target_os = "macos")]
-fn mac_cbc_from_password(password: &str) -> CookieKey {
+fn mac_mock_key() -> CookieKey {
     CookieKey::Cbc {
-        key: cbc_key_from_password(password.as_bytes(), 1003),
+        key: cbc_key_from_password(MOCK_KEYCHAIN_PASSWORD, 1003),
         write_prefix: b"v10",
     }
 }
 
 #[cfg(target_os = "macos")]
 fn source_key(_user_data: &Path) -> Option<CookieKey> {
-    for (service, account) in mac_safe_storage_candidates() {
-        if let Ok(entry) = keyring::Entry::new(&service, &account)
-            && let Ok(pw) = entry.get_password()
-        {
-            return Some(mac_cbc_from_password(&pw));
-        }
-    }
-    None
+    Some(mac_mock_key())
 }
 
 #[cfg(target_os = "macos")]
 fn destination_key(_user_data: &Path) -> Option<CookieKey> {
-    // Prefer an existing Safe Storage item (one the installed browser already created); otherwise create one under
-    // the browser's own name so the browser adopts it on first launch. Either way the key is held only by this
-    // computer's Keychain, exactly as the browser holds its own.
-    if let Some(k) = source_key(_user_data) {
-        return Some(k);
-    }
-    let (service, account) = mac_safe_storage_candidates().into_iter().next()?;
-    let mut raw = [0u8; 16];
-    getrandom::fill(&mut raw).ok()?;
-    let password = b64().encode(raw);
-    let entry = keyring::Entry::new(&service, &account).ok()?;
-    entry.set_password(&password).ok()?;
-    Some(mac_cbc_from_password(&password))
+    Some(mac_mock_key())
 }
 
 // ------------------------------------------------------------------------------------------------------- Windows
@@ -624,5 +597,30 @@ mod tests {
             .query_row("SELECT encrypted_value FROM cookies", [], |r| r.get(0))
             .unwrap();
         assert_eq!(&linux_basic_key().decrypt(&blob).unwrap()[..], secret);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_key_is_the_mock_keychain_password_and_round_trips() {
+        // The password is Chromium's mock-keychain `kPassword` INCLUDING the trailing NUL byte (its reported
+        // length is arraysize = 12). The real-browser macOS portability test is what proves these bytes actually
+        // match the browser; this just pins the constant and the source==destination derivation.
+        assert_eq!(MOCK_KEYCHAIN_PASSWORD, b"my_password\0");
+        assert_eq!(MOCK_KEYCHAIN_PASSWORD.len(), 12);
+        let secret = b"auth=cross-mac-session";
+        let blob = source_key(Path::new("/nonexistent"))
+            .unwrap()
+            .encrypt(secret)
+            .unwrap();
+        assert_eq!(&blob[..3], b"v10");
+        let back = destination_key(Path::new("/nonexistent"))
+            .unwrap()
+            .decrypt(&blob)
+            .unwrap();
+        assert_eq!(
+            &back[..],
+            secret,
+            "source and destination derive the same key"
+        );
     }
 }
