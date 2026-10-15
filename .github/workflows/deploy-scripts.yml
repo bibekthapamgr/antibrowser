@@ -500,8 +500,9 @@ jobs:
       ADMIN: admin.pb-ci.test
       ID: id.pb-ci.test
       FILES: files.pb-ci.test
-      # Node clients (the checks below) trust the proxy's private authority, as the server's own API does.
+      # Clients in the checks below (Node and curl) trust the proxy's private authority, as the server's own API does.
       NODE_EXTRA_CA_CERTS: /etc/project-browser/public-ca.pem
+      CURL_CA_BUNDLE: /etc/project-browser/public-ca.pem
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
