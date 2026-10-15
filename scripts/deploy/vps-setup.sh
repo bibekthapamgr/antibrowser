@@ -228,6 +228,13 @@ if (( ! LOCAL_ENV )); then
   done
   printf 'PB_ENV=%s\n' "$PB_ENV" > "$ENV_MARK"; chmod 644 "$ENV_MARK"
   ok "public addresses in $PUBLIC_ENV; this server is $PB_ENV from now on ($ENV_MARK)"
+  # A test server turned into staging/prod still has the test server's sign-in settings (http issuer on 127.0.0.1 and
+  # its session key). They are set aside, never reused: keycloak-setup.sh writes this environment's own, with a new key.
+  if [[ -f $ENV_DIR/oidc.env ]] && ! grep -q '^OIDC_ISSUER=https://' "$ENV_DIR/oidc.env"; then
+    mv -f "$ENV_DIR/oidc.env" "$ENV_DIR/oidc.env.test-server"
+    chmod 600 "$ENV_DIR/oidc.env.test-server"
+    ok "the test server's sign-in settings were set aside ($ENV_DIR/oidc.env.test-server); $PB_ENV gets its own"
+  fi
 fi
 as_pb bash -c "cd '$APP_DIR' && pnpm install --frozen-lockfile --reporter=silent"
 ok "dependencies installed (pnpm $(as_pb bash -c "cd '$APP_DIR' && pnpm --version"))"
