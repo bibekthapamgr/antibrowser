@@ -235,6 +235,7 @@ fn source(p: &Path) -> Source<'_> {
     Source {
         user_data: p,
         settings_json: Some(br#"{"format":"project-browser-profile-settings","version":1}"#),
+        portable_cookies: None,
         platform: "linux-x64",
         browser_version: "155.0.8059.39",
         app_version: "e2e",

@@ -39,8 +39,8 @@ export function demoApi(mode: string) {
     email: 'demo.person@example.test',
     email_verified: true,
   };
-  let signedIn = has('signedin') || has('member') || has('new') || has('invite');
-  let onboarded = has('signedin') || has('member');
+  let signedIn = has('signedin') || has('member') || has('new') || has('invite') || has('joined');
+  let onboarded = has('signedin') || has('member') || has('joined');
   const orgs: Org[] = [];
   const team = (name: string, role: string, n: number): Org => ({
     id: rid('org'),
@@ -77,7 +77,10 @@ export function demoApi(mode: string) {
     });
     orgs.push(o);
   }
-  const inviteOrg = team('Demo Agency', 'owner', 50);
+  const inviteOrg = team('Demo Agency', 'operator', 50);
+  // `joined`: the person already accepted this invitation (they are a member of the invited workspace), so
+  // revisiting the invitation link shows the friendly "already a member" confirmation, not an error.
+  if (has('joined')) orgs.push(inviteOrg);
   let defaultOrg: string | null = orgs[0]?.id ?? null;
   let terms = onboarded;
   const devices = [
@@ -271,11 +274,13 @@ export function demoApi(mode: string) {
     }
     if (parts[0] === 'invitations' && parts[1] === TOKEN)
       return {
+        org_id: inviteOrg.id,
         org_name: 'Demo Agency',
         role: 'operator',
         expires_at: days(7),
         status: orgs.includes(inviteOrg) ? 'accepted' : 'open',
         for_this_account: true,
+        already_member: orgs.includes(inviteOrg),
       };
     if (p === '/me/workspaces')
       return page(

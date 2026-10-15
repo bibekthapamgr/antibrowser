@@ -638,12 +638,16 @@ impl AppState {
                 .or_else(|| self.installed_browser(store))
                 .filter(|v| pb_sync::portability::major(v).is_some())
                 .unwrap_or_else(|| "0.0.0.0".into());
+            // Carry the recovery copy's own stored sessions inside the encrypted snapshot (ADR-0028). This is a
+            // workspace (organization) snapshot; local-only backups never go through here.
+            let carried = crate::cookies::collect_portable(&dir);
             let source = Source {
                 user_data: &dir,
                 settings_json: Some(&settings),
                 platform: platform(),
                 browser_version: &browser,
                 app_version: APP_VERSION,
+                portable_cookies: carried.as_deref().map(|v| v.as_slice()),
             };
             return engine.seal(job, &source);
         }
@@ -671,12 +675,16 @@ impl AppState {
                 .or_else(|| self.installed_browser(store))
                 .filter(|v| pb_sync::portability::major(v).is_some())
                 .unwrap_or_else(|| "0.0.0.0".into());
+            // Carry the workspace profile's own stored sessions inside the encrypted snapshot (ADR-0028), so a
+            // teammate's enrolled computer can open it already signed in. Workspace snapshots only.
+            let carried = crate::cookies::collect_portable(&dirs.user_data);
             let source = Source {
                 user_data: &dirs.user_data,
                 settings_json: Some(&settings),
                 platform: platform(),
                 browser_version: &browser,
                 app_version: APP_VERSION,
+                portable_cookies: carried.as_deref().map(|v| v.as_slice()),
             };
             engine.seal(job, &source)
         })();
@@ -925,6 +933,18 @@ impl AppState {
             s.remove(local);
         }
         result?;
+        // Re-key the profile's carried sessions to this computer's browser cookie store while it is still closed
+        // and no launch can race us (ADR-0028). Best-effort: a cookie that cannot be carried is left for a fresh
+        // sign-in, and the label the user is shown (`portability_of`) only promises kept sign-ins for the OS pairs
+        // the runtime pipeline has measured.
+        if let Some(carried) = opened.meta.get("cookies.json") {
+            let report = crate::cookies::restore_portable(&dirs.user_data, carried);
+            self.events.emit_json(
+                SYNC,
+                json!({ "profile_id": local.as_str(), "job_id": job.id, "kind": "restore",
+                        "state": "sessions", "restored": report.restored, "skipped": report.skipped }),
+            );
+        }
         let _ = store.set_run_state(local, RunState::Stopped, Some(None));
         self.apply_restored_settings(store, local, opened);
         let snap = &opened.snapshot;

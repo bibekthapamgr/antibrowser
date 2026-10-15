@@ -1,6 +1,6 @@
 [package]
 name = "pb-desktop"
-version = "0.15.0"
+version = "0.16.0"
 description = "Desktop manager shell (Tauri 2). Renders only trusted, bundled manager UI; browsing happens in separate Chromium processes."
 edition.workspace = true
 rust-version.workspace = true
@@ -29,6 +29,17 @@ serde.workspace = true
 sha2.workspace = true
 hex.workspace = true
 serde_json.workspace = true
+getrandom.workspace = true
+# Cross-device session carry (ADR-0016): read/re-encrypt the profile's own Chromium cookie store. All audited
+# RustCrypto primitives; no cryptography is invented here (see src/cookies.rs).
+rusqlite.workspace = true
+zeroize = "1"
+aes = "=0.9.3"
+aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc"] }
+cbc = { version = "=0.2.1", features = ["alloc", "block-padding"] }
+pbkdf2 = { version = "=0.13.0", default-features = false, features = ["hmac"] }
+hmac = "=0.13.0"
+sha1 = "=0.11.0"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 # Plugins are used from Rust only. None of them is granted to the webview (see capabilities/default.json).
 tauri-plugin-deep-link = "2.6"
@@ -40,13 +51,16 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 url = "2"
 
+# Windows cookie key (ADR-0016): DPAPI wrap/unwrap of the per-profile Local State key.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
 [dev-dependencies]
 base64 = "0.22"
 pb-netproxy = { workspace = true, features = ["testing"] }
 pb-sync = { workspace = true, features = ["testing"] }
 pb-devtools = { workspace = true, features = ["testing"] }
 pb-update = { workspace = true, features = ["testing"] }
-rusqlite.workspace = true
 ed25519-dalek = "3"
 hex.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate"] }

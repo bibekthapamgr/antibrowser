@@ -582,6 +582,17 @@ function RuntimeSummary({
   const b = status.browser;
   const m = b.manifest;
   const installOp = status.operations.find((o) => o.kind === 'install_runtime' && o.status === 'running');
+  const installing = Boolean(installOp) || b.installing;
+  const progress = installOp?.progress ?? undefined;
+  // A browser of some version is already installed, but the pinned one is newer: an automatic update.
+  const updating = status.installations.some((r) => r.status === 'verified');
+  const note = m && (
+    <p className="muted small">
+      {m.distribution} {m.version}, {m.channel}. The download is checked against a signed list before it is
+      used.
+      {m.customer_distribution ? '' : ' Internal testing build: not for customers.'}
+    </p>
+  );
   return (
     <>
       {b.configured ? (
@@ -607,35 +618,42 @@ function RuntimeSummary({
           <span className="warn">Not available for this computer.</span> This build has no browser for this
           system.
         </p>
+      ) : installing ? (
+        <div className="stack">
+          <p role="status">
+            {updating ? `Updating the browser to ${m?.version}…` : 'Installing the browser…'} This happens
+            automatically; you do not need to do anything.
+          </p>
+          <progress
+            aria-label={updating ? 'Updating the browser' : 'Installing the browser'}
+            value={progress}
+            max={1}
+          />
+        </div>
       ) : (
         <div className="stack">
           <p>
-            <span className="warn">Not installed yet.</span> Profiles open once the browser is installed.
+            {updating ? (
+              <>
+                <span className="warn">A newer browser is available.</span> {m?.version} installs
+                automatically; a profile that is open keeps its current browser until it is closed.
+              </>
+            ) : (
+              <>
+                <span className="warn">Setting up the browser.</span> It installs automatically
+                {m?.size_bytes ? ` (${formatBytes(m.size_bytes)} download)` : ''} — the next time you open a
+                profile, or in the background now. Profiles open as soon as it is ready.
+              </>
+            )}
           </p>
-          {installOp || b.installing ? (
-            <progress aria-label="Installing the browser" value={installOp?.progress ?? undefined} max={1} />
-          ) : (
-            m && (
-              <button
-                type="button"
-                className="pb-button"
-                data-variant="primary"
-                onClick={() => onInstall(m.version)}
-              >
-                Install browser {m.version}
-                {m.size_bytes ? ` (${formatBytes(m.size_bytes)} download)` : ''}
-              </button>
-            )
+          {m && (
+            <button type="button" className="pb-button" onClick={() => onInstall(m.version)}>
+              {updating ? 'Update now' : 'Install now'}
+            </button>
           )}
         </div>
       )}
-      {m && (
-        <p className="muted small">
-          {m.distribution} {m.version}, {m.channel}. The download is checked against a signed list before it
-          is used.
-          {m.customer_distribution ? '' : ' Internal testing build: not for customers.'}
-        </p>
-      )}
+      {note}
     </>
   );
 }

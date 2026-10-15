@@ -4,7 +4,10 @@ name: runtime pipeline
 #   resolve      current Chrome for Testing stable version and download URLs (Windows x64, macOS arm64, Linux x64)
 #   compat       download + install with the manager's own installer, then run the real-browser compatibility test
 #                set on each OS (storage isolation, restart, crash, double launch, no debug endpoint, ten cycles)
-#   portability  restore each OS's signed-in profile on fresh runners of every OS (cookie encryption included)
+#   portability  restore each OS's signed-in profile on fresh runners of every OS, measuring cross-device session
+#                survival (ADR-0028): the profile's own sessions are carried inside the encrypted snapshot and
+#                re-keyed to the destination's browser cookie store. The matrix report fails on any `supported`
+#                label whose session did not actually survive, so a mislabelled OS pair turns the run red.
 #   manifest     only after every platform passed: build runtimes/manifest.json, sign it with the owner's key
 #                (secret RUNTIME_MANIFEST_SIGNING_KEY), verify, and publish it as an artifact to commit
 #
@@ -140,7 +143,7 @@ jobs:
           cat "$RUNNER_TEMP/upgrade-fixture.log"
           [ "$status" -eq 0 ] || exit "$status"
           grep -q "::notice title=upgrade fixture::" "$RUNNER_TEMP/upgrade-fixture.log" || { echo "::error::the upgrade fixture did not run"; exit 1; }
-      - name: Portability spike, source side (sign in, close, copy; restore on this machine)
+      - name: Portability spike, source side (sign in, close, seal with carried sessions; restore on this machine)
         shell: bash
         env:
           PB_TEST_BROWSER_REQUIRED: "1"

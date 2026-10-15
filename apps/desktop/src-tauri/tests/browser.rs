@@ -950,7 +950,7 @@ fn portability_spike() {
             .unwrap_or_else(|e| panic!("{e}"));
         let fresh = dirs.root.join("user-data.incoming");
         std::fs::create_dir_all(&fresh).unwrap_or_else(|e| panic!("{e}"));
-        pb_seal::open_profile(
+        let unpacked = pb_seal::open_profile(
             &sealed,
             &key,
             &binding,
@@ -963,6 +963,12 @@ fn portability_spike() {
         std::fs::remove_dir_all(&dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
         std::fs::rename(fresh.join("user-data"), &dirs.user_data).unwrap_or_else(|e| panic!("{e}"));
         let _ = std::fs::remove_dir_all(&fresh);
+        // Re-key the carried sessions to this computer's browser cookie store (ADR-0028), exactly as a real restore
+        // does, before the profile is launched.
+        if let Some(carried) = unpacked.meta.get("cookies.json") {
+            let report = pb_desktop_lib::cookies::restore_portable(&dirs.user_data, carried);
+            eprintln!("portability cookie carry ({who}): {report:?}");
+        }
         let r = env.visit(&target, "read", who, "-");
         env.close(&target);
         r
@@ -1011,9 +1017,25 @@ fn portability_spike() {
             let key = pb_seal::SealKey::generate().unwrap_or_else(|e| panic!("{e}"));
             std::fs::write(dir.join("key.b64"), key.to_base64().as_bytes())
                 .unwrap_or_else(|e| panic!("{e}"));
+            // Carry the profile's own stored sessions inside the encrypted snapshot (ADR-0028), as a workspace
+            // backup does. Decrypted with this computer's browser cookie key; sealed under the snapshot key.
+            let carried = pb_desktop_lib::cookies::collect_portable(&env.user_data(&source));
+            let members: Vec<pb_seal::Member> = carried
+                .as_deref()
+                .map(|c| {
+                    vec![pb_seal::Member {
+                        name: "cookies.json",
+                        bytes: c,
+                    }]
+                })
+                .unwrap_or_default();
+            eprintln!(
+                "portability cookie carry (seal): {} cookie member(s)",
+                members.len()
+            );
             let outcome = pb_seal::seal_profile(
                 &env.user_data(&source),
-                &[],
+                &members,
                 &key,
                 &binding,
                 &sealed,
@@ -1054,10 +1076,21 @@ fn portability_spike() {
             let source = meta["platform"].as_str().unwrap_or("unknown").to_owned();
             let r = restore_and_read("p-other");
             let result = summarize(&source, false, &r);
-            // Another machine is labelled "sign-in required": site data must be back (the label's promise).
-            assert_eq!(result["label"], json!("sign_in_required"), "{result}");
+            // Site data must be back on any other-machine restore (both labels promise it).
             assert_eq!(result["local_storage"], json!(true), "{result}");
             assert_eq!(result["indexeddb"], json!(true), "{result}");
+            // The label must never promise more than survived (ADR-0028). A `supported` cross-device restore means
+            // the session was carried and re-keyed here, so the cookie MUST be back; `sign_in_required` promises
+            // only site data. This is the same honesty rule the portability-matrix report enforces.
+            match result["label"].as_str() {
+                Some("supported") => assert_eq!(
+                    result["cookie"],
+                    json!(true),
+                    "a supported cross-device label must keep the session: {result}"
+                ),
+                Some("sign_in_required") => {}
+                other => panic!("unexpected other-machine label {other:?}: {result}"),
+            }
             eprintln!("portability (other machine): {result}");
             let out = std::env::var("PB_PORTABILITY_RESULT")
                 .unwrap_or_else(|_| panic!("PB_PORTABILITY_RESULT"));

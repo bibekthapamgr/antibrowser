@@ -312,6 +312,7 @@ impl AppState {
         store: &Arc<LocalStore>,
         id: &ProfileId,
         start_url: Option<&str>,
+        existing_op: Option<String>,
     ) -> Result<Started, IpcError> {
         if let Some(op) = self
             .team
@@ -335,7 +336,8 @@ impl AppState {
         {
             return Err(ipc::SESSION_ENDED);
         }
-        let op = self.ops.start(OpKind::LaunchProfile, Some(id.to_string()));
+        let op = existing_op
+            .unwrap_or_else(|| self.ops.start(OpKind::LaunchProfile, Some(id.to_string())));
         if let Ok(mut m) = self.team.opening.lock() {
             m.insert(id.clone(), op.clone());
         }

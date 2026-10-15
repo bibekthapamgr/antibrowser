@@ -83,6 +83,7 @@ fn source(p: &Path) -> Source<'_> {
     Source {
         user_data: p,
         settings_json: Some(br#"{"start_urls":["https://example.test/"]}"#),
+        portable_cookies: None,
         platform: "linux-x64",
         browser_version: "155.0.8059.39",
         app_version: "0.7.0",

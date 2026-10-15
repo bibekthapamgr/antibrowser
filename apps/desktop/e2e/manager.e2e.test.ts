@@ -880,12 +880,17 @@ describe('profile lifecycle (milestone 03)', () => {
     await page.close();
   });
 
-  it('installs the approved browser with progress, then profiles can open', async () => {
+  it('installs the approved browser automatically, with progress, then profiles can open', async () => {
     const page = await open('noruntime');
     await goTo(page, 'Downloads and updates');
-    const install = await page.waitForSelector('button[data-variant=primary]');
-    expect(await install?.evaluate((b) => b.textContent)).toMatch(/Install browser \d+/);
-    await install?.click();
+    // No manual "download the browser" step: the browser installs itself and the screen shows progress,
+    // then reports it is ready.
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.card')?.textContent?.includes('installs automatically') ||
+        document.querySelector('.card progress') !== null,
+      { timeout: 10_000 },
+    );
     await page.waitForFunction(() => document.querySelector('.card')?.textContent?.includes('Ready'), {
       timeout: 10_000,
     });

@@ -177,6 +177,20 @@ describe('teams', () => {
     await page.close();
   });
 
+  it('revisiting an accepted invitation shows a friendly confirmation, not an error', async () => {
+    const page = await open('joined', `#/invite/${TOKEN}`);
+    await heading(page, 'You’re already a member of Demo Agency');
+    const body = await text(page);
+    expect(body).toContain('already been accepted');
+    expect(body).not.toContain('cannot be used');
+    expect(body).not.toContain('already used');
+    // The red error styling is not used; a primary "Open" action continues into the workspace.
+    expect(await page.$('main .error')).toBeNull();
+    await click(page, 'Open Demo Agency');
+    await heading(page, 'Demo Agency');
+    await page.close();
+  });
+
   it('inviting previews exactly the chosen profiles before sending', async () => {
     const page = await open('signedin', '#/team');
     await heading(page, 'Team');
@@ -230,6 +244,12 @@ const SCREENS: { name: string; demo: string; hash: string; ready: string }[] = [
   { name: 'portal-team', demo: 'signedin', hash: '#/team', ready: 'Sam Operator' },
   { name: 'portal-account', demo: 'signedin', hash: '#/account', ready: 'Office PC' },
   { name: 'portal-invite', demo: 'invite', hash: `#/invite/${TOKEN}`, ready: 'Join Demo Agency' },
+  {
+    name: 'portal-invite-already-member',
+    demo: 'joined',
+    hash: `#/invite/${TOKEN}`,
+    ready: 'already a member',
+  },
 ];
 
 for (const dark of [false, true]) {

@@ -365,10 +365,12 @@ export function Invitation(props: {
   const { api, token } = props;
   const back = `/app/#/invite/${token}`;
   const [preview, setPreview] = useState<{
+    org_id: string;
     org_name: string;
     role: keyof typeof ROLE_NAME;
     status: string;
     for_this_account: boolean;
+    already_member: boolean;
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -401,6 +403,23 @@ export function Invitation(props: {
       </Card>
     );
   if (!preview) return <Loading />;
+  // This account has already accepted the invitation / is already in the workspace: there is nothing left to
+  // do, so confirm it and offer to continue instead of showing an error.
+  if (preview.already_member && preview.for_this_account)
+    return (
+      <Card>
+        <h1>You’re already a member of {preview.org_name}</h1>
+        <p role="status">
+          This invitation has already been accepted with this account, so there’s nothing more to do. The
+          profiles shared with you open in the desktop app.
+        </p>
+        <div className="actions">
+          <button type="button" className="primary" onClick={() => props.onJoined(preview.org_id)}>
+            Open {preview.org_name}
+          </button>
+        </div>
+      </Card>
+    );
   if (preview.status !== 'open')
     return (
       <Card>

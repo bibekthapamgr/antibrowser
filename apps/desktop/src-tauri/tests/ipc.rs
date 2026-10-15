@@ -1154,10 +1154,7 @@ fn runtime_installs_only_from_the_signed_manifest() {
         },
     );
     let known = workspace_with_profile(&f);
-    assert_eq!(
-        code(&invoke(&f, "launch_profile", json!({ "profileId": known }))).as_deref(),
-        Some("RUNTIME_NOT_INSTALLED")
-    );
+    // Before anything is installed: the signed manifest verifies, but no browser is configured yet.
     let rs = invoke(&f, "get_runtime_status", json!({})).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         rs["browser"]["manifest_status"]["status"],
@@ -1167,6 +1164,9 @@ fn runtime_installs_only_from_the_signed_manifest() {
         rs["browser"]["manifest"]["customer_distribution"],
         json!(false)
     );
+    assert_eq!(rs["browser"]["configured"], json!(false));
+    assert_eq!(rs["browser"]["error"], json!("RUNTIME_NOT_INSTALLED"));
+    // Only the pinned version may be installed by hand; any other is refused.
     assert_eq!(
         code(&invoke(
             &f,
@@ -1176,12 +1176,10 @@ fn runtime_installs_only_from_the_signed_manifest() {
         .as_deref(),
         Some("RUNTIME_NOT_IN_MANIFEST")
     );
-    let op = invoke(
-        &f,
-        "install_runtime",
-        json!({ "version": TEST_BROWSER_VERSION }),
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
+    // Launching a profile when the pinned browser is missing installs it automatically and then opens the
+    // profile, all under one operation — no manual "download the browser" step.
+    let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
     let rs = invoke(&f, "get_runtime_status", json!({})).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
@@ -1192,10 +1190,6 @@ fn runtime_installs_only_from_the_signed_manifest() {
         (json!(true), json!("manifest"))
     );
     assert_eq!(rs["installations"][0]["status"], json!("verified"));
-
-    let op = invoke(&f, "launch_profile", json!({ "profileId": known }))
-        .unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
     let exe = f
         .launcher
         .last_executable
@@ -1268,6 +1262,44 @@ fn a_revoked_runtime_is_neither_installed_nor_opened() {
     let p = invoke(&f, "get_profile_status", json!({ "profileId": known }))
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(p["profile"]["name"], json!("Known"));
+}
+
+/// The runtime worker installs the pinned browser by itself when it is missing (no manual step), keeping the
+/// signed verification.
+#[test]
+fn the_runtime_worker_installs_the_pinned_browser_automatically() {
+    let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    let (zip_path, sha, size) = runtime_zip(tmp.path());
+    let (manifest, keys) = signed_manifest(&sha, size);
+    let f = fixture_with(
+        tmp,
+        Arc::new(FakeProcesses::default()),
+        Options {
+            manifest,
+            trusted_keys: keys,
+            dev_browser: false,
+            archive: Some(zip_path),
+        },
+    );
+    let _known = workspace_with_profile(&f);
+    let rs = invoke(&f, "get_runtime_status", json!({})).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rs["browser"]["configured"], json!(false));
+    // Starting the worker ensures the pinned browser is installed in the background.
+    f.state.start_runtime_worker();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let rs = invoke(&f, "get_runtime_status", json!({})).unwrap_or_else(|e| panic!("{e}"));
+        if rs["browser"]["configured"] == json!(true) {
+            assert_eq!(rs["browser"]["source"], json!("manifest"));
+            assert_eq!(rs["installations"][0]["status"], json!("verified"));
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the runtime worker did not install the browser automatically"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[test]

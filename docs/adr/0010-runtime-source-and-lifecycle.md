@@ -87,6 +87,24 @@ The product owner chose Chrome for Testing for the internal alpha (2026-10-12).
 `apps/desktop/src-tauri/tests/{ipc,browser}.rs`, runtime pipeline runs (docs/runtime-pipeline.md,
 docs/isolation-evidence.md, docs/portability-matrix.md).
 
+## Update — automatic install and update (2026-10-16)
+The manager no longer asks the person to start the runtime download by hand. The verification, pinned size, signed
+manifest, revocation and downgrade rules above are all kept unchanged; only *when* the verified install runs changed:
+- **Install on first use.** A background runtime worker (`AppState::start_runtime_worker`, started from the shell
+  setup) ensures the pinned runtime is installed shortly after start. Opening a profile while it is still missing no
+  longer errors `RUNTIME_NOT_INSTALLED`: the launch operation downloads and installs the pinned runtime (or waits for
+  an install already in progress) and then opens, with progress shown on that operation
+  (`launch_when_runtime_ready` → `ensure_runtime_installed`). A single in-flight install is enforced by the existing
+  `installing` guard; a stalled download surfaces as a failed launch rather than a silent hang.
+- **Update on next safe moment.** When a manager release pins a newer engine, the worker installs it automatically —
+  but only while no profile is open, so no profile's engine is swapped underneath it; it retries on its interval once
+  profiles are closed. The one-way engine upgrade still takes a last-good copy at launch (point 9) and still refuses to
+  open a profile with an older engine than last wrote it (point 5).
+- **Gate unchanged.** `customer_distribution` stays the owner-side release gate (point 2 / the `runtime_eligibility`
+  preflight); automatic install is only the download/install flow becoming hands-free for builds where it is allowed,
+  and the "Internal testing build: not for customers" label is unchanged. The manual install control remains as an
+  optional "Install now"/"Update now" affordance on the Downloads and updates screen.
+
 ## Revisit when
 Before team beta/paid launch (gate 2), when CfT terms change, or if the pipeline shows the pinned runtime more than one
 stable release behind for more than 7 days.

@@ -254,7 +254,7 @@ export function WorkspaceProfiles(props: {
       const r = await backend.sync.openWorkspaceProfile(orgId, p.id, p.name);
       notify(
         r.restoring
-          ? `Downloading ${p.name} to this computer. It opens when the download finishes; websites may ask you to sign in again.`
+          ? `Downloading ${p.name} to this computer. It opens when the download finishes.`
           : `Opening ${p.name}…`,
       );
       reload();

@@ -34,6 +34,7 @@ use pb_runtime::{
 use pb_storage::LocalStore;
 use pb_storage::RuntimeInstallation;
 use pb_storage::runs::{ProcessRun, RunOutcome};
+use pb_update::RuntimeManifest;
 use pb_update::install::{FsSpace, InstallError, Installer};
 use serde::Serialize;
 use serde_json::json;
@@ -50,6 +51,13 @@ pub const WARN_FREE_BYTES: u64 = 256 * 1024 * 1024;
 pub const BACKUP_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 /// How long a launch waits for a cancelled routine backup to release the profile.
 pub const BACKUP_CANCEL_WAIT: Duration = Duration::from_secs(5);
+/// The runtime worker ensures the pinned browser is installed shortly after start, then re-checks on this
+/// interval (so a deferred engine upgrade is applied once profiles are closed).
+pub const RUNTIME_FIRST_CHECK_DELAY: Duration = Duration::from_secs(2);
+pub const RUNTIME_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// A launch that is waiting for an install already in progress gives up after this long (a stalled download
+/// surfaces as a failed launch rather than a silent hang).
+pub const RUNTIME_INSTALL_WAIT: Duration = Duration::from_secs(600);
 
 /// A background backup in progress (routine after a clean close, or requested with `backup_now`).
 pub struct BackupJob {
@@ -106,11 +114,63 @@ impl AppState {
                 return Ok(started);
             }
         }
+        // The pinned browser installs itself on first use: if it is not installed yet (but the signed manifest
+        // names one for this computer and it is not revoked), download and install it, then open — all on a
+        // background thread, so the click returns at once and the person sees install progress on the launch
+        // operation instead of being sent to a screen to start it by hand.
+        if self.runtime_installable(&store) {
+            return self.launch_when_runtime_ready(profile_id, start_url);
+        }
         // Milestone 08: an organization profile opens through a session lease (one writer per profile).
         if store.sync_link(profile_id)?.is_some() {
-            return self.launch_shared(&store, profile_id, start_url);
+            return self.launch_shared(&store, profile_id, start_url, None);
         }
         self.launch_local(profile_id, start_url, None)
+    }
+
+    /// True when the pinned runtime simply is not installed yet but can be (the manifest is verified, this
+    /// computer is supported and the archive is not revoked). Unavailable/revoked/dev-override states are not
+    /// "installable" and keep their own errors.
+    fn runtime_installable(&self, store: &LocalStore) -> bool {
+        matches!(self.resolve_runtime(store), Err(e) if e.code == ipc::RUNTIME_NOT_INSTALLED.code)
+    }
+
+    /// Starts a launch operation that first installs the pinned runtime (or waits for an install already in
+    /// progress) and then opens the profile, reusing the same operation throughout. Never blocks the caller.
+    fn launch_when_runtime_ready(
+        self: &Arc<Self>,
+        profile_id: &ProfileId,
+        start_url: Option<&str>,
+    ) -> Result<Started, IpcError> {
+        let op = self
+            .ops
+            .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
+        let this = self.clone();
+        let id = profile_id.clone();
+        let url = start_url.map(str::to_owned);
+        let op_id = op.clone();
+        std::thread::spawn(move || match this.ensure_runtime_installed(&op_id) {
+            Ok(()) => {
+                let store = match this.store() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        this.ops.fail(&op_id, e.code, e.message);
+                        return;
+                    }
+                };
+                let result = if store.sync_link(&id).ok().flatten().is_some() {
+                    this.launch_shared(&store, &id, url.as_deref(), Some(op_id.clone()))
+                } else {
+                    this.launch_local(&id, url.as_deref(), Some(op_id.clone()))
+                };
+                if let Err(e) = result {
+                    this.ops.fail(&op_id, e.code, e.message);
+                    this.notify_running_changed();
+                }
+            }
+            Err((code, message)) => this.ops.fail(&op_id, code, message),
+        });
+        Ok(Started { operation_id: op })
     }
 
     /// A repeated click while starting/running creates no second run: the running start's operation.
@@ -916,6 +976,7 @@ impl AppState {
 
     // ------------------------------------------------------------------------- runtime install
     /// Downloads, verifies and installs the runtime pinned in the signed manifest (`runtime.install(version)`).
+    /// The automatic flows (`ensure_runtime_installed`, the runtime worker) share the same verified core.
     pub fn install_runtime(self: &Arc<Self>, version: &str) -> Result<Started, IpcError> {
         let manifest = self.manifest.clone().ok_or(ipc::RUNTIME_UNAVAILABLE)?;
         if manifest.runtime.version != version {
@@ -928,7 +989,7 @@ impl AppState {
         if self.runtime_revoked(&artifact.sha256) {
             return Err(ipc::RUNTIME_REVOKED);
         }
-        let store = self.store()?;
+        let _store = self.store()?;
         if self.installing.swap(true, Ordering::SeqCst) {
             return Err(ipc::INSTALL_IN_PROGRESS);
         }
@@ -939,38 +1000,51 @@ impl AppState {
         let op_id = op.clone();
         let version = version.to_owned();
         std::thread::spawn(move || {
-            let cancel = Arc::new(AtomicBool::new(false));
-            let result = this
-                .runtime
-                .fetcher
-                .source(&artifact.url, artifact.size_bytes, cancel)
-                .map_err(|e| InstallError::Download(e.to_string()))
-                .and_then(|source| {
-                    let installer = Installer {
-                        root: this.paths.runtimes.clone(),
-                        space: &FsSpace,
-                    };
-                    let mut last = 0.0f32;
-                    installer.install(source.as_ref(), &artifact, &version, &mut |p| {
-                        let fraction = match p.stage {
-                            pb_update::install::Stage::Downloading
-                            | pb_update::install::Stage::Copying => {
-                                0.8 * p.done as f32 / p.total.max(1) as f32
-                            }
-                            pb_update::install::Stage::Verifying => 0.8,
-                            pb_update::install::Stage::Extracting => {
-                                0.8 + 0.18 * p.done as f32 / p.total.max(1) as f32
-                            }
-                            pb_update::install::Stage::Finalizing => 0.99,
-                        };
-                        if fraction - last >= 0.01 {
-                            last = fraction;
-                            this.ops.progress(&op_id, fraction);
-                        }
-                    })
-                });
+            let op_for_progress = op_id.clone();
+            let result = this.install_pinned_runtime(&manifest, &artifact, &version, &mut |f| {
+                this.ops.progress(&op_for_progress, f);
+            });
             match result {
-                Ok(installed) => {
+                Ok(()) => this.ops.succeed(&op_id),
+                Err(e) => this.ops.fail(&op_id, e.code(), runtime_install_message(&e)),
+            }
+            this.installing.store(false, Ordering::SeqCst);
+        });
+        Ok(Started { operation_id: op })
+    }
+
+    /// The verified install core: download → size/SHA-256 → safe extraction → executable/codesign checks →
+    /// atomic publish, then record the installation. `progress` receives a 0..1 fraction. The caller owns the
+    /// `installing` guard. The signature/hash verification, pinned size and distribution gate are all applied
+    /// by the installer and the manifest; this method never widens them.
+    fn install_pinned_runtime(
+        self: &Arc<Self>,
+        manifest: &RuntimeManifest,
+        artifact: &pb_update::RuntimeArtifact,
+        version: &str,
+        progress: &mut dyn FnMut(f32),
+    ) -> Result<(), InstallError> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let source = self
+            .runtime
+            .fetcher
+            .source(&artifact.url, artifact.size_bytes, cancel)
+            .map_err(|e| InstallError::Download(e.to_string()))?;
+        let installer = Installer {
+            root: self.paths.runtimes.clone(),
+            space: &FsSpace,
+        };
+        let mut last = 0.0f32;
+        let result = installer.install(source.as_ref(), artifact, version, &mut |p| {
+            let fraction = install_fraction(&p);
+            if fraction - last >= 0.01 {
+                last = fraction;
+                progress(fraction);
+            }
+        });
+        match result {
+            Ok(installed) => {
+                if let Ok(store) = self.store() {
                     let _ = store.upsert_runtime(&RuntimeInstallation {
                         version: installed.version.clone(),
                         platform: installed.platform.clone(),
@@ -988,34 +1062,157 @@ impl AppState {
                         None,
                         Some(&installed.version),
                     );
-                    this.ops.succeed(&op_id);
                 }
-                Err(e) => {
-                    let _ = store.audit(None, "runtime_install", "failed", None, Some(e.code()));
-                    let message = match &e {
-                        InstallError::InsufficientSpace { .. } => {
-                            "Not enough disk space to install the browser."
-                        }
-                        InstallError::Quarantined { .. } => {
-                            "The download did not match the approved browser and was quarantined."
-                        }
-                        InstallError::SignatureCheckFailed => {
-                            "The browser's code signature did not verify; it was quarantined."
-                        }
-                        InstallError::Download(_) => {
-                            "The browser could not be downloaded. Check your connection."
-                        }
-                        InstallError::InProgress => {
-                            "An earlier install was interrupted. Discard it on this screen, then try again."
-                        }
-                        _ => "The browser could not be installed.",
-                    };
-                    this.ops.fail(&op_id, e.code(), message);
-                }
+                Ok(())
             }
-            this.installing.store(false, Ordering::SeqCst);
+            Err(e) => {
+                if let Ok(store) = self.store() {
+                    let _ = store.audit(None, "runtime_install", "failed", None, Some(e.code()));
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Ensures the pinned runtime is installed before a launch continues: returns at once if it already
+    /// resolves, waits for an install already running, or starts one and blocks until it finishes. Progress is
+    /// reported onto `op_id`. On failure it returns a stable (code, message) for the launch operation. Blocks,
+    /// so it must be called from a worker thread, never a command handler.
+    fn ensure_runtime_installed(
+        self: &Arc<Self>,
+        op_id: &str,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let err = |e: IpcError| (e.code, e.message);
+        let store = self.store().map_err(err)?;
+        match self.resolve_runtime(&store) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.code == ipc::RUNTIME_NOT_INSTALLED.code => {}
+            Err(e) => return Err(err(e)),
+        }
+        let manifest = self.manifest.clone().ok_or(err(ipc::RUNTIME_UNAVAILABLE))?;
+        let artifact = manifest
+            .artifact_for(platform())
+            .cloned()
+            .ok_or(err(ipc::RUNTIME_UNAVAILABLE))?;
+        if self.runtime_revoked(&artifact.sha256) {
+            return Err(err(ipc::RUNTIME_REVOKED));
+        }
+        // One install at a time: if the worker or another launch is already installing, wait for it rather than
+        // starting a second download, then report what the shared install left behind.
+        if self.installing.swap(true, Ordering::SeqCst) {
+            self.ops.progress(op_id, 0.02);
+            self.wait_for_install();
+            let store = self.store().map_err(err)?;
+            return match self.resolve_runtime(&store) {
+                Ok(_) => Ok(()),
+                Err(e) if e.code == ipc::RUNTIME_NOT_INSTALLED.code => {
+                    Err(err(ipc::RUNTIME_NOT_INSTALLED))
+                }
+                Err(e) => Err(err(e)),
+            };
+        }
+        // Acquired the guard; it may have finished between the first check and here.
+        if self.resolve_runtime(&store).is_ok() {
+            self.installing.store(false, Ordering::SeqCst);
+            return Ok(());
+        }
+        let version = manifest.runtime.version.clone();
+        let op_for_progress = op_id.to_owned();
+        let this = self.clone();
+        let result = self.install_pinned_runtime(&manifest, &artifact, &version, &mut |f| {
+            this.ops.progress(&op_for_progress, f);
         });
-        Ok(Started { operation_id: op })
+        self.installing.store(false, Ordering::SeqCst);
+        result.map_err(|e| (e.code(), runtime_install_message(&e)))
+    }
+
+    /// Waits (bounded) for the current install to release the `installing` guard.
+    fn wait_for_install(&self) {
+        let deadline = Instant::now() + RUNTIME_INSTALL_WAIT;
+        while self.installing.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The runtime maintenance worker: shortly after start, and then periodically, installs the pinned browser
+    /// automatically when it is missing, and applies a newer pinned engine when it is safe to do so. An engine
+    /// upgrade is never applied while a profile is open (ADR-0010 takes a last-good copy at launch and never
+    /// swaps the engine under a running profile); it is applied at the next moment no profile is open. First-run
+    /// installs have no running profile and proceed immediately.
+    pub fn start_runtime_worker(self: &Arc<Self>) {
+        // Dev/test overrides serve their own browser; builds without a verified manifest install nothing.
+        if self.runtime.dev_override.is_some() || self.manifest.is_none() {
+            return;
+        }
+        let this = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(RUNTIME_FIRST_CHECK_DELAY);
+            loop {
+                this.auto_maintain_runtime();
+                std::thread::sleep(RUNTIME_CHECK_INTERVAL);
+            }
+        });
+    }
+
+    fn auto_maintain_runtime(self: &Arc<Self>) {
+        let Ok(store) = self.store() else { return };
+        match self.resolve_runtime(&store) {
+            // Pinned runtime already installed and current.
+            Ok(_) => return,
+            // Missing (first run) or an older version installed (pending upgrade): installable.
+            Err(e) if e.code == ipc::RUNTIME_NOT_INSTALLED.code => {}
+            // Unavailable or revoked: nothing to install automatically.
+            Err(_) => return,
+        }
+        let Some(manifest) = self.manifest.as_ref() else {
+            return;
+        };
+        // When some engine is already installed this is an upgrade to a newer pinned version: only apply it
+        // when no profile is open, so no profile's engine is swapped underneath it.
+        let is_upgrade = store
+            .list_runtimes()
+            .map(|rs| {
+                rs.iter()
+                    .any(|r| r.platform == platform() && r.status == "verified")
+            })
+            .unwrap_or(false);
+        if is_upgrade && self.supervisor.running_count() > 0 {
+            return;
+        }
+        if self.installing.load(Ordering::SeqCst) {
+            return;
+        }
+        let _ = self.install_runtime(&manifest.runtime.version.clone());
+    }
+}
+
+/// Install progress as a 0..1 fraction (download 0..0.8, verify 0.8, extract 0.8..0.98, finalize 0.99).
+fn install_fraction(p: &pb_update::install::Progress) -> f32 {
+    match p.stage {
+        pb_update::install::Stage::Downloading | pb_update::install::Stage::Copying => {
+            0.8 * p.done as f32 / p.total.max(1) as f32
+        }
+        pb_update::install::Stage::Verifying => 0.8,
+        pb_update::install::Stage::Extracting => 0.8 + 0.18 * p.done as f32 / p.total.max(1) as f32,
+        pb_update::install::Stage::Finalizing => 0.99,
+    }
+}
+
+/// A fixed, user-safe message for a failed runtime install (paths and OS text stay in the local log).
+fn runtime_install_message(e: &InstallError) -> &'static str {
+    match e {
+        InstallError::InsufficientSpace { .. } => "Not enough disk space to install the browser.",
+        InstallError::Quarantined { .. } => {
+            "The download did not match the approved browser and was quarantined."
+        }
+        InstallError::SignatureCheckFailed => {
+            "The browser's code signature did not verify; it was quarantined."
+        }
+        InstallError::Download(_) => "The browser could not be downloaded. Check your connection.",
+        InstallError::InProgress => {
+            "An earlier install was interrupted. Discard it on the Downloads and updates screen, then try again."
+        }
+        _ => "The browser could not be installed.",
     }
 }
 

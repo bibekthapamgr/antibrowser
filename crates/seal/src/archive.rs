@@ -52,8 +52,14 @@ pub const EXCLUDED_FILES: &[&str] = &[
 /// File name suffixes excluded (the manager's own temporary files).
 pub const EXCLUDED_SUFFIXES: &[&str] = &[".pb-tmp"];
 
-/// Metadata members an archive may carry.
-pub const META_NAMES: &[&str] = &["snapshot.json", "settings.json", "backup.json"];
+/// Metadata members an archive may carry. `cookies.json` (ADR-0028) holds a workspace profile's own stored website
+/// sessions re-keyed for cross-device restore; it is only ever written inside the encrypted container, never to disk.
+pub const META_NAMES: &[&str] = &[
+    "snapshot.json",
+    "settings.json",
+    "backup.json",
+    "cookies.json",
+];
 pub const MAX_META_BYTES: u64 = 1 << 20;
 const USER_DATA: &str = "user-data";
 const META: &str = "meta";

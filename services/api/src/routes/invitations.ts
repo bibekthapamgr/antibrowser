@@ -269,23 +269,33 @@ export function invitationRoutes(app: App, deps: Deps): void {
       await hit(deps.pool, LIMITS.acceptPerIp, req.ip);
       return withTx(deps.pool, { orgId: null, userId: principal.userId }, async (c) => {
         const { rows } = await c.query<{
+          org_id: string;
           org_name: string;
           email: string;
           role: Exclude<Role, 'owner'>;
           expires_at: Date;
           status: 'open' | 'accepted' | 'expired' | 'revoked';
-        }>('select org_name, email, role, expires_at, status from app.invitation_by_token($1)', [
+        }>('select org_id, org_name, email, role, expires_at, status from app.invitation_by_token($1)', [
           sha256Hex(req.params.token),
         ]);
         const inv = rows[0];
         if (!inv) throw new ApiError('NOT_FOUND', 'Invitation not found');
         const me = await currentUser(c, principal.userId);
+        // Is the signed-in account already in this workspace? If so the link has nothing left to do and the
+        // portal shows a friendly "you're already a member" confirmation rather than a red error. This is a
+        // read only: it never joins the caller to the workspace.
+        const member = await c.query('select 1 from memberships where org_id = $1 and user_id = $2', [
+          inv.org_id,
+          principal.userId,
+        ]);
         return {
+          org_id: inv.org_id,
           org_name: inv.org_name,
           role: inv.role,
           expires_at: new Date(inv.expires_at).toISOString(),
           status: inv.status,
           for_this_account: me.email_verified && me.email === inv.email,
+          already_member: (member.rowCount ?? 0) > 0,
         };
       });
     },

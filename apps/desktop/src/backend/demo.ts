@@ -788,6 +788,32 @@ export function demoBackend(requested = ''): Backend {
     emit('operation', { ...op });
     changed();
   };
+  /**
+   * Milestone 03/12 (demo): the pinned browser installs itself — mirrors the desktop runtime worker and the
+   * install-on-first-launch flow. `onReady` runs once the install succeeds (used to open a profile that was
+   * launched before the browser was ready). Starting a second install while one runs just reuses it.
+   */
+  const startRuntimeInstall = (onReady?: () => void): Operation => {
+    const existing = ops.find((o) => o.kind === 'install_runtime' && o.status === 'running');
+    if (existing) return existing;
+    installing = true;
+    const op = startOp('install_runtime', RUNTIME_VERSION);
+    let progress = 0;
+    const timer = setInterval(() => {
+      progress = Math.min(1, progress + 0.2);
+      if (progress < 1) {
+        Object.assign(op, { progress });
+        emit('operation', { ...op });
+        return;
+      }
+      clearInterval(timer);
+      installing = false;
+      runtimeInstalled = true;
+      finish(op, { status: 'succeeded', progress: 1 });
+      onReady?.();
+    }, 250);
+    return op;
+  };
   /** The manager's own updates (milestone 12; demo-updates.ts). */
   const updates = demoUpdates({
     mode,
@@ -1786,11 +1812,17 @@ export function demoBackend(requested = ''): Backend {
         if (p.state === 'stopping')
           throw err('PROFILE_STOPPING', 'This profile is still closing. Try again when it has closed.');
         if (p.state === 'recovering') throw E.PROFILE_BUSY;
-        if (!runtimeInstalled)
-          throw err(
-            'RUNTIME_NOT_INSTALLED',
-            'The browser is not installed yet. Install it from Downloads and updates.',
-          );
+        if (!runtimeInstalled) {
+          // The pinned browser installs itself on first use: start (or join) the install and open the profile
+          // once it is ready, under one launch operation — never a "go and install it yourself" error.
+          const op = startOp('launch_profile', pid);
+          launchOps.set(pid, op);
+          startRuntimeInstall(() => {
+            launchOps.delete(pid);
+            void backend.profiles.launch(pid);
+          });
+          return { operation_id: op.operation_id };
+        }
         const px = proxies.find((x) => x.id === p.proxy_id);
         if (px?.login_missing) throw E.PROXY_CREDENTIALS_MISSING;
         if (px && addressClass(px.host) === 'private' && !settings['proxies.allow_private_addresses']?.value)
@@ -2475,21 +2507,7 @@ export function demoBackend(requested = ''): Backend {
         if (version !== RUNTIME_VERSION)
           throw err('RUNTIME_NOT_IN_MANIFEST', 'That browser version is not approved for this build.');
         if (installing) throw err('INSTALL_IN_PROGRESS', 'A browser install is already in progress.');
-        installing = true;
-        const op = startOp('install_runtime', version);
-        let progress = 0;
-        const timer = setInterval(() => {
-          progress = Math.min(1, progress + 0.2);
-          if (progress < 1) {
-            Object.assign(op, { progress });
-            emit('operation', { ...op });
-            return;
-          }
-          clearInterval(timer);
-          installing = false;
-          runtimeInstalled = true;
-          finish(op, { status: 'succeeded', progress: 1 });
-        }, 250);
+        const op = startRuntimeInstall();
         return { operation_id: op.operation_id };
       },
       async updateSetting(key: string, value: unknown, expectedVersion?: number) {
@@ -2580,5 +2598,12 @@ export function demoBackend(requested = ''): Backend {
       emit('quit-requested', { running: running(), unresponsive });
     },
   } satisfies Backend & { simulateQuitRequest(unresponsive?: number): void };
+  // Mirror the desktop runtime worker: when the pinned browser is missing it installs itself shortly after
+  // start, with no manual step.
+  if (!runtimeInstalled) {
+    setTimeout(() => {
+      if (!runtimeInstalled && !installing) startRuntimeInstall();
+    }, 300);
+  }
   return backend;
 }

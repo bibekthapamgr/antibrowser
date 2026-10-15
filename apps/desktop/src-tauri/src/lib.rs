@@ -12,6 +12,7 @@ pub mod authz;
 pub mod automation;
 pub mod billing;
 pub mod commands;
+pub mod cookies;
 pub mod deeplink;
 pub mod diagnostics;
 pub mod events;
@@ -342,6 +343,9 @@ pub fn run() {
             state.check_server_later();
             // Signed manager updates: checked and downloaded in the background, installed on a click (milestone 12).
             state.start_update_worker();
+            // The pinned browser engine installs itself when missing and updates itself to a newer pinned
+            // version when no profile is open (milestone 03/12; verification and the ADR-0010 gate are kept).
+            state.start_runtime_worker();
 
             // Supervisor monitor: keeps the process table true even while the window is hidden.
             let monitor = state.clone();

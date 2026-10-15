@@ -150,6 +150,11 @@ pub struct Source<'a> {
     pub user_data: &'a Path,
     /// The profile's settings (exported from the app's own database, not from the browser's files).
     pub settings_json: Option<&'a [u8]>,
+    /// The profile's own stored website sessions, decrypted from the source computer's browser cookie store and
+    /// carried inside this (end-to-end-encrypted) snapshot so an enrolled teammate's computer can restore them
+    /// without a fresh sign-in (ADR-0028). Only ever set for workspace (organization) snapshots, never for
+    /// local-only backups, and only ever held inside the sealed container — never written to disk in the clear.
+    pub portable_cookies: Option<&'a [u8]>,
     pub platform: &'a str,
     pub browser_version: &'a str,
     pub app_version: &'a str,
@@ -511,6 +516,14 @@ impl Engine<'_> {
             members.push(Member {
                 name: "settings.json",
                 bytes: s,
+            });
+        }
+        // Workspace snapshots only: the profile's own re-keyable sessions ride inside the same encrypted container
+        // (the member is sealed under the snapshot data key alongside everything else, ADR-0028).
+        if let Some(c) = source.portable_cookies {
+            members.push(Member {
+                name: "cookies.json",
+                bytes: c,
             });
         }
         let binding = Binding {

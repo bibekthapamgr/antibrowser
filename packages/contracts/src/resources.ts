@@ -400,12 +400,18 @@ export const InvitationCreated = Type.Object(
 );
 export const InvitationPreview = Type.Object(
   {
+    org_id: Id('org'),
     org_name: Type.String(),
     role: Type.Enum(ASSIGNABLE_ROLES),
     expires_at: Timestamp,
     status: Type.Enum(['open', 'accepted', 'expired', 'revoked']),
     for_this_account: Type.Boolean({
       description: "Whether the caller's verified e-mail matches the invitation.",
+    }),
+    already_member: Type.Boolean({
+      description:
+        'Whether the signed-in account is already a member of this workspace (the invitation has nothing left ' +
+        'to do; the portal shows a friendly confirmation rather than an error).',
     }),
   },
   { additionalProperties: false },

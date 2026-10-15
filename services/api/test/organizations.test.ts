@@ -105,6 +105,18 @@ describe('invitations', () => {
     expect(again.statusCode).toBe(410);
     expect(again.json().code).toBe('INVITATION_USED');
 
+    // Revisiting the link after joining: the preview reports the member can continue (the portal shows a
+    // friendly "already a member" confirmation rather than an error).
+    const afterJoin = (await call(bob, 'GET', `/v1/invitations/${token}`)).json();
+    expect(afterJoin).toMatchObject({
+      org_id: orgId,
+      status: 'accepted',
+      for_this_account: true,
+      already_member: true,
+    });
+    // Someone who is not the invited account and not a member still sees a plain, non-member preview.
+    expect((await call(carol, 'GET', `/v1/invitations/${token}`)).json().already_member).toBe(false);
+
     // Joined: the workspace is listed, with no profiles until something is granted.
     const spaces = (await call(bob, 'GET', '/v1/me/workspaces')).json().items;
     expect(spaces).toEqual([
