@@ -274,20 +274,25 @@ impl AppState {
         self.begin_sign_in_with(false, true)
     }
 
-    /// R2: the production server a build was made for (PB_DEFAULT_SERVER at build time) is used until the person
-    /// chooses another one; it is applied once, so clearing the server later is respected.
+    /// R2: the production server a build was made for (PB_DEFAULT_SERVER at build time). The app cannot be used
+    /// without signing in, so a build's server is applied whenever none is set; a server the person chose stays,
+    /// and the previous build's server (unchanged, no account on it) is replaced by a newer build's server.
     pub fn apply_default_server(&self, default: Option<&str>) -> Result<(), IpcError> {
         let Some(default) = default.filter(|d| !d.trim().is_empty()) else {
             return Ok(());
         };
+        let url = normalize_server(default)?;
         let store = self.store()?;
-        if store.cloud_state(cs::SERVER_URL)?.is_none()
-            && store.cloud_state(cs::SERVER_DEFAULT_APPLIED)?.is_none()
+        let current = store.cloud_state(cs::SERVER_URL)?;
+        let applied = store.cloud_state(cs::SERVER_DEFAULT_APPLIED)?;
+        let previous_default_unused =
+            current.is_some() && current == applied && store.cloud_state(cs::ACCOUNT)?.is_none();
+        if current.is_none()
+            || (previous_default_unused && current.as_deref() != Some(url.as_str()))
         {
-            let url = normalize_server(default)?;
-            store.set_cloud_state(cs::SERVER_URL, Some(&url))?;
+            self.set_cloud_server(Some(&url))?;
         }
-        store.set_cloud_state(cs::SERVER_DEFAULT_APPLIED, Some("1"))?;
+        store.set_cloud_state(cs::SERVER_DEFAULT_APPLIED, Some(&url))?;
         Ok(())
     }
 

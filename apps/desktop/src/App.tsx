@@ -1,12 +1,21 @@
 import type { OnboardingResult } from '@pb/contracts/onboarding';
 import type { Organization, Workspaces } from '@pb/contracts/resources';
 import type { FeatureSettings } from '@pb/contracts/workspace';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { AccountScreen } from './account.tsx';
 import type { AccountView, AppView, Backend, Operation } from './backend/types.ts';
 import { errorMessage } from './backend/types.ts';
 import { BillingBanner } from './billing.tsx';
 import { ApiFailure, can, get, getAll, ROLE_LABEL } from './cloud.ts';
+import {
+  OfflineGate,
+  PlanGate,
+  recentPlanOk,
+  rememberPlanOk,
+  SetupGate,
+  SignInGate,
+  USABLE_PLAN,
+} from './gate.tsx';
 import { HealthScreen, type HealthTab } from './health.tsx';
 import { useLauncher } from './launch.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
@@ -67,6 +76,35 @@ const UNIFIED_NAV: [View, string][] = [
   ['subscription', 'Subscription'],
   ['settings', 'Settings'],
 ];
+/** Navigation icons (24×24 outline, drawn with currentColor; decorative, the label names the screen). */
+const NAV_ICON: Partial<Record<View, string>> = {
+  profiles: 'M4 6h16M4 12h16M4 18h10',
+  proxies:
+    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-9 9h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9Z',
+  team: 'M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19M10 10.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM20 19v-1.5a3.5 3.5 0 0 0-2.5-3.35M15.5 4.6a3 3 0 0 1 0 5.8',
+  subscription: 'M3 7h18v11H3zM3 11h18M7 15h3',
+  settings:
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.6 7.6 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z',
+  agency: 'M4 20V8l8-4 8 4v12M9 20v-6h6v6',
+};
+const BELL = 'M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Zm4 4a2 2 0 0 0 4 0';
+function NavIcon({ view }: { view: View }) {
+  const d = NAV_ICON[view];
+  if (!d) return null;
+  return (
+    <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d={d} />
+    </svg>
+  );
+}
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (
+    ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '')).toUpperCase() ||
+    '?'
+  );
+}
+
 type SettingsTab = 'general' | 'account' | 'updates' | 'health' | 'workspace';
 const SETTINGS_TABS: [SettingsTab, string][] = [
   ['general', 'General'],
@@ -102,7 +140,7 @@ function rememberScope(v: string): void {
   }
 }
 
-export function App({ backend }: { backend: Backend }) {
+export function App({ backend, requireAccount = true }: { backend: Backend; requireAccount?: boolean }) {
   const [app, setApp] = useState<AppView | null>(null);
   const [view, setView] = useState<View>('profiles');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -118,6 +156,10 @@ export function App({ backend }: { backend: Backend }) {
   const [account, setAccount] = useState<AccountView | null>(null);
   const [orgs, setOrgs] = useState<OrgWorkspace[]>([]);
   const [orgId, setOrgId] = useState<string | null>(null);
+  // Account gate: each workspace's plan (null until checked) and whether the server answered.
+  const [orgDetails, setOrgDetails] = useState<Organization[] | null>(null);
+  const [reach, setReach] = useState<'ok' | 'offline'>('ok');
+  const [gateBusy, setGateBusy] = useState(false);
   const reported = useRef(false);
   const launcher = useLauncher(backend, notify);
   const unified = app?.settings.find((x) => x.key === 'ui.unified_profiles')?.value !== false;
@@ -189,24 +231,50 @@ export function App({ backend }: { backend: Backend }) {
     try {
       const a = await backend.account.get();
       setAccount(a);
-      if (a.status === 'signed_out') {
+      if (a.status !== 'signed_in') {
         setOrgs([]);
+        setOrgDetails(null);
         return;
       }
       const res = await get<Workspaces>(backend, '/v1/me/workspaces');
       setOrgs(res.data.items);
+      setReach(res.stale ? 'offline' : 'ok');
+      // The plan of each workspace (the list itself carries none); a workspace that cannot be read counts as none.
+      if (!requireAccount) return;
+      const details = await Promise.all(
+        res.data.items.slice(0, 20).map((o) =>
+          get<Organization>(backend, `/v1/orgs/${o.org_id}`)
+            .then((r) => r.data)
+            .catch(() => null),
+        ),
+      );
+      setOrgDetails(details.filter((d): d is Organization => d !== null));
       // R3: the workspace the person's apps open first (R2 onboarding keeps it on the server).
       void get<{ default_org_id: string | null }>(backend, '/v1/onboarding/status')
         .then((r) => setDefaultOrg(r.data.default_org_id))
         .catch(() => undefined);
-    } catch {
+    } catch (e) {
       setOrgs((o) => o);
+      if (!(e instanceof ApiFailure)) setReach('offline');
     }
-  }, [backend]);
+  }, [backend, requireAccount]);
 
   useEffect(() => {
     void refreshAccount();
   }, [refreshAccount]);
+
+  // The plan is checked again every 15 minutes, so an ended plan or a new payment shows without restarting.
+  useEffect(() => {
+    if (!requireAccount || account?.status !== 'signed_in') return;
+    const t = setInterval(() => void refreshAccount(), 15 * 60_000);
+    return () => clearInterval(t);
+  }, [requireAccount, account?.status, refreshAccount]);
+
+  // A confirmed usable plan lets this computer keep working for a while when the server cannot be reached.
+  useEffect(() => {
+    if (reach === 'ok' && orgDetails?.some((o) => !o.billing || USABLE_PLAN.has(o.billing.state)))
+      rememberPlanOk();
+  }, [reach, orgDetails]);
 
   // R2: after signing in, onboarding completes by itself and the person lands on Profiles; a dialog appears only when
   // the server needs a decision (terms for a new workspace, a waiting invitation, which owned workspace first).
@@ -264,13 +332,30 @@ export function App({ backend }: { backend: Backend }) {
     [backend, notify, refreshAccount, finishOnboarding],
   );
 
+  // With the account gate, "This computer" (local-only profiles outside any plan) is offered only while it still
+  // holds profiles, so they can be used and moved into the workspace; new work happens in the account workspace.
+  const [localProfiles, setLocalProfiles] = useState<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey reloads
+  useEffect(() => {
+    if (!requireAccount || !app) return;
+    let live = true;
+    backend.profiles
+      .query({ limit: 1 })
+      .then((r) => live && setLocalProfiles(r.total))
+      .catch(() => live && setLocalProfiles(null));
+    return () => {
+      live = false;
+    };
+  }, [backend, requireAccount, app?.active_workspace_id, refreshKey]);
+  const showComputer = !requireAccount || orgs.length === 0 || (localProfiles ?? 0) > 0;
+
   // R3: the effective workspace: the one chosen in this window if it is still one of the person's, else their default
   // workspace, else the first; signed out (or with no workspace) it is this computer.
   const signedIn = account?.status === 'signed_in';
   const scopeId =
     !signedIn || orgs.length === 0
       ? COMPUTER
-      : scopeChoice === COMPUTER
+      : scopeChoice === COMPUTER && showComputer
         ? COMPUTER
         : orgs.some((o) => o.org_id === scopeChoice)
           ? (scopeChoice as string)
@@ -724,6 +809,82 @@ export function App({ backend }: { backend: Backend }) {
     </>
   );
 
+  // Account gate: nothing but these screens until the person is signed in with a workspace that has a usable plan.
+  if (requireAccount) {
+    const signOut = async () => {
+      try {
+        await backend.account.signOut();
+      } catch (e) {
+        notify(errorMessage(e), 'error');
+      }
+      void refreshAccount();
+    };
+    let gate: ReactNode = null;
+    if (!account) {
+      gate = (
+        <p role="status" className="loading">
+          Loading…
+        </p>
+      );
+    } else if (account.status !== 'signed_in') {
+      gate = <SignInGate backend={backend} account={account} notify={notify} onChanged={refreshAccount} />;
+    } else if (reach === 'offline') {
+      if (!recentPlanOk())
+        gate = <OfflineGate onRetry={() => void refreshAccount()} onSignOut={() => void signOut()} />;
+    } else if (orgDetails === null) {
+      gate = (
+        <p role="status" className="loading">
+          Checking your plan…
+        </p>
+      );
+    } else if (orgs.length === 0) {
+      gate = (
+        <SetupGate
+          busy={gateBusy}
+          onContinue={async () => {
+            setGateBusy(true);
+            await finishOnboarding();
+            setGateBusy(false);
+          }}
+          onSignOut={() => void signOut()}
+        />
+      );
+    } else if (!orgDetails.some((o) => !o.billing || USABLE_PLAN.has(o.billing.state))) {
+      const org = orgDetails.find((o) => can(o.role, 'billing.manage')) ?? orgDetails[0];
+      if (org)
+        gate = (
+          <PlanGate
+            backend={backend}
+            org={org}
+            me={account.user?.id ?? ''}
+            notify={notify}
+            onChanged={() => void refreshAccount()}
+            onSignOut={() => void signOut()}
+          />
+        );
+    }
+    if (gate)
+      return (
+        <>
+          {gate}
+          {onboardingNeed && (
+            <OnboardingDialog
+              backend={backend}
+              need={onboardingNeed}
+              onDone={onboarded}
+              onNeed={setOnboardingNeed}
+              onClose={() => setOnboardingNeed(null)}
+              onSignInAgain={() => {
+                setOnboardingNeed(null);
+                void backend.account.signIn().catch((e) => notify(errorMessage(e), 'error'));
+              }}
+            />
+          )}
+          {live}
+        </>
+      );
+  }
+
   if (unified) {
     const ready = orgScope ? (scope?.orgId === orgScope ? scope : null) : null;
     const common = ready
@@ -765,6 +926,10 @@ export function App({ backend }: { backend: Backend }) {
           Skip to content
         </a>
         <aside className="sidebar" aria-label="Workspace and navigation">
+          <div className="sidebar__brand">
+            <span className="brand-mark" aria-hidden="true" />
+            Project Browser
+          </div>
           <label className="workspace">
             <span className="sidebar__label">Workspace</span>
             <select
@@ -794,13 +959,15 @@ export function App({ backend }: { backend: Backend }) {
                   ))}
                 </optgroup>
               )}
-              <optgroup label="This computer only">
-                {app.workspaces.map((w) => (
-                  <option key={w.id} value={`local:${w.id}`}>
-                    {app.workspaces.length === 1 ? 'This computer' : `This computer: ${w.name}`}
-                  </option>
-                ))}
-              </optgroup>
+              {(showComputer || !orgScope) && (
+                <optgroup label="This computer only">
+                  {app.workspaces.map((w) => (
+                    <option key={w.id} value={`local:${w.id}`}>
+                      {app.workspaces.length === 1 ? 'This computer' : `This computer: ${w.name}`}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </label>
           <nav aria-label="Main">
@@ -819,6 +986,7 @@ export function App({ backend }: { backend: Backend }) {
                       }
                     }}
                   >
+                    <NavIcon view={id} />
                     {label}
                   </button>
                 </li>
@@ -838,6 +1006,9 @@ export function App({ backend }: { backend: Backend }) {
             aria-label={`Notifications: ${notices.length === 0 ? 'none' : notices.length}`}
             onClick={() => setNoticesOpen(true)}
           >
+            <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d={BELL} />
+            </svg>
             Notifications{notices.length > 0 ? ` (${notices.length})` : ''}
           </button>
           <p className="sidebar__hint">
@@ -849,10 +1020,20 @@ export function App({ backend }: { backend: Backend }) {
               : `${app.running_count} profile${app.running_count === 1 ? '' : 's'} open on this computer`}
             <span className="sidebar__hint">Profiles run in a browser on this computer.</span>
           </div>
-          <p className="sidebar__note">
-            Version {app.app.version}
-            {signedIn && account?.user ? ` · ${account.user.display_name}` : ''}
-          </p>
+          {signedIn && account?.user ? (
+            <button type="button" className="account-chip" title="Account" onClick={() => go('account')}>
+              <span className="account-chip__avatar" aria-hidden="true">
+                {initials(account.user.display_name)}
+              </span>
+              <span className="account-chip__text">
+                <span className="account-chip__name">{account.user.display_name}</span>
+                <span className="account-chip__meta">
+                  {ready?.org.billing ? ready.org.billing.plan_name : (account.user.email ?? '')}
+                </span>
+              </span>
+            </button>
+          ) : null}
+          <p className="sidebar__note">Version {app.app.version}</p>
         </aside>
 
         {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be keyboard-focusable (axe scrollable-region-focusable, WCAG 2.1.1) */}

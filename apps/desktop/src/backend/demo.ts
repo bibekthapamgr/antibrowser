@@ -400,7 +400,7 @@ export function demoBackend(requested = ''): Backend {
   const classic = /(^|\s)classic(\s|$)/.test(requested);
   const mode = requested
     .split(/\s+/)
-    .filter((m) => m && m !== 'classic' && m !== 'unified')
+    .filter((m) => m && m !== 'classic' && m !== 'unified' && m !== 'gate')
     .join(' ');
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const emit = <E extends EventName>(e: E, p: EventPayload<E>) => {

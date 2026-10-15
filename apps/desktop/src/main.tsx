@@ -12,11 +12,17 @@ import type { Backend } from './backend/types.ts';
 const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 const DEMO_BUILD = import.meta.env.MODE === 'demo' || import.meta.env.DEV;
 
+// The desktop app is used with an account and a plan (gate.tsx). Demo builds skip that gate unless a test asks for it
+// (`?demo=… gate`), so the screens behind it can be exercised on their own.
+let requireAccount = true;
+
 async function pickBackend(): Promise<Backend | null> {
   if (inTauri) return tauriBackend();
   if (DEMO_BUILD) {
     const { demoBackend } = await import('./backend/demo.ts');
-    const backend = demoBackend(new URLSearchParams(window.location.search).get('demo') ?? '');
+    const flags = new URLSearchParams(window.location.search).get('demo') ?? '';
+    requireAccount = flags.split(/\s+/).includes('gate');
+    const backend = demoBackend(flags);
     // Exposed for UI tests only in demo builds.
     (window as unknown as { __pbDemo: unknown }).__pbDemo = backend;
     return backend;
@@ -33,7 +39,7 @@ if (root) {
     }
     createRoot(root).render(
       <StrictMode>
-        <App backend={backend} />
+        <App backend={backend} requireAccount={requireAccount} />
       </StrictMode>,
     );
   });

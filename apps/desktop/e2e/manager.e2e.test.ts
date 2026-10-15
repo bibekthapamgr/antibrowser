@@ -2299,15 +2299,20 @@ describe('R3 unified profiles and simple team sharing', () => {
           o.textContent?.startsWith('Second shop'),
         )?.value,
     );
-    // Record every row that appears after the switch starts.
-    await page.evaluate(() => {
-      const seen: string[] = [];
-      (window as unknown as { __seen: string[] }).__seen = seen;
-      new MutationObserver(() => {
-        for (const th of document.querySelectorAll('table.workspace-profiles tbody th'))
-          seen.push(th.textContent ?? '');
-      }).observe(document.body, { subtree: true, childList: true, characterData: true });
-    });
+    // Record every row that appears once the switch has started (mutations before it, such as a toast, still show
+    // the first workspace legitimately).
+    await page.evaluate(
+      (target) => {
+        const seen: string[] = [];
+        (window as unknown as { __seen: string[] }).__seen = seen;
+        new MutationObserver(() => {
+          if (document.querySelector<HTMLSelectElement>('.workspace select')?.value !== target) return;
+          for (const th of document.querySelectorAll('table.workspace-profiles tbody th'))
+            seen.push(th.textContent ?? '');
+        }).observe(document.body, { subtree: true, childList: true, characterData: true });
+      },
+      (await second.jsonValue()) as string,
+    );
     await page.select('.workspace select', (await second.jsonValue()) as string);
     await page.waitForFunction(() => document.querySelector('.empty-state'));
     const seen = await page.evaluate(() => (window as unknown as { __seen: string[] }).__seen);
@@ -2410,6 +2415,48 @@ describe('R3 unified profiles and simple team sharing', () => {
     );
     await clickButton(page, '[role=dialog]', 'Move');
     await toastContains(page, 'South support desk was moved.');
+    await page.close();
+  });
+});
+
+describe('account gate (sign-in and plan required)', () => {
+  it('shows only the welcome screen until the person signs in, then their workspace', async () => {
+    const page = await open('unified gate');
+    expect(await text(page, 'h1')).toBe('Welcome');
+    expect(await page.$('.sidebar')).toBeNull(); // no profiles, proxies or settings before signing in
+    const disabled = await page.$$eval('#main button', (bs) =>
+      bs
+        .filter((b) => ['Sign in', 'Create account'].includes(b.textContent?.trim() ?? ''))
+        .map((b) => (b as HTMLButtonElement).disabled),
+    );
+    expect(disabled).toEqual([true, true]); // this demo build has no server built in
+    await page.type('input[type=url]', 'https://browser.example.test');
+    await clickButton(page, '#main', 'Save');
+    await page.waitForFunction(() => document.body.textContent?.includes('Server: browser.example.test'));
+    await clickButton(page, '#main', 'Sign in');
+    await page.waitForSelector('.sidebar');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent?.includes('Profiles'));
+    expect(await text(page, '.account-chip')).toContain('Demo Person');
+    await page.close();
+  });
+
+  it('asks for a plan when no workspace has a usable one', async () => {
+    const page = await open('unified gate');
+    await page.type('input[type=url]', 'https://browser.example.test');
+    await clickButton(page, '#main', 'Save');
+    await page.waitForFunction(() => document.body.textContent?.includes('Server: browser.example.test'));
+    await clickButton(page, '#main', 'Sign in');
+    await page.waitForSelector('.sidebar');
+    // The plan ends; the next check (here: opening Settings) closes the app behind the plan screen.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __pbDemo: { billing: { simulate(s: string): void } } }
+      ).__pbDemo.billing.simulate('canceled'),
+    );
+    await goTo(page, 'Settings');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Your plan has ended');
+    expect(await page.$('.sidebar')).toBeNull();
+    expect(await text(page, '#main')).toContain('Choose a plan for Demo Agency');
     await page.close();
   });
 });

@@ -11,4 +11,5 @@ Decision: [ADR-0026](../adr/0026-journey-verification-performance-and-launch.md)
 | [retirement-gate.md](retirement-gate.md) | rules for removing screens/code/records; demo code out of production bundles |
 | [pilot-plan.md](pilot-plan.md) | recruitment, consent, measures and targets, staged rollout and pause criteria, report template |
 | [launch-checklist.md](launch-checklist.md) | the final launch evidence and its state |
+| [account-gate.md](account-gate.md) | sign-in and plan required before the app opens; offline grace; build default server |
 | [support-runbooks.md](support-runbooks.md) | customer questions, known limitations, supported versions |

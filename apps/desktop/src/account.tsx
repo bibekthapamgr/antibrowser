@@ -151,10 +151,7 @@ export function AccountScreen(props: {
       <header className="toolbar">
         <div className="toolbar__title">
           <h1 id="account-title">Account</h1>
-          <p className="muted small">
-            Sign in to work with your team in organizations. Profiles on this computer work without an account
-            and stay on this computer.
-          </p>
+          <p className="muted small">Your account, its workspaces and the devices signed in to it.</p>
         </div>
       </header>
 

@@ -1280,7 +1280,7 @@ fn migration_respects_the_workspace_quota_and_a_reinstalled_device_restores_link
 
 // ----------------------------------------------------------------------------- R2: self-service (ADR-0021)
 #[test]
-fn a_build_default_server_is_offered_once_and_create_account_opens_registration() {
+fn a_build_default_server_is_applied_when_unset_and_create_account_opens_registration() {
     let f = fixture();
     keychain(&f);
     let mock = Mock::start();
@@ -1298,14 +1298,35 @@ fn a_build_default_server_is_offered_once_and_create_account_opens_registration(
         Some("S256")
     );
     assert!(q.contains_key("state") && q.contains_key("nonce"));
-    // Clearing the server is respected: the default is not applied again.
+    // The app needs an account: with no server set, the build's server comes back on the next start.
     ok(invoke(&f, "set_cloud_server", json!({ "url": null })));
+    f.state
+        .apply_default_server(Some(&mock.base))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        ok(invoke(&f, "get_account", json!({})))["server_url"],
+        json!(mock.base.clone())
+    );
+    // A newer build with another server replaces the old build's server that was never used for an account.
     f.state
         .apply_default_server(Some("https://browser.example.test"))
         .unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(
         ok(invoke(&f, "get_account", json!({})))["server_url"],
-        Value::Null
+        json!("https://browser.example.test")
+    );
+    // A server the person chose themselves stays.
+    ok(invoke(
+        &f,
+        "set_cloud_server",
+        json!({ "url": "https://own.example.test" }),
+    ));
+    f.state
+        .apply_default_server(Some("https://browser.example.test"))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        ok(invoke(&f, "get_account", json!({})))["server_url"],
+        json!("https://own.example.test")
     );
     // No default in the build: nothing happens.
     f.state
