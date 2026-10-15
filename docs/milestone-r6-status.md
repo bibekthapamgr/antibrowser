@@ -13,6 +13,16 @@ actions outside the code):** domain/DNS, mail provider, Stripe live, R2 for the 
 GitHub protections, OS signing (or the labelled pilot exception), the runtime licensing decision, external security
 review, the staging restore rehearsal of record. The preflight shows each of them as FAIL until done.
 
+## CI evidence (commit a2e3dfe, 2026-10-15)
+- `deploy scripts` → "production server behind TLS (R6)": prod set up with `PB_ENV=prod` behind the proxy; fails
+  closed; public surface allowlist; signup + e-mail verification + desktop sign-in over https without a tunnel; staff
+  with a one-time code and the platform owner; preflight **9 pass, 1 warn, 6 fail** — the 6 are the expected owner
+  gates on a CI server (`tls_mode`, `webhook_signature`, `backup_recency`, `release_keys`, `runtime_eligibility`,
+  `artifact_eligibility`); no secret in the report; the update run keeps sessions and refuses prod → dev.
+- `deploy scripts` → test server: "A failed backup is reported (R6)" (R2 down → ALERT, exit 3 → recovery) and the
+  existing restore drill, whole-server restore and update path.
+- `ci`: API 620 tests, worker 28, config 13, console e2e 22, typecheck, lint, OpenAPI, gitleaks.
+
 ## Deployment order
 
 | Step | Done |
