@@ -300,7 +300,13 @@ export function supportRoutes(app: App, deps: Deps): void {
       if ('refused' in out) {
         const err = await refuse(out.refused, user.user_id);
         if (out.refused === 'mfa_required') {
-          throw new ApiError('MFA_REQUIRED', 'Staff sign-in needs your one-time code; sign in again with it');
+          // Setting up the authenticator at the first sign-in is not a sign-in with a code (the provider reports
+          // only the password then): the next sign-in asks for the code.
+          throw new ApiError(
+            'MFA_REQUIRED',
+            'Staff sign-in needs a one-time code. If you have just set up your authenticator app, sign in once more ' +
+              'and enter the code it shows.',
+          );
         }
         throw err;
       }
