@@ -2453,7 +2453,12 @@ describe('account gate (sign-in and plan required)', () => {
         window as unknown as { __pbDemo: { billing: { simulate(s: string): void } } }
       ).__pbDemo.billing.simulate('canceled'),
     );
-    await goTo(page, 'Settings');
+    // (Any account refresh may already have closed the app; the click is then simply not needed.)
+    await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLButtonElement>('nav .nav-item')]
+        .find((b) => b.textContent?.trim() === 'Settings')
+        ?.click(),
+    );
     await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Your plan has ended');
     expect(await page.$('.sidebar')).toBeNull();
     expect(await text(page, '#main')).toContain('Choose a plan for Demo Agency');
