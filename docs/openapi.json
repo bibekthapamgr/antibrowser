@@ -6217,13 +6217,19 @@
                 "schema": {
                   "type": "object",
                   "required": [
+                    "org_id",
                     "org_name",
                     "role",
                     "expires_at",
                     "status",
-                    "for_this_account"
+                    "for_this_account",
+                    "already_member"
                   ],
                   "properties": {
+                    "org_id": {
+                      "type": "string",
+                      "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
                     "org_name": {
                       "type": "string"
                     },
@@ -6251,6 +6257,10 @@
                     "for_this_account": {
                       "type": "boolean",
                       "description": "Whether the caller's verified e-mail matches the invitation."
+                    },
+                    "already_member": {
+                      "type": "boolean",
+                      "description": "Whether the signed-in account is already a member of this workspace (the invitation has nothing left to do; the portal shows a friendly confirmation rather than an error)."
                     }
                   },
                   "additionalProperties": false
