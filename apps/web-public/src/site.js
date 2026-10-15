@@ -40,7 +40,46 @@ function money(minor, currency) {
 const GiB = 1024 ** 3;
 const limit = (n, unit) => (n === null ? `Unlimited ${unit}` : `${n.toLocaleString()} ${unit}`);
 
+const SVG = 'http://www.w3.org/2000/svg';
+const PATHS = {
+  check: ['m5 12.5 4.5 4.5L19 7.5'],
+  laptop: [
+    'M4 6a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 20 6v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 14V6Z',
+    'M2 19.5h20',
+  ],
+  gift: ['M12 3v18', 'M4 8.5h16v3H4z', 'M5.5 11.5V20h13v-8.5'],
+};
+function svgIcon(name) {
+  const s = document.createElementNS(SVG, 'svg');
+  for (const [k, v] of Object.entries({
+    class: 'icon',
+    viewBox: '0 0 24 24',
+    width: '24',
+    height: '24',
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': '1.75',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+    'aria-hidden': 'true',
+    focusable: 'false',
+  }))
+    s.setAttribute(k, v);
+  for (const d of PATHS[name]) {
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    s.append(p);
+  }
+  return s;
+}
+const sr = (t) => el('span', { class: 'pb-sr-only' }, t);
+
 // ------------------------------------------------------------------ pricing
+const storageText = (p) =>
+  p.limits.storage_bytes === null
+    ? 'Unlimited encrypted backups'
+    : `${Math.round(p.limits.storage_bytes / GiB)} GB encrypted backups`;
+
 async function pricing(root) {
   const status = root.querySelector('#pricing-status');
   let data;
@@ -55,53 +94,65 @@ async function pricing(root) {
   if (offered.length === 0) {
     status.textContent =
       'Plans cannot be bought online right now. You can still start the free trial; prices will be shown here again soon.';
+    status.className = 'notice';
     root.append(
       el('p', {}, el('a', { class: 'button primary', href: root.dataset.start }, 'Start free trial')),
     );
     return;
   }
+  // With several plans, the first one that includes team sharing is the one we suggest.
+  const recommended = offered.length > 1 ? (offered.find((p) => p.features.team_sessions)?.id ?? null) : null;
   const intervals = new Set(offered.flatMap((p) => p.prices.map((x) => x.interval)));
   let interval = intervals.has('month') ? 'month' : 'year';
+  const per = (i) => (i === 'month' ? 'month' : 'year');
   const list = el('ul', { class: 'plans' });
+  const tbody = el('tbody');
+  const priceHead = el('th', { scope: 'row' }, 'Price');
   const render = () => {
     list.replaceChildren(
       ...offered.map((p) => {
         const price = p.prices.find((x) => x.interval === interval);
+        const rec = p.id === recommended;
         return el(
           'li',
-          { class: 'plan' },
+          { class: rec ? 'plan recommended' : 'plan' },
+          rec ? el('span', { class: 'plan-badge' }, 'Recommended for teams') : null,
           el('h2', {}, p.name),
-          el('p', { class: 'muted' }, p.description),
+          el('p', { class: 'plan-desc' }, p.description),
           price
-            ? el(
-                'p',
-                {},
-                el('span', { class: 'price' }, money(price.amount_minor, price.currency)),
-                ` per ${price.interval === 'month' ? 'month' : 'year'} `,
-                el('span', { class: 'small muted' }, `· ${TAX[price.tax] ?? TAX.unspecified}`),
-              )
+            ? [
+                el(
+                  'p',
+                  { class: 'plan-price' },
+                  el('span', { class: 'price' }, money(price.amount_minor, price.currency)),
+                  ` per ${per(price.interval)}`,
+                ),
+                el('p', { class: 'plan-tax' }, TAX[price.tax] ?? TAX.unspecified),
+              ]
             : el(
                 'p',
-                { class: 'muted' },
+                { class: 'plan-none' },
                 interval === 'year' ? 'Not offered yearly.' : 'Monthly price not offered.',
               ),
           el(
             'ul',
-            {},
-            el('li', {}, limit(p.limits.profiles, 'profiles')),
+            { class: 'plan-list' },
+            el('li', {}, svgIcon('check'), el('span', {}, limit(p.limits.profiles, 'profiles'))),
             el(
               'li',
               {},
-              `${limit(p.limits.seats, p.limits.seats === 1 ? 'seat' : 'seats')} (owner included)`,
+              svgIcon('check'),
+              el(
+                'span',
+                {},
+                `${limit(p.limits.seats, p.limits.seats === 1 ? 'seat' : 'seats')} (owner included)`,
+              ),
             ),
-            el(
-              'li',
-              {},
-              p.limits.storage_bytes === null
-                ? 'Unlimited encrypted backups'
-                : `${Math.round(p.limits.storage_bytes / GiB)} GB encrypted backups`,
-            ),
-            p.features.team_sessions ? el('li', {}, 'Shared profiles with handoff') : null,
+            el('li', {}, svgIcon('check'), el('span', {}, storageText(p))),
+            p.features.team_sessions
+              ? el('li', {}, svgIcon('check'), el('span', {}, 'Shared profiles with handoff'))
+              : null,
+            p.features.api_access ? el('li', {}, svgIcon('check'), el('span', {}, 'Automation API')) : null,
           ),
           el(
             'a',
@@ -111,9 +162,48 @@ async function pricing(root) {
         );
       }),
     );
+    // The comparison table: the same facts as the cards, side by side.
+    const yes = () => [svgIcon('check'), sr('Included')];
+    const no = () => [el('span', { class: 'no', 'aria-hidden': 'true' }, '—'), sr('Not included')];
+    const row = (label, cell) =>
+      el(
+        'tr',
+        {},
+        el('th', { scope: 'row' }, label),
+        ...offered.map((p) => el('td', { class: p.id === recommended ? 'rec' : null }, cell(p))),
+      );
+    priceHead.textContent = interval === 'month' ? 'Price per month' : 'Price per year';
+    tbody.replaceChildren(
+      el(
+        'tr',
+        {},
+        priceHead,
+        ...offered.map((p) => {
+          const price = p.prices.find((x) => x.interval === interval);
+          return el(
+            'td',
+            { class: p.id === recommended ? 'rec' : null },
+            price ? money(price.amount_minor, price.currency) : 'Not offered',
+          );
+        }),
+      ),
+      row('Profiles', (p) => (p.limits.profiles === null ? 'Unlimited' : p.limits.profiles.toLocaleString())),
+      row('Seats, owner included', (p) =>
+        p.limits.seats === null ? 'Unlimited' : p.limits.seats.toLocaleString(),
+      ),
+      row('Encrypted backup storage', (p) =>
+        p.limits.storage_bytes === null ? 'Unlimited' : `${Math.round(p.limits.storage_bytes / GiB)} GB`,
+      ),
+      row('Shared profiles with handoff', (p) => (p.features.team_sessions ? yes() : no())),
+      row('Automation API', (p) => (p.features.api_access ? yes() : no())),
+      row(`${data.trial_days}-day free trial`, () => yes()),
+    );
   };
-  status.textContent = `${data.trial_days}-day free trial on every plan, no payment details needed.`;
-  status.className = '';
+  status.replaceChildren(
+    svgIcon('gift'),
+    `${data.trial_days}-day free trial on every plan, no payment details needed.`,
+  );
+  status.className = 'trial-line';
   if (intervals.size > 1) {
     const name = 'interval';
     root.append(
@@ -143,6 +233,35 @@ async function pricing(root) {
   }
   render();
   root.append(list);
+  if (offered.length > 1)
+    root.append(
+      el(
+        'section',
+        { class: 'compare', 'aria-labelledby': 'compare-h' },
+        el('h2', { id: 'compare-h' }, 'Compare plans'),
+        el(
+          'div',
+          { class: 'table-scroll', role: 'region', 'aria-labelledby': 'compare-h', tabindex: '0' },
+          el(
+            'table',
+            {},
+            el(
+              'thead',
+              {},
+              el(
+                'tr',
+                {},
+                el('th', { scope: 'col' }, sr('Feature')),
+                ...offered.map((p) =>
+                  el('th', { scope: 'col', class: p.id === recommended ? 'rec' : null }, p.name),
+                ),
+              ),
+            ),
+            tbody,
+          ),
+        ),
+      ),
+    );
 }
 
 // ------------------------------------------------------------------ download
@@ -177,30 +296,50 @@ async function download(root) {
   const guess = platformGuess();
   status.textContent = `Version ${d.version}, released ${new Date(d.published_at).toLocaleDateString()}.`;
   status.className = '';
-  if (d.notes_url) root.append(el('p', {}, el('a', { href: d.notes_url }, 'Release notes')));
+  if (d.notes_url) status.append(' ', el('a', { href: d.notes_url }, 'Release notes'));
   root.append(
     el(
       'ul',
       { class: 'downloads' },
-      ...d.platforms.map((p) =>
-        el(
+      ...d.platforms.map((p) => {
+        const win = p.platform === 'windows-x64';
+        return el(
           'li',
           { class: p.platform === guess ? 'suggested' : '' },
           el(
-            'a',
-            { class: 'button primary', href: p.url },
-            `Download for ${p.platform === 'windows-x64' ? 'Windows' : 'Mac'}`,
-          ),
-          el(
             'span',
-            { class: 'small muted' },
-            `${p.label}${p.platform === guess ? ' — suggested for this device' : ''}`,
+            { class: 'dl-os' },
+            el('span', { class: 'feature-icon' }, svgIcon('laptop')),
+            win ? 'Windows' : 'macOS',
           ),
+          p.platform === guess ? el('span', { class: 'dl-badge' }, 'Suggested for this device') : null,
+          el('span', { class: 'small muted' }, p.label),
+          el('a', { class: 'button primary', href: p.url }, `Download for ${win ? 'Windows' : 'Mac'}`),
           p.sha256 ? el('span', { class: 'mono' }, `SHA-256 ${p.sha256}`) : null,
-        ),
-      ),
+        );
+      }),
     ),
   );
+}
+
+// ------------------------------------------------------------------ header menu (phones)
+function menu() {
+  const toggle = document.querySelector('.menu-toggle');
+  const top = document.documentElement;
+  if (!toggle) return;
+  top.classList.add('js-menu');
+  toggle.hidden = false;
+  const set = (open) => {
+    top.classList.toggle('menu-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+  toggle.addEventListener('click', () => set(toggle.getAttribute('aria-expanded') !== 'true'));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+      set(false);
+      toggle.focus();
+    }
+  });
 }
 
 // ------------------------------------------------------------------ contact
@@ -260,6 +399,7 @@ async function statusLink() {
   }
 }
 
+menu();
 const pricingRoot = document.getElementById('pricing');
 if (pricingRoot) void pricing(pricingRoot);
 const downloadRoot = document.getElementById('download');

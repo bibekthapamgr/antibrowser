@@ -134,3 +134,36 @@ export function overrideValue(scope: OverrideScope, v: number | boolean | null):
 export function minutesLeft(expiresAt: number, now = Date.now()): number {
   return Math.max(0, Math.ceil((expiresAt - now) / 60_000));
 }
+
+/** How urgent each reconciliation alert is, for the badge next to it (the server does not rank them). */
+export const ALERT_SEVERITY: Record<BillingAlertKind, 'critical' | 'warning' | 'notice'> = {
+  dispute: 'critical',
+  signature_failures: 'critical',
+  paid_not_active: 'critical',
+  duplicate_subscriptions: 'critical',
+  backup_failing: 'critical',
+  restore_failed: 'critical',
+  break_glass_used: 'critical',
+  event_failed: 'warning',
+  resync_failed: 'warning',
+  publish_failed: 'warning',
+  sync_failures: 'warning',
+  queue_backlog: 'warning',
+  missed_webhook: 'warning',
+  webhook_backlog: 'warning',
+  unknown_customer: 'warning',
+  unknown_price: 'warning',
+  refund: 'notice',
+};
+
+export const SEVERITY_LABEL = { critical: 'Critical', warning: 'Warning', notice: 'Notice' } as const;
+
+export function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0))
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}

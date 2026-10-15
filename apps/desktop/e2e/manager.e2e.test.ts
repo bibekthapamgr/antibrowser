@@ -1831,7 +1831,14 @@ describe('billing (milestone 11)', () => {
     expect(await opened(page)).toContain('checkout:team');
     expect(await text(page, 'main')).toContain('Waiting for the payment provider to confirm');
     await toastContains(page, 'Subscription updated: Team');
-    await page.waitForFunction(() => document.querySelector('main')?.textContent?.includes('Team · Active'));
+    // The plan card names the plan and shows its state as a pill.
+    await page.waitForFunction(() => {
+      const hero = document.querySelector('main .plan-hero[data-state=active]');
+      return (
+        hero?.querySelector('.plan-hero__name')?.textContent === 'Team' &&
+        hero.textContent?.includes('Active')
+      );
+    });
     // Now managed in the portal: no plan list, an invoice to open.
     expect(await page.$('.plan-list')).toBeNull();
     await clickButton(page, 'main', 'Manage subscription…');
@@ -1855,7 +1862,7 @@ describe('billing (milestone 11)', () => {
     expect(banner).toContain('Nothing is deleted.');
     await clickButton(page, '.billing-banner', 'Open billing');
     await page.waitForSelector('#org-billing-title');
-    expect(await text(page, 'main .notice[data-state=restricted]')).toContain(
+    expect(await text(page, 'main .plan-hero[data-state=restricted]')).toContain(
       'The subscription needs attention.',
     );
     const violations = await axeSerious(page);

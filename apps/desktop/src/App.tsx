@@ -39,6 +39,7 @@ import {
 } from './screens.tsx';
 import { withClient } from './status.tsx';
 import { seatUsage, TeamScreen } from './team-access.tsx';
+import { initials } from './ui.tsx';
 import { UpdateBanner } from './updates.tsx';
 import {
   AgencyTools,
@@ -97,13 +98,6 @@ function NavIcon({ view }: { view: View }) {
     </svg>
   );
 }
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return (
-    ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '')).toUpperCase() ||
-    '?'
-  );
-}
 
 type SettingsTab = 'general' | 'account' | 'updates' | 'health' | 'workspace';
 const SETTINGS_TABS: [SettingsTab, string][] = [
@@ -113,6 +107,14 @@ const SETTINGS_TABS: [SettingsTab, string][] = [
   ['health', 'Health and diagnostics'],
   ['workspace', 'Workspace'],
 ];
+/** Icons of the settings sections (same outline style as the sidebar). */
+const SETTINGS_ICON: Record<SettingsTab, string> = {
+  general: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
+  account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-3.5 4.4-5 8-5s6.5 1.5 8 5',
+  updates: 'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14',
+  health: 'M3 12h4l2.5-6 5 12 2.5-6h4',
+  workspace: 'M4 20V8l8-4 8 4v12M9 20v-6h6v6',
+};
 type OrgWorkspace = Workspaces['items'][number];
 /** What the current account workspace offers this person (loaded per workspace; never shown for another one). */
 interface Scope {
@@ -1129,72 +1131,90 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
                 loadingWorkspace
               ))}
             {view === 'settings' && (
-              <div className="stack">
-                <nav aria-label="Settings sections" className="org-nav settings-nav">
-                  {SETTINGS_TABS.filter(([t]) => t !== 'workspace' || !!ready).map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className="pb-button"
-                      aria-current={settingsTab === id ? 'page' : undefined}
-                      onClick={() => setSettingsTab(id)}
-                    >
-                      {label}
-                    </button>
-                  ))}
+              <div className="settings-layout">
+                <nav aria-label="Settings sections" className="settings-nav">
+                  <p className="settings-nav__title" aria-hidden="true">
+                    Settings
+                  </p>
+                  <ul>
+                    {SETTINGS_TABS.filter(([t]) => t !== 'workspace' || !!ready).map(([id, label]) => (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          className="settings-nav__item"
+                          aria-current={settingsTab === id ? 'page' : undefined}
+                          onClick={() => setSettingsTab(id)}
+                        >
+                          <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d={SETTINGS_ICON[id]} />
+                          </svg>
+                          {label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </nav>
-                {settingsTab === 'general' && (
-                  <SettingsScreen
-                    backend={backend}
-                    app={app}
-                    refreshKey={refreshKey}
-                    onChanged={refresh}
-                    notify={notify}
-                    signedIn={signedIn}
-                  />
-                )}
-                {settingsTab === 'account' && (
-                  <AccountScreen
-                    backend={backend}
-                    account={account}
-                    refreshKey={refreshKey}
-                    notify={notify}
-                    onChanged={refreshAccount}
-                    onOpenOrganization={async (id) => {
-                      await refreshAccount();
-                      chooseScope(id);
-                      setView('profiles');
-                    }}
-                  />
-                )}
-                {settingsTab === 'updates' && (
-                  <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
-                )}
-                {settingsTab === 'health' && (
-                  <HealthScreen
-                    backend={backend}
-                    notify={notify}
-                    refreshKey={refreshKey}
-                    tab={healthTab}
-                    onTab={setHealthTab}
-                    onNavigate={(v) => go(v)}
-                  />
-                )}
-                {settingsTab === 'workspace' && ready && common && (
-                  <section className="screen stack" aria-labelledby="ws-settings-title">
-                    <h1 id="ws-settings-title">Workspace</h1>
-                    <WorkspaceSettings
-                      {...common}
-                      org={ready.org}
+                <div className="settings-layout__content">
+                  {settingsTab === 'general' && (
+                    <SettingsScreen
+                      backend={backend}
                       app={app}
-                      developerTools={ready.developerTools}
-                      onChanged={() => {
-                        setScopeNonce((n) => n + 1);
-                        void refreshAccount();
+                      refreshKey={refreshKey}
+                      onChanged={refresh}
+                      notify={notify}
+                      signedIn={signedIn}
+                    />
+                  )}
+                  {settingsTab === 'account' && (
+                    <AccountScreen
+                      backend={backend}
+                      account={account}
+                      refreshKey={refreshKey}
+                      notify={notify}
+                      onChanged={refreshAccount}
+                      onOpenOrganization={async (id) => {
+                        await refreshAccount();
+                        chooseScope(id);
+                        setView('profiles');
                       }}
                     />
-                  </section>
-                )}
+                  )}
+                  {settingsTab === 'updates' && (
+                    <DownloadsScreen backend={backend} refreshKey={refreshKey} notify={notify} />
+                  )}
+                  {settingsTab === 'health' && (
+                    <HealthScreen
+                      backend={backend}
+                      notify={notify}
+                      refreshKey={refreshKey}
+                      tab={healthTab}
+                      onTab={setHealthTab}
+                      onNavigate={(v) => go(v)}
+                    />
+                  )}
+                  {settingsTab === 'workspace' && ready && common && (
+                    <section className="screen stack" aria-labelledby="ws-settings-title">
+                      <header className="toolbar">
+                        <div className="toolbar__title">
+                          <h1 id="ws-settings-title">Workspace</h1>
+                          <p className="muted small">
+                            Settings of {ready.org.name}, shared by everyone in it.
+                          </p>
+                        </div>
+                      </header>
+                      <WorkspaceSettings
+                        {...common}
+                        org={ready.org}
+                        app={app}
+                        developerTools={ready.developerTools}
+                        onChanged={() => {
+                          setScopeNonce((n) => n + 1);
+                          void refreshAccount();
+                        }}
+                      />
+                    </section>
+                  )}
+                </div>
               </div>
             )}
           </Fragment>

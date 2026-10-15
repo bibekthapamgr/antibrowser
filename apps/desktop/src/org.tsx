@@ -27,8 +27,9 @@ import { OrgClientDashboard } from './clients.tsx';
 import { ApiFailure, can, get, ROLE_HELP, ROLE_LABEL, send } from './cloud.ts';
 import { Dialog, useDebounced } from './components.tsx';
 import { OrgExtensionsSection } from './extensions-org.tsx';
-import { type Notify, plural, relative, when } from './status.tsx';
+import { day, type Notify, plural, relative, when } from './status.tsx';
 import { TakeoverDialog } from './team.tsx';
+import { Avatar, Pill } from './ui.tsx';
 
 type Section =
   | 'profiles'
@@ -787,15 +788,16 @@ export function MembersSection(
       {list.data === null ? (
         <p role="status">Loading…</p>
       ) : (
-        <table className="simple records">
+        <table className="simple records members-table">
           <caption className="pb-sr-only">Members</caption>
           <thead>
             <tr>
-              <th scope="col">Name</th>
-              <th scope="col">E-mail</th>
+              <th scope="col">Member</th>
               <th scope="col">Role</th>
-              <th scope="col">Joined</th>
-              <th scope="col">
+              <th scope="col" className="col-date">
+                Joined
+              </th>
+              <th scope="col" className="col-actions">
                 <span className="pb-sr-only">Actions</span>
               </th>
             </tr>
@@ -806,10 +808,17 @@ export function MembersSection(
               return (
                 <tr key={m.user_id}>
                   <th scope="row">
-                    {m.display_name}
-                    {m.user_id === me && <span className="badge">You</span>}
+                    <span className="person">
+                      <Avatar name={m.display_name} />
+                      <span className="person__text">
+                        <span className="person__name">
+                          {m.display_name}
+                          {m.user_id === me && <span className="badge">You</span>}
+                        </span>
+                        <span className="person__meta">{m.email ?? 'No e-mail address'}</span>
+                      </span>
+                    </span>
                   </th>
-                  <td>{m.email ?? '—'}</td>
                   <td>
                     {editable && m.role !== 'owner' ? (
                       <select
@@ -824,11 +833,11 @@ export function MembersSection(
                         ))}
                       </select>
                     ) : (
-                      ROLE_LABEL[m.role]
+                      <span className={`role-pill role-pill--${m.role}`}>{ROLE_LABEL[m.role]}</span>
                     )}
                   </td>
-                  <td>{when(m.created_at)}</td>
-                  <td>
+                  <td className="col-date">{day(m.created_at)}</td>
+                  <td className="col-actions">
                     <div className="cell-actions">
                       {props.onEditAccess &&
                         can(role, 'grants.manage') &&
@@ -836,6 +845,7 @@ export function MembersSection(
                           <button
                             type="button"
                             className="pb-button"
+                            data-variant="ghost"
                             disabled={offline}
                             onClick={() => props.onEditAccess?.(m)}
                           >
@@ -846,6 +856,7 @@ export function MembersSection(
                         <button
                           type="button"
                           className="pb-button"
+                          data-variant="ghost-danger"
                           disabled={offline}
                           onClick={() => setRemoving(m)}
                         >
@@ -853,7 +864,12 @@ export function MembersSection(
                         </button>
                       ) : (
                         editable && (
-                          <button type="button" className="pb-button" onClick={() => setRemoving(m)}>
+                          <button
+                            type="button"
+                            className="pb-button"
+                            data-variant="ghost-danger"
+                            onClick={() => setRemoving(m)}
+                          >
                             Remove<span className="pb-sr-only"> {m.display_name}</span>
                           </button>
                         )
@@ -1216,16 +1232,26 @@ export function InvitationsSection(
         </div>
       )}
       {list.stale !== false && <Stale at={list.stale} />}
+      {props.onInvite && list.data && list.data.items.length === 0 && (
+        <div className="empty-panel">
+          <p>No pending invitations.</p>
+          <p className="muted small">
+            Invite someone by e-mail and choose exactly which profiles they can open.
+          </p>
+        </div>
+      )}
       {list.data && list.data.items.length > 0 && (
-        <table className="simple records">
+        <table className="simple records invitations-table">
           <caption className="pb-sr-only">Invitations</caption>
           <thead>
             <tr>
               <th scope="col">E-mail</th>
               <th scope="col">Role</th>
               <th scope="col">Status</th>
-              <th scope="col">Expires</th>
-              <th scope="col">
+              <th scope="col" className="col-date">
+                Expires
+              </th>
+              <th scope="col" className="col-actions">
                 <span className="pb-sr-only">Actions</span>
               </th>
             </tr>
@@ -1233,30 +1259,40 @@ export function InvitationsSection(
           <tbody>
             {list.data.items.map((i) => (
               <tr key={i.id}>
-                <th scope="row">{i.email}</th>
-                <td>{ROLE_LABEL[i.role]}</td>
+                <th scope="row">
+                  <span className="person">
+                    <Avatar name={i.email} />
+                    <span className="person__name">{i.email}</span>
+                  </span>
+                </th>
+                <td>
+                  <span className={`role-pill role-pill--${i.role}`}>{ROLE_LABEL[i.role]}</span>
+                </td>
                 <td>
                   {
                     {
-                      open: 'Waiting',
-                      accepted: <span className="ok">Accepted</span>,
-                      expired: <span className="muted">Expired</span>,
-                      revoked: <span className="muted">Withdrawn</span>,
+                      open: <Pill tone="accent">Waiting</Pill>,
+                      accepted: <Pill tone="ok">Accepted</Pill>,
+                      expired: <Pill tone="neutral">Expired</Pill>,
+                      revoked: <Pill tone="neutral">Withdrawn</Pill>,
                     }[i.status]
                   }
                 </td>
-                <td>{i.status === 'open' ? when(i.expires_at) : '—'}</td>
-                <td>
-                  {i.status === 'open' && (
-                    <button
-                      type="button"
-                      className="pb-button"
-                      disabled={offline}
-                      onClick={() => withdraw(i)}
-                    >
-                      Withdraw<span className="pb-sr-only"> the invitation for {i.email}</span>
-                    </button>
-                  )}
+                <td className="col-date">{i.status === 'open' ? day(i.expires_at) : '—'}</td>
+                <td className="col-actions">
+                  <div className="cell-actions">
+                    {i.status === 'open' && (
+                      <button
+                        type="button"
+                        className="pb-button"
+                        data-variant="ghost-danger"
+                        disabled={offline}
+                        onClick={() => withdraw(i)}
+                      >
+                        Withdraw<span className="pb-sr-only"> the invitation for {i.email}</span>
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1533,9 +1569,9 @@ export function SettingsSection(
   const [renaming, setRenaming] = useState(false);
   const [copying, setCopying] = useState(false);
   return (
-    <section className="stack" aria-labelledby="org-settings-title">
+    <section className="card stack" aria-labelledby="org-settings-title">
       <h2 id="org-settings-title">Settings</h2>
-      <dl className="facts">
+      <dl className="facts facts--panel">
         <dt>Name</dt>
         <dd>{org.name}</dd>
         <dt>Created</dt>

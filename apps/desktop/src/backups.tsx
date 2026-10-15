@@ -298,7 +298,7 @@ export function BackupSection(props: {
       )}
       <p className="small">
         <strong>Last good copy on this computer:</strong>{' '}
-        {local ? new Date(local.created_at_unix * 1000).toLocaleString() : 'none yet'}
+        {local ? when(new Date(local.created_at_unix * 1000).toISOString()) : 'none yet'}
         {local &&
           (local.sealed
             ? local.openable

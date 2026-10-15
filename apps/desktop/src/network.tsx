@@ -22,7 +22,7 @@ import type {
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog } from './components.tsx';
 import { parseProxyLine } from './proxy-line.ts';
-import type { Notify } from './status.tsx';
+import { type Notify, when } from './status.tsx';
 
 // ---------------------------------------------------------------------------------------------- shared
 /** What went wrong, and what to do about it, for each error a proxy check or launch can report. */
@@ -53,7 +53,7 @@ export const proxyErrorText = (code: string | null | undefined) =>
 
 const TYPE_LABEL: Record<ProxyView['type'], string> = { http: 'HTTP', https: 'HTTPS', socks5: 'SOCKS5' };
 
-const timeOf = (iso: string) => new Date(iso).toLocaleString();
+const timeOf = (iso: string) => when(iso);
 
 export function CheckResult({ check }: { check: NetworkCheck | null }) {
   if (!check) return <span className="muted">Not tested yet</span>;

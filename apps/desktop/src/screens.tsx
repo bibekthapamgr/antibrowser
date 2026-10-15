@@ -7,6 +7,7 @@ import { DiagnosticsExport } from './diagnostics.tsx';
 import { ImportHistory } from './importer.tsx';
 import { LibraryManager } from './library.tsx';
 import type { Notify } from './status.tsx';
+import { OptionCards, Pill, SettingRow, SettingsGroup, Toggle } from './ui.tsx';
 import { AppUpdatesCard } from './updates.tsx';
 
 const HELP_URL = 'https://github.com/bibekthapamgr/antibrowser';
@@ -138,215 +139,243 @@ export function SettingsScreen(props: {
   const reminder = String(setting(app, 'profiles.open_reminder_hours')?.value ?? 'off');
   const memoryWarning = setting(app, 'resources.memory_warning')?.value !== false;
 
+  const choose = async () => {
+    try {
+      const r = await backend.system.selectDownloadDirectory();
+      if (r.path) notify('Download folder updated.');
+      props.onChanged();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  };
+
   return (
     <section className="screen settings" aria-labelledby="settings-title">
-      <h1 id="settings-title">Settings</h1>
+      <header className="toolbar">
+        <div className="toolbar__title">
+          <h1 id="settings-title">Settings</h1>
+          <p className="muted small">How the manager looks and behaves on this computer.</p>
+        </div>
+      </header>
 
-      <fieldset>
-        <legend>Appearance</legend>
-        {(['system', 'light', 'dark'] as const).map((v) => (
-          <label key={v} className="choice">
-            <input
-              type="radio"
-              name="theme"
-              checked={theme === v}
-              onChange={() => update('appearance.theme', v)}
-            />
-            {v === 'system' ? 'Match system' : v === 'light' ? 'Light' : 'Dark'}
-          </label>
-        ))}
-      </fieldset>
-
-      <fieldset>
-        <legend>Profiles view</legend>
-        <label className="choice">
-          <input
-            type="checkbox"
-            checked={setting(app, 'ui.unified_profiles')?.value === false}
-            onChange={(e) => update('ui.unified_profiles', !e.target.checked)}
-          />
-          Use the earlier screens (Organization, Account, Health, Downloads)
-        </label>
-        <p className="muted small">
-          A fallback while you get used to the new layout. Your profiles, workspaces and access do not change
-          either way.
-        </p>
-      </fieldset>
-
-      <fieldset>
-        <legend>When quitting with profiles open</legend>
-        {(
-          [
-            ['ask', 'Ask me each time'],
-            ['keep_running', 'Leave profiles open and quit the manager'],
-            ['close_all', 'Close all profiles, then quit'],
-          ] as const
-        ).map(([v, label]) => (
-          <label key={v} className="choice">
-            <input
-              type="radio"
-              name="close"
-              checked={close === v}
-              onChange={() => update('manager.close_behavior', v)}
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
-
-      <fieldset>
-        <legend>Downloads</legend>
-        <p className="muted small">Where files downloaded in profiles will be saved.</p>
-        <p>
-          <span className="mono">{downloads ?? 'Not chosen yet'}</span>
-        </p>
-        <button
-          type="button"
-          className="pb-button"
-          onClick={async () => {
-            try {
-              const r = await backend.system.selectDownloadDirectory();
-              if (r.path) notify('Download folder updated.');
-              props.onChanged();
-            } catch (e) {
-              notify(errorMessage(e), 'error');
-            }
-          }}
+      <SettingsGroup title="Appearance">
+        <SettingRow
+          title="Theme"
+          description="Match system follows your computer’s light or dark mode."
+          stacked
         >
-          Choose folder…
-        </button>
-        <label className="choice">
-          <input
-            type="checkbox"
-            checked={perClient}
-            onChange={(e) => update('downloads.per_client_folders', e.target.checked)}
-          />
-          Give each client its own folder inside it
-        </label>
-        <p className="muted small">
-          The folder is named after the client (characters a folder name cannot have are replaced). A client
-          can also have a folder of its own (Profiles → choose the client → Client overview), and a profile
-          one of its own. Changes apply the next time a profile opens; nothing already downloaded is moved.
-        </p>
-      </fieldset>
+          {({ titleId }) => (
+            <OptionCards
+              name="theme"
+              value={theme as 'system' | 'light' | 'dark'}
+              labelledBy={titleId}
+              onChange={(v) => update('appearance.theme', v)}
+              options={(['system', 'light', 'dark'] as const).map((v) => ({
+                value: v,
+                label: v === 'system' ? 'Match system' : v === 'light' ? 'Light' : 'Dark',
+                preview: <span className={`theme-preview theme-preview--${v}`} aria-hidden="true" />,
+              }))}
+            />
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Use the earlier screens (Organization, Account, Health, Downloads)"
+          description="A fallback while you get used to the new layout. Your profiles, workspaces and access do not change either way."
+        >
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={setting(app, 'ui.unified_profiles')?.value === false}
+              onChange={(on) => update('ui.unified_profiles', !on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+      </SettingsGroup>
 
-      <fieldset>
-        <legend>Open profiles</legend>
-        <label>
-          Remind me when a profile has been open for
-          <select value={reminder} onChange={(e) => update('profiles.open_reminder_hours', e.target.value)}>
-            <option value="off">Never</option>
-            {['4', '8', '12', '24'].map((h) => (
-              <option key={h} value={h}>
-                {h} hours
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="muted small">
-          A reminder only: profiles are never closed for you, because the app cannot see unsaved work in a
-          page.
-        </p>
-        <label className="choice">
-          <input
-            type="checkbox"
-            checked={memoryWarning}
-            onChange={(e) => update('resources.memory_warning', e.target.checked)}
-          />
-          Warn before opening profiles when free memory looks too low
-        </label>
-        <p className="muted small">
-          Based on what profiles used on this computer (Health → Resources), not on any one website.
-        </p>
-      </fieldset>
+      <SettingsGroup title="Quitting and open profiles">
+        <SettingRow title="When quitting with profiles open" stacked>
+          {({ titleId }) => (
+            <OptionCards
+              name="close"
+              layout="list"
+              value={close as 'ask' | 'keep_running' | 'close_all'}
+              labelledBy={titleId}
+              onChange={(v) => update('manager.close_behavior', v)}
+              options={[
+                { value: 'ask', label: 'Ask me each time' },
+                { value: 'keep_running', label: 'Leave profiles open and quit the manager' },
+                { value: 'close_all', label: 'Close all profiles, then quit' },
+              ]}
+            />
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Remind me when a profile has been open for"
+          description="A reminder only: profiles are never closed for you, because the app cannot see unsaved work in a page."
+        >
+          {({ controlId, descId }) => (
+            <select
+              id={controlId}
+              aria-describedby={descId}
+              value={reminder}
+              onChange={(e) => update('profiles.open_reminder_hours', e.target.value)}
+            >
+              <option value="off">Never</option>
+              {['4', '8', '12', '24'].map((h) => (
+                <option key={h} value={h}>
+                  {h} hours
+                </option>
+              ))}
+            </select>
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Warn before opening profiles when free memory looks too low"
+          description="Based on what profiles used on this computer (Health → Resources), not on any one website."
+        >
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={memoryWarning}
+              onChange={(on) => update('resources.memory_warning', on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+      </SettingsGroup>
 
-      <fieldset>
-        <legend>Trash</legend>
-        <label>
-          Delete profiles in the trash permanently after
-          <select value={retention} onChange={(e) => update('profiles.trash_retention_days', e.target.value)}>
-            {['7', '30', '90'].map((d) => (
-              <option key={d} value={d}>
-                {d} days
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="muted small">
-          Applies to profiles moved to the trash from now on. Permanent deletion removes a profile’s sign-ins
-          and site data from this device; open profiles are never deleted.
-        </p>
-      </fieldset>
+      <SettingsGroup title="Downloads" description="Where files downloaded in profiles will be saved.">
+        <SettingRow
+          title="Download folder"
+          description={<span className="mono">{downloads ?? 'Not chosen yet'}</span>}
+        >
+          {() => (
+            <button type="button" className="pb-button" onClick={choose}>
+              Choose folder…
+            </button>
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Give each client its own folder inside it"
+          description="The folder is named after the client (characters a folder name cannot have are replaced). A client can also have a folder of its own (Profiles → choose the client → Client overview), and a profile one of its own. Changes apply the next time a profile opens; nothing already downloaded is moved."
+        >
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={perClient}
+              onChange={(on) => update('downloads.per_client_folders', on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+      </SettingsGroup>
 
-      <fieldset>
-        <legend>Proxies</legend>
-        <label className="choice">
-          <input
-            type="checkbox"
-            checked={localProxies}
-            onChange={(e) => update('proxies.allow_private_addresses', e.target.checked)}
-          />
-          Allow proxies on this computer or my local network
-        </label>
-        <p className="muted small">
-          Off by default. Turn it on to use a proxy running on this computer (127.0.0.1) or another device on
-          your network. Link-local and cloud metadata addresses (such as 169.254.169.254) are never allowed.
-        </p>
-      </fieldset>
+      <SettingsGroup title="Trash and proxies">
+        <SettingRow
+          labelFor
+          title="Delete profiles in the trash permanently after"
+          description="Applies to profiles moved to the trash from now on. Permanent deletion removes a profile’s sign-ins and site data from this device; open profiles are never deleted."
+        >
+          {({ controlId, descId }) => (
+            <select
+              id={controlId}
+              aria-describedby={descId}
+              value={retention}
+              onChange={(e) => update('profiles.trash_retention_days', e.target.value)}
+            >
+              {['7', '30', '90'].map((d) => (
+                <option key={d} value={d}>
+                  {d} days
+                </option>
+              ))}
+            </select>
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Allow proxies on this computer or my local network"
+          description="Off by default. Turn it on to use a proxy running on this computer (127.0.0.1) or another device on your network. Link-local and cloud metadata addresses (such as 169.254.169.254) are never allowed."
+        >
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={localProxies}
+              onChange={(on) => update('proxies.allow_private_addresses', on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+      </SettingsGroup>
 
       <ThisComputerAutomation backend={backend} notify={notify} signedIn={!!props.signedIn} />
 
       <h2 className="section-title">Clients, tags and templates</h2>
       <LibraryManager backend={backend} notify={notify} refreshKey={props.refreshKey} />
 
-      <fieldset>
-        <legend>Privacy</legend>
-        <label className="choice">
-          <input
-            type="checkbox"
-            checked={crash}
-            onChange={(e) => update('privacy.crash_reports', e.target.checked)}
-          />
-          Allow sending crash reports
-        </label>
-        <p className="muted small">
-          Off by default. Crash reports are saved on this device with personal details removed. Nothing is
-          sent unless you turn this on, and no sending service exists yet.
-        </p>
-        <p className="small">
-          Secure storage (system keychain):{' '}
-          {app.keychain.available ? (
-            <span className="ok">available</span>
-          ) : (
-            <span className="warn">
-              not available — sign-ins will not be remembered on this device (
-              {app.keychain.reason ?? 'unknown'})
-            </span>
-          )}
-        </p>
-      </fieldset>
-
-      <fieldset>
-        <legend>Help</legend>
-        <button
-          type="button"
-          className="pb-button"
-          onClick={() => backend.system.openExternal(HELP_URL).catch((e) => notify(errorMessage(e), 'error'))}
+      <SettingsGroup title="Privacy and help">
+        <SettingRow
+          labelFor
+          title="Allow sending crash reports"
+          description="Off by default. Crash reports are saved on this device with personal details removed. Nothing is sent unless you turn this on, and no sending service exists yet."
         >
-          Project documentation (opens your browser)
-        </button>
-      </fieldset>
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={crash}
+              onChange={(on) => update('privacy.crash_reports', on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+        <SettingRow
+          title="Secure storage (system keychain)"
+          description={
+            app.keychain.available
+              ? 'Sign-ins are remembered on this device.'
+              : `Sign-ins will not be remembered on this device (${app.keychain.reason ?? 'unknown'}).`
+          }
+        >
+          {() =>
+            app.keychain.available ? <Pill tone="ok">Available</Pill> : <Pill tone="warn">Not available</Pill>
+          }
+        </SettingRow>
+        <SettingRow title="Project documentation" description="Opens in your browser.">
+          {() => (
+            <button
+              type="button"
+              className="pb-button"
+              onClick={() =>
+                backend.system.openExternal(HELP_URL).catch((e) => notify(errorMessage(e), 'error'))
+              }
+            >
+              Open documentation
+            </button>
+          )}
+        </SettingRow>
+      </SettingsGroup>
 
-      <fieldset className="danger">
-        <legend>Remove local data</legend>
-        <p className="muted small">
-          Deletes every profile, its sign-ins and site data, and all settings on this device. Use this before
-          removing the app if you do not want to keep your profiles. This cannot be undone.
-        </p>
-        <button type="button" className="pb-button" data-variant="danger" onClick={() => setConfirming(true)}>
-          Remove all local data…
-        </button>
-      </fieldset>
+      <SettingsGroup title="Remove local data" tone="danger">
+        <SettingRow
+          title="Remove all local data"
+          description="Deletes every profile, its sign-ins and site data, and all settings on this device. Use this before removing the app if you do not want to keep your profiles. This cannot be undone."
+        >
+          {() => (
+            <button
+              type="button"
+              className="pb-button"
+              data-variant="danger"
+              onClick={() => setConfirming(true)}
+            >
+              Remove all local data…
+            </button>
+          )}
+        </SettingRow>
+      </SettingsGroup>
       {confirming && (
         <RemoveDataDialog backend={backend} notify={notify} onClose={() => setConfirming(false)} />
       )}
@@ -435,8 +464,13 @@ export function DownloadsScreen(props: { backend: Backend; refreshKey: number; n
   };
 
   return (
-    <section className="screen" aria-labelledby="downloads-title">
-      <h1 id="downloads-title">Downloads and updates</h1>
+    <section className="screen settings" aria-labelledby="downloads-title">
+      <header className="toolbar">
+        <div className="toolbar__title">
+          <h1 id="downloads-title">Downloads and updates</h1>
+          <p className="muted small">The browser profiles run in, app updates and profile imports.</p>
+        </div>
+      </header>
 
       <div className="card">
         <h2>Browser runtime</h2>

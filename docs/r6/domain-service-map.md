@@ -13,6 +13,9 @@ four values of `/etc/project-browser/public.env`; use different names for stagin
 | `ID_HOST` | Keycloak realm `project-browser-<env>` (sign-in, registration, account page) | `/admin`, `/realms/master`, `/metrics`, `/health` | Keycloak `127.0.0.1:8081` |
 | `FILES_HOST` | presigned upload/download links of `pb-snapshots-<env>` only | `/`, every other bucket | SeaweedFS S3 `127.0.0.1:8333` |
 
+Optional `SITE_ALIASES` (comma-separated, e.g. `www.example.com` or an earlier `SITE_HOST`) answer with a permanent
+redirect (308, path and query kept) to `SITE_HOST`; a name whose DNS does not point at the server yet is left out.
+
 Certificates: Caddy (pinned 2.11.4), ACME with `ACME_EMAIL`, renewed automatically, stored in `/var/lib/pb-proxy`.
 Headers: HSTS one year, `X-Content-Type-Options`, no `Server`. Text responses are compressed (zstd/gzip, R7) except on `FILES_HOST`. No access log (links carry one-time codes and
 signatures). The proxy replaces `X-Forwarded-For`; the API trusts one hop.

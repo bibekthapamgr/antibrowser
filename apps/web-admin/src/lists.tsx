@@ -2,7 +2,17 @@
 import type { AccessRequest, AuditExport, BillingAlert, PlatformAuditEntry } from '@pb/contracts/billing';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { href, PageTitle, Problem, useConsole } from './App.tsx';
-import { ACCESS_LABEL, ALERT_LABEL, when } from './format.ts';
+import { Scroll, SeverityPill } from './admin.tsx';
+import { ACCESS_LABEL, ALERT_LABEL, ALERT_SEVERITY, initials, when } from './format.ts';
+import { EmptyState, Icon, PageHeader, Pill, Skeleton, Toast, type Tone } from './ui.tsx';
+
+const STATE_TONE: Record<AccessRequest['state'], Tone> = {
+  pending: 'warn',
+  approved: 'good',
+  denied: 'bad',
+  revoked: 'neutral',
+  expired: 'neutral',
+};
 
 const STATE_TEXT: Record<AccessRequest['state'], string> = {
   pending: 'Waiting for approval',
@@ -52,103 +62,134 @@ export function RequestsPage() {
 
   return (
     <section className="stack" aria-labelledby="requests-title">
-      <PageTitle>
-        <span id="requests-title">Access requests</span>
-      </PageTitle>
-      <p className="muted">
-        {lead
-          ? 'Approve only with a reason that matches a customer request or ticket. You cannot decide on your own requests.'
-          : 'Your requests. A support lead decides; approved access ends by itself.'}
-      </p>
-      <label className="choice">
-        <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} />{' '}
-        Waiting for approval only
-      </label>
-      {done && (
-        <p className="ok" role="status">
-          {done}
-        </p>
-      )}
+      <PageHeader
+        title={
+          <PageTitle>
+            <span id="requests-title">Access requests</span>
+          </PageTitle>
+        }
+        description={
+          lead
+            ? 'Approve only with a reason that matches a customer request or ticket. You cannot decide on your own requests.'
+            : 'Your requests. A support lead decides; approved access ends by itself.'
+        }
+      />
+      <Toast text={done} onDismiss={() => setDone(null)} />
       <Problem text={problem} />
-      {items && items.length === 0 && <p className="muted">No requests.</p>}
-      {items && items.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Organization</th>
-              <th scope="col">Information</th>
-              <th scope="col">Reason</th>
-              <th scope="col">Requested by</th>
-              <th scope="col">State</th>
-              <th scope="col">
-                <span className="pb-sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((r) => {
-              const own = r.requested_by === staff.user_id;
-              return (
-                <tr key={r.id}>
-                  <td>
-                    <a href={href.org(r.org_id)} className="mono">
-                      {r.org_id}
-                    </a>
-                  </td>
-                  <td>
-                    {ACCESS_LABEL[r.scope]}
-                    <span className="muted small"> · {r.duration_minutes} min</span>
-                  </td>
-                  <td>{r.reason}</td>
-                  <td>
-                    {own ? 'You' : r.requested_by_name}
-                    <span className="muted small"> · {when(r.created_at)}</span>
-                  </td>
-                  <td>
-                    {STATE_TEXT[r.state]}
-                    {r.state === 'approved' && r.expires_at && (
-                      <span className="muted small"> until {when(r.expires_at)}</span>
-                    )}
-                  </td>
-                  <td className="row-actions">
-                    {lead && !own && r.state === 'pending' && (
-                      <>
-                        <button
-                          type="button"
-                          className="pb-button"
-                          data-variant="primary"
-                          aria-label={`Approve ${r.requested_by_name}’s request for ${ACCESS_LABEL[r.scope].toLowerCase()}`}
-                          onClick={() => act(r, 'approve')}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          className="pb-button"
-                          aria-label={`Deny ${r.requested_by_name}’s request for ${ACCESS_LABEL[r.scope].toLowerCase()}`}
-                          onClick={() => act(r, 'deny')}
-                        >
-                          Deny
-                        </button>
-                      </>
-                    )}
-                    {(own || lead) && (r.state === 'pending' || r.state === 'approved') && (
-                      <button
-                        type="button"
-                        className="pb-button"
-                        aria-label={`End the request for ${ACCESS_LABEL[r.scope].toLowerCase()} by ${own ? 'you' : r.requested_by_name}`}
-                        onClick={() => act(r, 'revoke')}
-                      >
-                        End
-                      </button>
-                    )}
-                  </td>
+      <div className="card card--flush">
+        <div className="toolbar">
+          <label className="choice switch">
+            <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} />{' '}
+            Waiting for approval only
+          </label>
+          {items && (
+            <span className="muted small">
+              {items.length === 1 ? '1 request' : `${items.length} requests`}
+            </span>
+          )}
+        </div>
+        {!items && !problem && <Skeleton variant="rows" />}
+        {items && items.length === 0 && (
+          <EmptyState icon="key" title="No requests.">
+            {pendingOnly
+              ? 'Nothing is waiting for a decision. Clear the filter to see earlier requests.'
+              : 'Requests appear here when someone asks to see an organization’s members or activity.'}
+          </EmptyState>
+        )}
+        {items && items.length > 0 && (
+          <Scroll>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Organization</th>
+                  <th scope="col">Information</th>
+                  <th scope="col">Reason</th>
+                  <th scope="col">Requested by</th>
+                  <th scope="col">State</th>
+                  <th scope="col">
+                    <span className="pb-sr-only">Actions</span>
+                  </th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+              </thead>
+              <tbody>
+                {items.map((r) => {
+                  const own = r.requested_by === staff.user_id;
+                  return (
+                    <tr key={r.id}>
+                      <td>
+                        <a href={href.org(r.org_id)} className="mono">
+                          {r.org_id}
+                        </a>
+                      </td>
+                      <td className="nowrap">
+                        {ACCESS_LABEL[r.scope]}
+                        <span className="muted small"> · {r.duration_minutes} min</span>
+                      </td>
+                      <td className="cell-text">{r.reason}</td>
+                      <td>
+                        <span className="cell-entity">
+                          <span className="avatar avatar--sm" aria-hidden="true">
+                            {initials(own ? staff.display_name : r.requested_by_name)}
+                          </span>
+                          <span className="stacked">
+                            <span>{own ? 'You' : r.requested_by_name}</span>
+                            <span className="muted small">{when(r.created_at)}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td>
+                        <span className="stacked">
+                          <Pill tone={STATE_TONE[r.state]}>{STATE_TEXT[r.state]}</Pill>
+                          {r.state === 'approved' && r.expires_at && (
+                            <span className="muted small"> until {when(r.expires_at)}</span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="row-actions">
+                        {lead && !own && r.state === 'pending' && (
+                          <>
+                            <button
+                              type="button"
+                              className="pb-button"
+                              data-variant="primary"
+                              data-size="sm"
+                              aria-label={`Approve ${r.requested_by_name}’s request for ${ACCESS_LABEL[r.scope].toLowerCase()}`}
+                              onClick={() => act(r, 'approve')}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              className="pb-button"
+                              data-size="sm"
+                              aria-label={`Deny ${r.requested_by_name}’s request for ${ACCESS_LABEL[r.scope].toLowerCase()}`}
+                              onClick={() => act(r, 'deny')}
+                            >
+                              Deny
+                            </button>
+                          </>
+                        )}
+                        {(own || lead) && (r.state === 'pending' || r.state === 'approved') && (
+                          <button
+                            type="button"
+                            className="pb-button"
+                            data-size="sm"
+                            data-variant="ghost"
+                            aria-label={`End the request for ${ACCESS_LABEL[r.scope].toLowerCase()} by ${own ? 'you' : r.requested_by_name}`}
+                            onClick={() => act(r, 'revoke')}
+                          >
+                            End
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Scroll>
+        )}
+      </div>
     </section>
   );
 }
@@ -180,78 +221,108 @@ export function AlertsPage() {
       setProblem(explain(e));
     }
   };
+  const open = items?.filter((a) => !a.resolved_at).length ?? 0;
 
   return (
     <section className="stack" aria-labelledby="alerts-title">
-      <PageTitle>
-        <span id="alerts-title">Reconciliation alerts</span>
-      </PageTitle>
-      <p className="muted">
-        Raised by the billing worker when the payment provider and this server disagree, events fail or wait,
-        or money moves back (refunds, disputes). Resolving records that someone handled it; it changes nothing
-        else.
-      </p>
-      <label className="choice">
-        <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} /> Open only
-      </label>
+      <PageHeader
+        title={
+          <PageTitle>
+            <span id="alerts-title">Reconciliation alerts</span>
+          </PageTitle>
+        }
+        description="Raised by the billing worker when the payment provider and this server disagree, events fail or wait, or money moves back (refunds, disputes). Resolving records that someone handled it; it changes nothing else."
+      />
       <Problem text={problem} />
-      {items && items.length === 0 && <p className="muted">No alerts.</p>}
-      {items && items.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Alert</th>
-              <th scope="col">Organization</th>
-              <th scope="col">Detail</th>
-              <th scope="col">Seen</th>
-              <th scope="col">State</th>
-              {admin && (
-                <th scope="col">
-                  <span className="pb-sr-only">Actions</span>
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((a) => (
-              <tr key={a.id} data-open={a.resolved_at ? undefined : 'true'}>
-                <td>
-                  {ALERT_LABEL[a.kind]}
-                  {a.ref && <div className="mono small">{a.ref}</div>}
-                </td>
-                <td>
-                  {a.org_id ? (
-                    <a href={href.org(a.org_id)} className="mono">
-                      {a.org_id}
-                    </a>
-                  ) : (
-                    '—'
+      <div className="card card--flush">
+        <div className="toolbar">
+          <label className="choice switch">
+            <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} /> Open
+            only
+          </label>
+          {items && <span className="muted small">{open === 1 ? '1 open' : `${open} open`}</span>}
+        </div>
+        {!items && !problem && <Skeleton variant="rows" />}
+        {items && items.length === 0 && (
+          <EmptyState icon="check" title="No alerts.">
+            {openOnly
+              ? 'Everything the worker raised has been handled. Clear “Open only” to see resolved alerts.'
+              : 'The billing worker has not raised any alerts.'}
+          </EmptyState>
+        )}
+        {items && items.length > 0 && (
+          <Scroll>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Alert</th>
+                  <th scope="col">Organization</th>
+                  <th scope="col">Detail</th>
+                  <th scope="col">Seen</th>
+                  <th scope="col">State</th>
+                  {admin && (
+                    <th scope="col">
+                      <span className="pb-sr-only">Actions</span>
+                    </th>
                   )}
-                </td>
-                <td>{a.detail}</td>
-                <td>
-                  {a.count}× · last {when(a.last_seen_at)}
-                </td>
-                <td>{a.resolved_at ? `Resolved ${when(a.resolved_at)}` : 'Open'}</td>
-                {admin && (
-                  <td>
-                    {!a.resolved_at && (
-                      <button
-                        type="button"
-                        className="pb-button"
-                        aria-label={`Resolve ${ALERT_LABEL[a.kind]} alert`}
-                        onClick={() => resolve(a)}
-                      >
-                        Resolve
-                      </button>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((a) => (
+                  <tr key={a.id} data-open={a.resolved_at ? undefined : 'true'}>
+                    <td>
+                      <span className="alert-cell">
+                        <SeverityPill severity={ALERT_SEVERITY[a.kind] ?? 'warning'} />
+                        <span>
+                          <span className="alert-cell__name">{ALERT_LABEL[a.kind]}</span>
+                          {a.ref && <span className="mono small muted alert-cell__ref">{a.ref}</span>}
+                        </span>
+                      </span>
+                    </td>
+                    <td>
+                      {a.org_id ? (
+                        <a href={href.org(a.org_id)} className="mono">
+                          {a.org_id}
+                        </a>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td className="cell-text">{a.detail}</td>
+                    <td className="nowrap">
+                      <span className="count">{a.count}×</span>{' '}
+                      <span className="muted small">last {when(a.last_seen_at)}</span>
+                    </td>
+                    <td className="nowrap">
+                      {a.resolved_at ? (
+                        <Pill tone="neutral">Resolved {when(a.resolved_at)}</Pill>
+                      ) : (
+                        <Pill tone="warn">Open</Pill>
+                      )}
+                    </td>
+                    {admin && (
+                      <td className="row-actions">
+                        {!a.resolved_at && (
+                          <button
+                            type="button"
+                            className="pb-button"
+                            data-size="sm"
+                            aria-label={`Resolve ${ALERT_LABEL[a.kind]} alert`}
+                            onClick={() => resolve(a)}
+                          >
+                            <Icon name="check" size={14} />
+                            Resolve
+                          </button>
+                        )}
+                      </td>
                     )}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Scroll>
+        )}
+      </div>
     </section>
   );
 }
@@ -341,68 +412,89 @@ export function AuditPage({ org }: { org: string | null }) {
 
   return (
     <section className="stack" aria-labelledby="audit-title">
-      <PageTitle>
-        <span id="audit-title">Platform audit</span>
-      </PageTitle>
-      <p className="muted">
-        Staff sign-ins, searches, views, access decisions, overrides and resyncs (newest 200). Entries cannot
-        be changed from here.
-      </p>
-      <form className="row" onSubmit={apply}>
-        <label htmlFor="audit-org">Organization id</label>
-        <input
-          id="audit-org"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          pattern="org_[0-9A-HJKMNP-TV-Z]{26}"
-          placeholder="All organizations"
-          spellCheck={false}
-        />
-        <button type="submit" className="pb-button">
-          Filter
-        </button>
-      </form>
-      {staff.roles.includes('support_lead') && (
-        <div className="row">
-          <button type="button" className="pb-button" onClick={() => void exportChain()}>
-            Export a verifiable copy
-          </button>
-          {exported && <span role="status">{exported}</span>}
-        </div>
-      )}
+      <PageHeader
+        title={
+          <PageTitle>
+            <span id="audit-title">Platform audit</span>
+          </PageTitle>
+        }
+        description="Staff sign-ins, searches, views, access decisions, overrides and resyncs (newest 200). Entries cannot be changed from here."
+        actions={
+          staff.roles.includes('support_lead') && (
+            <button type="button" className="pb-button" onClick={() => void exportChain()}>
+              <Icon name="download" size={15} />
+              Export a verifiable copy
+            </button>
+          )
+        }
+      />
+      <Toast text={exported} onDismiss={() => setExported(null)} />
       <Problem text={problem} />
-      {items && items.length === 0 && <p className="muted">No entries.</p>}
-      {items && items.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">When</th>
-              <th scope="col">Who</th>
-              <th scope="col">Action</th>
-              <th scope="col">Organization</th>
-              <th scope="col">Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((e) => (
-              <tr key={e.id}>
-                <td>{when(e.at)}</td>
-                <td className="mono">
-                  {e.actor_user_id === staff.user_id ? 'You' : (e.actor_user_id ?? '—')}
-                </td>
-                <td className="mono">{e.action}</td>
-                <td className="mono">{e.org_id ?? '—'}</td>
-                <td className="mono small details">
-                  {[e.target, Object.keys(e.details).length ? JSON.stringify(e.details) : null]
-                    .filter(Boolean)
-                    .join(' ')
-                    .slice(0, 240) || '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <div className="card card--flush">
+        <form className="toolbar" onSubmit={apply}>
+          <label htmlFor="audit-org" className="toolbar__label">
+            Organization id
+          </label>
+          <span className="input-icon toolbar__grow">
+            <Icon name="search" size={16} />
+            <input
+              id="audit-org"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              pattern="org_[0-9A-HJKMNP-TV-Z]{26}"
+              placeholder="All organizations"
+              spellCheck={false}
+            />
+          </span>
+          <button type="submit" className="pb-button">
+            Filter
+          </button>
+          {items && (
+            <span className="muted small">{items.length === 1 ? '1 entry' : `${items.length} entries`}</span>
+          )}
+        </form>
+        {!items && !problem && <Skeleton variant="rows" />}
+        {items && items.length === 0 && (
+          <EmptyState icon="audit" title="No entries.">
+            {org ? 'Nothing has been recorded for this organization yet.' : 'Nothing has been recorded yet.'}
+          </EmptyState>
+        )}
+        {items && items.length > 0 && (
+          <Scroll tall>
+            <table className="table table--audit">
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Who</th>
+                  <th scope="col">Action</th>
+                  <th scope="col">Organization</th>
+                  <th scope="col">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((e) => (
+                  <tr key={e.id}>
+                    <td className="nowrap">{when(e.at)}</td>
+                    <td className="mono">
+                      {e.actor_user_id === staff.user_id ? 'You' : (e.actor_user_id ?? '—')}
+                    </td>
+                    <td>
+                      <code className="code">{e.action}</code>
+                    </td>
+                    <td className="mono">{e.org_id ?? '—'}</td>
+                    <td className="mono small details">
+                      {[e.target, Object.keys(e.details).length ? JSON.stringify(e.details) : null]
+                        .filter(Boolean)
+                        .join(' ')
+                        .slice(0, 240) || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Scroll>
+        )}
+      </div>
     </section>
   );
 }

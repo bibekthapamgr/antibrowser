@@ -1307,7 +1307,7 @@ fn a_build_default_server_is_applied_when_unset_and_create_account_opens_registr
         ok(invoke(&f, "get_account", json!({})))["server_url"],
         json!(mock.base.clone())
     );
-    // A newer build with another server replaces the old build's server that was never used for an account.
+    // A newer build with another server replaces the old build's server (the person never changed it).
     f.state
         .apply_default_server(Some("https://browser.example.test"))
         .unwrap_or_else(|e| panic!("{e:?}"));

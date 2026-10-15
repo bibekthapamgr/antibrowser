@@ -1,4 +1,5 @@
 import type { ProfileView } from './backend/types.ts';
+import { Pill } from './ui.tsx';
 
 export type Notify = (text: string, tone?: 'info' | 'error') => void;
 
@@ -42,38 +43,45 @@ export const LAST_ERROR: Record<string, string> = {
 };
 
 export function StatusText({ p }: { p: ProfileView }) {
-  if (p.trashed_at) return <span className="muted">In the trash</span>;
+  if (p.trashed_at) return <Pill>In the trash</Pill>;
   switch (p.state) {
     case 'stopped':
-      return <span className="muted">{p.archived_at ? 'Archived' : 'Closed'}</span>;
+      return <Pill>{p.archived_at ? 'Archived' : 'Closed'}</Pill>;
     case 'starting':
-      return <span className="warn">Opening…</span>;
+      return <Pill tone="warn">Opening…</Pill>;
     case 'stopping':
-      return <span className="warn">{p.force_available ? 'Not responding' : 'Closing…'}</span>;
+      return <Pill tone="warn">{p.force_available ? 'Not responding' : 'Closing…'}</Pill>;
     case 'crashed':
-      return <span className="error">Closed unexpectedly</span>;
+      return <Pill tone="error">Closed unexpectedly</Pill>;
     case 'recovering':
-      return <span className="warn">Recovering…</span>;
+      return <Pill tone="warn">Recovering…</Pill>;
     default:
       return (
-        <span className="ok" title={p.adopted ? 'Opened before the manager restarted' : undefined}>
+        <Pill tone="ok" title={p.adopted ? 'Opened before the manager restarted' : undefined}>
           {p.window_open ? 'Open' : 'Running (no window)'}
           {p.adopted ? ' · kept open while the manager was closed' : ''}
-        </span>
+        </Pill>
       );
   }
 }
 
+/** One date style everywhere: "29 Oct 2026", and with a time "29 Oct 2026, 16:32" (never seconds). */
+const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const TIME_FORMAT = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
+const DAY_FORMAT = {
+  format: (d: Date) => `${d.getDate()} ${MONTH.format(d)} ${d.getFullYear()}`,
+};
+
 export function when(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? '—' : `${DAY_FORMAT.format(d)}, ${TIME_FORMAT.format(d)}`;
 }
 
 export function day(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+  return Number.isNaN(d.getTime()) ? '—' : DAY_FORMAT.format(d);
 }
 
 /** "3 hours ago", "yesterday", or a date: compact enough for a table column. */
@@ -89,7 +97,7 @@ export function relative(iso: string | null | undefined): string {
   const days = Math.round(hours / 24);
   if (days === 1) return 'Yesterday';
   if (days < 7) return `${days} days ago`;
-  return new Date(t).toLocaleDateString();
+  return DAY_FORMAT.format(new Date(t));
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) =>

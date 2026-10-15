@@ -23,7 +23,7 @@ import { ProfileDrawer } from './drawer.tsx';
 import { OrgExtensionsSection } from './extensions-org.tsx';
 import { useLauncher } from './launch.tsx';
 import { ActivitySection, ClientsSection, type SectionProps, SettingsSection, Stale } from './org.tsx';
-import { type Notify, plural, relative, when } from './status.tsx';
+import { day, type Notify, plural, relative } from './status.tsx';
 import { OPEN_REFUSED, TakeoverDialog } from './team.tsx';
 
 // ------------------------------------------------------------------------------------------------ status
@@ -311,6 +311,11 @@ export function WorkspaceProfiles(props: {
               : `${plural(total, 'profile')}${props.allowed !== null ? ` of ${props.allowed} on your plan` : ''} in ${org.name}`}
           </p>
         </div>
+        {can(role, 'folders.manage') && (
+          <button type="button" className="pb-button" disabled={offline} onClick={() => setNewFolder(true)}>
+            New folder
+          </button>
+        )}
         {can(role, 'profile.create') && (
           <button
             type="button"
@@ -332,17 +337,18 @@ export function WorkspaceProfiles(props: {
           </button>
         </div>
       )}
-      <p className="muted small">
-        Profiles open in a browser on this computer. One person at a time works in each; closing it saves its
-        backup for the next person.
-      </p>
-      <div className="row workspace-filters">
-        <label className="grow">
-          Search by name
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} />
+      <search className="filters" aria-label="Find profiles">
+        <label className="search">
+          <span className="pb-sr-only">Search by name</span>
+          <input
+            type="search"
+            placeholder="Search by name"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
         </label>
         <label>
-          Folder
+          <span className="pb-sr-only">Folder</span>
           <select value={folder} onChange={(e) => setFolder(e.target.value)}>
             <option value="all">All folders</option>
             {folders.map((f) => (
@@ -353,16 +359,15 @@ export function WorkspaceProfiles(props: {
             <option value="none">Not in a folder</option>
           </select>
         </label>
-        {can(role, 'folders.manage') && (
-          <button type="button" className="pb-button" disabled={offline} onClick={() => setNewFolder(true)}>
-            New folder
-          </button>
-        )}
-      </div>
+        <p className="filters__note muted small">
+          One person at a time works in each profile; closing it saves its backup for the next person.
+        </p>
+      </search>
       {rows === null ? (
         !failed && <p role="status">Loading…</p>
       ) : shown.length === 0 ? (
         <div className="empty-state stack">
+          <h2>{query || folder !== 'all' ? 'No matching profiles' : 'No profiles here yet'}</h2>
           <p className="muted">
             {query || folder !== 'all'
               ? 'No profiles match.'
@@ -377,10 +382,14 @@ export function WorkspaceProfiles(props: {
           <thead>
             <tr>
               <th scope="col">Name</th>
-              <th scope="col">Folder</th>
+              <th scope="col" className="col-folder">
+                Folder
+              </th>
               <th scope="col">Status</th>
-              <th scope="col">Last backup</th>
-              <th scope="col">
+              <th scope="col" className="col-backup">
+                Last backup
+              </th>
+              <th scope="col" className="col-actions">
                 <span className="pb-sr-only">Actions</span>
               </th>
             </tr>
@@ -392,63 +401,32 @@ export function WorkspaceProfiles(props: {
               const mayOpen = (p.capabilities ?? []).includes('launch');
               const busy =
                 st.key === 'downloading' || (c && ['starting', 'stopping'].includes(c.profile.state));
+              const tone = st.tone ?? (st.key === 'available' ? 'neutral' : 'accent');
               return (
                 <tr key={p.id} data-status={st.key}>
                   <th scope="row">{p.name}</th>
-                  <td>
+                  <td className="col-folder">
                     {p.folder_id ? (folderName.get(p.folder_id) ?? '—') : <span className="muted">—</span>}
                   </td>
                   <td>
-                    <span
-                      className={`badge${st.tone ? ` badge--${st.tone}` : ''}`}
-                      title={st.detail}
-                      aria-describedby={undefined}
-                    >
+                    <span className={`badge badge--${tone}`} title={st.detail}>
+                      <span className="pill__dot" aria-hidden="true" />
                       {st.label}
                     </span>
                     <span className="pb-sr-only">: {st.detail}</span>
                   </td>
-                  <td>
+                  <td className="col-backup">
                     {p.last_snapshot_at ? relative(p.last_snapshot_at) : <span className="muted">None</span>}
                   </td>
-                  <td>
+                  <td className="col-actions">
                     <div className="cell-actions">
-                      {st.key === 'running' && c ? (
-                        <button
-                          type="button"
-                          className="pb-button"
-                          disabled={!!busy}
-                          onClick={() => closeRow(p, c)}
-                        >
-                          {c.profile.force_available ? 'Force close' : 'Close'}
-                          <span className="pb-sr-only"> {p.name}</span>
-                        </button>
-                      ) : st.key === 'in_use' && p.in_use && !p.in_use.mine ? (
-                        mayOpen && (
-                          <button
-                            type="button"
-                            className="pb-button"
-                            disabled={offline}
-                            onClick={() => ask(p)}
-                          >
-                            Ask for it<span className="pb-sr-only"> {p.name}</span>
-                          </button>
-                        )
-                      ) : mayOpen ? (
-                        <button
-                          type="button"
-                          className="pb-button"
-                          data-variant="primary"
-                          disabled={offline || !!busy || st.key === 'in_use'}
-                          onClick={() => openRow(p, c)}
-                        >
-                          Open<span className="pb-sr-only"> {p.name}</span>
-                        </button>
-                      ) : (
-                        <span className="muted small">View only</span>
-                      )}
                       {c && (
-                        <button type="button" className="pb-button" onClick={() => showDetails(c)}>
+                        <button
+                          type="button"
+                          className="pb-button"
+                          data-variant="ghost"
+                          onClick={() => showDetails(c)}
+                        >
                           Details<span className="pb-sr-only"> of {p.name}</span>
                         </button>
                       )}
@@ -456,6 +434,7 @@ export function WorkspaceProfiles(props: {
                         <button
                           type="button"
                           className="pb-button"
+                          data-variant="ghost"
                           disabled={offline}
                           onClick={() => setMoving(p)}
                         >
@@ -466,6 +445,7 @@ export function WorkspaceProfiles(props: {
                         <button
                           type="button"
                           className="pb-button"
+                          data-variant="ghost"
                           disabled={offline}
                           onClick={() => setTakingOver(p)}
                         >
@@ -476,11 +456,46 @@ export function WorkspaceProfiles(props: {
                         <button
                           type="button"
                           className="pb-button"
+                          data-variant="ghost-danger"
                           disabled={offline}
                           onClick={() => setDeleting(p)}
                         >
                           Delete<span className="pb-sr-only"> {p.name}</span>
                         </button>
+                      )}
+                      {st.key === 'running' && c ? (
+                        <button
+                          type="button"
+                          className="pb-button row-primary"
+                          disabled={!!busy}
+                          onClick={() => closeRow(p, c)}
+                        >
+                          {c.profile.force_available ? 'Force close' : 'Close'}
+                          <span className="pb-sr-only"> {p.name}</span>
+                        </button>
+                      ) : st.key === 'in_use' && p.in_use && !p.in_use.mine ? (
+                        mayOpen && (
+                          <button
+                            type="button"
+                            className="pb-button row-primary"
+                            disabled={offline}
+                            onClick={() => ask(p)}
+                          >
+                            Ask for it<span className="pb-sr-only"> {p.name}</span>
+                          </button>
+                        )
+                      ) : mayOpen ? (
+                        <button
+                          type="button"
+                          className="pb-button row-primary"
+                          data-variant="primary"
+                          disabled={offline || !!busy || st.key === 'in_use'}
+                          onClick={() => openRow(p, c)}
+                        >
+                          Open<span className="pb-sr-only"> {p.name}</span>
+                        </button>
+                      ) : (
+                        <span className="muted small row-primary">View only</span>
                       )}
                     </div>
                   </td>
@@ -862,24 +877,26 @@ function MoveDialog(props: {
 export function SubscriptionScreen(props: SectionProps & { org: Organization; onChanged: () => void }) {
   const { org, role } = props;
   return (
-    <section className="screen stack" aria-labelledby="subscription-title">
+    <section className="screen stack subscription" aria-labelledby="subscription-title">
       <header className="toolbar">
         <div className="toolbar__title">
           <h1 id="subscription-title">Subscription</h1>
-          <p className="muted small">
-            {org.name}
-            {org.billing ? `: ${org.billing.plan_name}` : ''}
-            {org.billing?.until ? ` · until ${when(org.billing.until)}` : ''}
-          </p>
+          <p className="muted small">The plan, limits and invoices of {org.name}.</p>
         </div>
       </header>
       {can(role, 'billing.read') ? (
         <OrgBillingSection {...props} />
       ) : (
-        <p className="muted">
-          The subscription belongs to this workspace and is managed by its owners and billing managers. Your
-          seat is part of it; you do not need a plan of your own.
-        </p>
+        <div className="empty-panel">
+          <p>
+            {org.billing ? `${org.name} is on ${org.billing.plan_name}` : `${org.name} has a subscription`}
+            {org.billing?.until ? ` until ${day(org.billing.until)}` : ''}.
+          </p>
+          <p className="muted">
+            The subscription belongs to this workspace and is managed by its owners and billing managers. Your
+            seat is part of it; you do not need a plan of your own.
+          </p>
+        </div>
       )}
     </section>
   );

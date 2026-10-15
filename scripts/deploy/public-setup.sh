@@ -43,9 +43,9 @@ step "Public addresses"
 [[ -f $PUBLIC_ENV ]] || die "$PUBLIC_ENV is missing (vps-setup.sh with PB_ENV=staging or prod creates it)"
 PB_ENV=$(sed -n 's/^PB_ENV=//p' "$ENV_MARK" 2>/dev/null || true)
 [[ $PB_ENV == staging || $PB_ENV == prod ]] || die "this server is not a staging or production server ($ENV_MARK)"
-SITE_HOST="" ADMIN_HOST="" ID_HOST="" FILES_HOST="" ACME_EMAIL="" TLS_MODE=public
+SITE_HOST="" ADMIN_HOST="" ID_HOST="" FILES_HOST="" ACME_EMAIL="" TLS_MODE=public SITE_ALIASES=""
 while IFS='=' read -r key value; do
-  [[ $key =~ ^(SITE_HOST|ADMIN_HOST|ID_HOST|FILES_HOST|ACME_EMAIL|TLS_MODE)$ ]] || continue
+  [[ $key =~ ^(SITE_HOST|ADMIN_HOST|ID_HOST|FILES_HOST|ACME_EMAIL|TLS_MODE|SITE_ALIASES)$ ]] || continue
   value=${value%$'\r'}; value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}
   printf -v "$key" '%s' "${value// /}"
 done < "$PUBLIC_ENV"
@@ -78,6 +78,26 @@ for k in SITE_HOST ADMIN_HOST ID_HOST FILES_HOST; do
   fi
 done
 ok "site $SITE_HOST, staff $ADMIN_HOST, sign-in $ID_HOST, files $FILES_HOST ($PB_ENV)"
+
+# Optional other names of the website (www, or an earlier SITE_HOST): permanently redirected to SITE_HOST. A name
+# whose DNS does not lead here yet is left out (no certificate could be issued for it) and reported.
+ALIASES=()
+for a in ${SITE_ALIASES//,/ }; do
+  a=${a,,}
+  [[ $a =~ $host_re ]] || die "$PUBLIC_ENV: SITE_ALIASES: '$a' is not a domain name"
+  for k in SITE_HOST ADMIN_HOST ID_HOST FILES_HOST; do
+    [[ $a != "${!k}" ]] || die "$PUBLIC_ENV: SITE_ALIASES: $a is already used as $k"
+  done
+  addrs=$(getent ahosts "$a" | awk '{print $1}' | sort -u | tr '\n' ' ')
+  hit=0
+  for ip in $addrs; do [[ $mine == *" $ip "* ]] && hit=1; done
+  if (( hit )) || [[ ${PB_DNS_BEHIND_NAT:-} == 1 && -n $addrs ]]; then
+    ALIASES+=("$a")
+  else
+    warn "$a (SITE_ALIASES) does not point at this server yet (${addrs:-no DNS record}); it is left out for now"
+  fi
+done
+(( ${#ALIASES[@]} == 0 )) || ok "also answering on ${ALIASES[*]} (redirected to https://$SITE_HOST)"
 
 step "Reverse proxy (Caddy $CADDY_VERSION)"
 case "$(uname -m)" in
@@ -147,6 +167,8 @@ $SITE_HOST {
 	respond @staff 404
 	reverse_proxy 127.0.0.1:$API_PORT
 }
+
+$(if (( ${#ALIASES[@]} )); then printf '# Other names of the website: permanently redirected (path and query kept).\n%s {\n\timport hardening\n\tredir https://%s{uri} 308\n}\n' "$(printf '%s, ' "${ALIASES[@]}" | sed 's/, $//')" "$SITE_HOST"; fi)
 
 # Staff console and staff API only.
 $ADMIN_HOST {

@@ -327,7 +327,7 @@ export function ProfileDrawer(props: {
               <p className="small">
                 A newer browser version than the one installed last used this profile, so it cannot open here.
                 {status.upgrade_backup
-                  ? ` The copy made just before that browser update (${status.upgrade_backup.runtime_version ?? 'older browser'}, ${new Date(status.upgrade_backup.created_at_unix * 1000).toLocaleDateString()}) opens with the installed browser; changes made since then are kept aside, not deleted.`
+                  ? ` The copy made just before that browser update (${status.upgrade_backup.runtime_version ?? 'older browser'}, ${day(new Date(status.upgrade_backup.created_at_unix * 1000).toISOString())}) opens with the installed browser; changes made since then are kept aside, not deleted.`
                   : ' There is no copy from before that update on this computer.'}
               </p>
               {status.upgrade_backup && (

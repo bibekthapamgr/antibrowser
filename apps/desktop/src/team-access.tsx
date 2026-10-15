@@ -31,6 +31,7 @@ import {
   type SectionProps,
 } from './org.tsx';
 import { type Notify, plural } from './status.tsx';
+import { Meter } from './ui.tsx';
 
 type InvitableRole = 'admin' | 'operator' | 'viewer' | 'billing';
 interface Preset {
@@ -651,6 +652,11 @@ export function TeamScreen(
               : 'Members use seats of this workspace’s plan; they do not need a plan of their own.'}
           </p>
         </div>
+        {props.seats && props.seats.allowed !== null && (
+          <div className="toolbar__meter">
+            <Meter label="Seats" used={props.seats.used} limit={props.seats.allowed} />
+          </div>
+        )}
       </header>
       <MembersSection
         key={`m${nonce}`}

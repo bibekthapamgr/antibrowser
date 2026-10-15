@@ -19,6 +19,7 @@ a plan pays for that lives on the server (workspace profiles beyond the limit, s
 automation) stays enforced by the server regardless.
 
 Build default server: a build's `PB_DEFAULT_SERVER` is applied whenever no server is set; a newer build's server
-replaces the previous build's server if that one was never used for an account; a server the person chose stays.
+replaces the previous build's server when the person never changed it (one sign-out; local data stays); a server the
+person chose stays.
 
 Tests: `account gate` e2e suite (demo flag `gate`), `a_build_default_server_is_applied_when_unset…` (Rust).
