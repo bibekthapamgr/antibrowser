@@ -2444,6 +2444,12 @@ describe('account gate (sign-in and plan required)', () => {
     await page.waitForSelector('.sidebar');
     await page.waitForFunction(() => document.querySelector('h1')?.textContent?.includes('Profiles'));
     expect(await text(page, '.account-chip')).toContain('Demo Person');
+    // No "This computer" outside the plan: profiles made here before are offered for moving into the workspace.
+    const options = await page.$$eval('.workspace option', (os) => os.map((o) => o.textContent ?? ''));
+    expect(options.some((o) => o.includes('This computer'))).toBe(false);
+    await page.waitForFunction(() =>
+      document.querySelector('[aria-label="Profiles on this computer"]')?.textContent?.includes('Move into'),
+    );
     await page.close();
   });
 

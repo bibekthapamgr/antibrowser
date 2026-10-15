@@ -1006,6 +1006,52 @@ export function ThisComputerBanner(props: {
   );
 }
 
+/**
+ * With the account gate there is no "This computer" view: profiles made on this computer before (outside any
+ * workspace and its plan) are offered for moving into the workspace, where they are backed up and can be shared.
+ */
+export function LocalProfilesBanner(props: {
+  backend: Backend;
+  app: AppView;
+  org: { org_id: string; name: string };
+  count: number;
+  notify: Notify;
+  onMoved: (orgId: string) => void;
+}) {
+  const [moving, setMoving] = useState(false);
+  const n = props.count;
+  return (
+    <div className="notice stack" role="note" aria-label="Profiles on this computer">
+      <p>
+        <strong>
+          {n} {n === 1 ? 'profile is' : 'profiles are'} only on this computer.
+        </strong>{' '}
+        {n === 1 ? 'It was' : 'They were'} made before this computer used a workspace. Move{' '}
+        {n === 1 ? 'it' : 'them'} into {props.org.name} to back {n === 1 ? 'it' : 'them'} up and share{' '}
+        {n === 1 ? 'it' : 'them'} with your team; sign-ins inside {n === 1 ? 'it' : 'them'} are kept.
+      </p>
+      <div className="row">
+        <button type="button" className="pb-button" data-variant="primary" onClick={() => setMoving(true)}>
+          Move into {props.org.name}…
+        </button>
+      </div>
+      {moving && (
+        <MoveIntoWorkspace
+          backend={props.backend}
+          app={props.app}
+          targets={[props.org]}
+          notify={props.notify}
+          onClose={() => setMoving(false)}
+          onDone={(orgId) => {
+            setMoving(false);
+            props.onMoved(orgId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /** The R1 adoption: plan (nothing changes), choose, move. Local data stays; each moved profile is linked, once. */
 function MoveIntoWorkspace(props: {
   backend: Backend;

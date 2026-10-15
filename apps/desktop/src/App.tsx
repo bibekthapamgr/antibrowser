@@ -43,6 +43,7 @@ import { initials } from './ui.tsx';
 import { UpdateBanner } from './updates.tsx';
 import {
   AgencyTools,
+  LocalProfilesBanner,
   SubscriptionScreen,
   ThisComputerBanner,
   WorkspaceProfiles,
@@ -334,22 +335,22 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
     [backend, notify, refreshAccount, finishOnboarding],
   );
 
-  // With the account gate, "This computer" (local-only profiles outside any plan) is offered only while it still
-  // holds profiles, so they can be used and moved into the workspace; new work happens in the account workspace.
-  const [localProfiles, setLocalProfiles] = useState<number | null>(null);
+  // With the account gate there is no "This computer" view (local-only profiles sit outside any plan): profiles made
+  // on this computer before are counted, so the workspace can offer to move them in.
+  const [localProfiles, setLocalProfiles] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey reloads
   useEffect(() => {
     if (!requireAccount || !app) return;
     let live = true;
     backend.profiles
-      .query({ limit: 1 })
-      .then((r) => live && setLocalProfiles(r.total))
-      .catch(() => live && setLocalProfiles(null));
+      .query({ limit: 500 })
+      .then((r) => live && setLocalProfiles(r.rows.filter((p) => p.sync_status !== 'shared').length))
+      .catch(() => live && setLocalProfiles(0));
     return () => {
       live = false;
     };
   }, [backend, requireAccount, app?.active_workspace_id, refreshKey]);
-  const showComputer = !requireAccount || orgs.length === 0 || (localProfiles ?? 0) > 0;
+  const showComputer = !requireAccount || orgs.length === 0;
 
   // R3: the effective workspace: the one chosen in this window if it is still one of the person's, else their default
   // workspace, else the first; signed out (or with no workspace) it is this computer.
@@ -783,7 +784,7 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
           onClose={() => setPalette(false)}
           onOpenProfile={(p) => void launcher.open([p])}
           onShowProfile={(p) => {
-            if (unified) chooseScope(COMPUTER);
+            if (unified && showComputer) chooseScope(COMPUTER);
             setView('profiles');
             setShowProfile({ id: p.id, nonce: Date.now() });
           }}
@@ -1060,16 +1061,28 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
             {view === 'profiles' &&
               (orgScope ? (
                 ready && common ? (
-                  <WorkspaceProfiles
-                    backend={backend}
-                    orgId={ready.orgId}
-                    org={ready.org}
-                    refreshKey={refreshKey}
-                    notify={notify}
-                    me={common.me}
-                    allowed={ready.profilesAllowed}
-                    onOpenSubscription={() => setView('subscription')}
-                  />
+                  <>
+                    {requireAccount && localProfiles > 0 && can(ready.org.role, 'profile.create') && (
+                      <LocalProfilesBanner
+                        backend={backend}
+                        app={app}
+                        org={{ org_id: ready.orgId, name: ready.org.name }}
+                        count={localProfiles}
+                        notify={notify}
+                        onMoved={() => setRefreshKey((k) => k + 1)}
+                      />
+                    )}
+                    <WorkspaceProfiles
+                      backend={backend}
+                      orgId={ready.orgId}
+                      org={ready.org}
+                      refreshKey={refreshKey}
+                      notify={notify}
+                      me={common.me}
+                      allowed={ready.profilesAllowed}
+                      onOpenSubscription={() => setView('subscription')}
+                    />
+                  </>
                 ) : (
                   loadingWorkspace
                 )

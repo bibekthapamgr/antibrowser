@@ -10,9 +10,10 @@ only full-window screens (`apps/desktop/src/gate.tsx`):
 | Signed in, no workspace with a usable plan (`trial`, `active`, `past_due`, `grace`) | **Choose a plan** (owners and billing members see the subscription screen; others are asked to contact the owner). |
 | Signed in, server unreachable | Works for 7 days after the last confirmed plan; after that **Can't reach the server**. |
 
-The plan is checked at start, on account changes and every 15 minutes. "This computer" (local-only profiles outside
-any plan) is offered only while it still holds profiles, so earlier profiles can be used and moved into the
-workspace; new work happens in the account workspace, whose profile and seat limits the server enforces.
+The plan is checked at start, on account changes and every 15 minutes. There is no "This computer" view while the
+gate is on (local-only profiles would sit outside every plan limit): profiles made on this computer before are
+counted, and the workspace's Profiles page offers to move them in ("Move into <workspace>…", within the plan's profile
+limit; sign-ins inside them are kept). New profiles are always workspace profiles, whose limits the server enforces.
 
 Limits: the gate runs on the customer's computer, so it is a product boundary, not tamper-proof copy protection; what
 a plan pays for that lives on the server (workspace profiles beyond the limit, sync, backups, team sharing,
