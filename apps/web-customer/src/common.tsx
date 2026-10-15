@@ -24,7 +24,7 @@ const MESSAGES: Record<string, string> = {
     'This invitation was sent to a different e-mail address. Sign out and sign in with the invited address.',
   INVITATION_EXPIRED: 'This invitation has expired or was withdrawn. Ask for a new one.',
   INVITATION_USED: 'This invitation was already used.',
-  WORKSPACE_SUSPENDED: 'This workspace is suspended and cannot be joined.',
+  WORKSPACE_SUSPENDED: 'This workspace is suspended. Nothing was deleted; contact support.',
   PLAN_LIMIT_REACHED: 'This workspace has reached its plan limit. An owner can change the plan in Billing.',
   TERMS_REQUIRED: 'The terms changed. Please review and accept them again.',
   ALREADY_SUBSCRIBED: 'This workspace already has a subscription. Change it with “Manage payment and plan”.',

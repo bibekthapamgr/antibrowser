@@ -3,6 +3,7 @@
  * and the platform audit. What a staff member may do comes from the server on every request; the screens only hide
  * actions their roles cannot take.
  */
+import { type StaffPermission, staffCan } from '@pb/contracts/admin';
 import { BILLING_TIMING, type StaffRole, type SupportSearchResult } from '@pb/contracts/billing';
 import {
   createContext,
@@ -14,6 +15,14 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  CustomerPage,
+  CustomersPage,
+  DashboardPage,
+  OperationsPage,
+  PlansPage,
+  StaffPage,
+} from './admin.tsx';
 import { type ConsoleApi, ConsoleError, type Session, type Staff } from './api.ts';
 import { minutesLeft, ROLE_LABEL, STATE_LABEL, when } from './format.ts';
 import { AlertsPage, AuditPage, RequestsPage } from './lists.tsx';
@@ -25,7 +34,14 @@ export type Route =
   | { page: 'org'; id: string }
   | { page: 'requests' }
   | { page: 'alerts' }
-  | { page: 'audit'; org: string | null };
+  | { page: 'audit'; org: string | null }
+  // R5: business administration.
+  | { page: 'dashboard' }
+  | { page: 'customers' }
+  | { page: 'customer'; id: string }
+  | { page: 'plans' }
+  | { page: 'operations' }
+  | { page: 'staff' };
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
@@ -35,6 +51,14 @@ export function parseRoute(hash: string): Route {
   if (head === 'alerts') return { page: 'alerts' };
   if (head === 'audit')
     return { page: 'audit', org: arg && /^org_[0-9A-HJKMNP-TV-Z]{26}$/.test(arg) ? arg : null };
+  if (head === 'dashboard') return { page: 'dashboard' };
+  if (head === 'customers' && arg && /^org_[0-9A-HJKMNP-TV-Z]{26}$/.test(arg))
+    return { page: 'customer', id: arg };
+  if (head === 'customers') return { page: 'customers' };
+  if (head === 'plans') return { page: 'plans' };
+  if (head === 'operations') return { page: 'operations' };
+  if (head === 'staff') return { page: 'staff' };
+  if (head === 'search') return { page: 'search' };
   return { page: 'search' };
 }
 
@@ -44,6 +68,12 @@ export const href = {
   requests: '#/requests',
   alerts: '#/alerts',
   audit: (org?: string) => (org ? `#/audit/${org}` : '#/audit'),
+  dashboard: '#/dashboard',
+  customers: '#/customers',
+  customer: (id: string) => `#/customers/${id}`,
+  plans: '#/plans',
+  operations: '#/operations',
+  staff: '#/staff',
 };
 
 function useRoute(): Route {
@@ -61,6 +91,8 @@ interface Ctx {
   api: ConsoleApi;
   staff: Staff;
   has: (...roles: StaffRole[]) => boolean;
+  /** R5: a staff permission (STAFF_ROLE_PERMISSIONS; the server checks it again). */
+  can: (permission: StaffPermission) => boolean;
   /** A message for an error; a signed-out answer ends the session instead. */
   explain: (e: unknown) => string;
 }
@@ -249,19 +281,57 @@ function Shell({
     },
     [onEnd],
   );
-  const ctx: Ctx = { api, staff: session.staff, has, explain };
+  const can = useCallback(
+    (permission: StaffPermission) => staffCan(session.staff.roles, permission),
+    [session.staff.roles],
+  );
+  const ctx: Ctx = { api, staff: session.staff, has, can, explain };
+  // R5: whether this session was opened with a one-time code (admin screens need it).
+  const [mfa, setMfa] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .adminMe()
+      .then((me) => live && setMfa(me.mfa))
+      .catch(() => live && setMfa(null));
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  const business = has('platform_owner', 'business_admin', 'business_analyst');
   const signOut = async () => {
     await api.signOut();
     onEnd('You signed out.');
   };
 
+  const support = has('support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
   const nav: { key: Route['page']; label: string; to: string; show: boolean }[] = [
-    { key: 'search', label: 'Organizations', to: href.search, show: true },
+    { key: 'dashboard', label: 'Dashboard', to: href.dashboard, show: can('admin.metrics.read') },
+    { key: 'customers', label: 'Customers', to: href.customers, show: can('admin.customers.read') },
+    { key: 'search', label: 'Organizations', to: href.search, show: support },
     { key: 'requests', label: 'Access requests', to: href.requests, show: true },
-    { key: 'alerts', label: 'Alerts', to: href.alerts, show: has('support_lead', 'billing_admin') },
-    { key: 'audit', label: 'Audit', to: href.audit(), show: has('support_lead', 'billing_admin') },
+    { key: 'plans', label: 'Plans', to: href.plans, show: can('admin.catalog.read') },
+    { key: 'operations', label: 'Operations', to: href.operations, show: can('admin.operations.read') },
+    {
+      key: 'alerts',
+      label: 'Alerts',
+      to: href.alerts,
+      show: has('support_lead', 'billing_admin', 'platform_owner', 'business_admin', 'business_analyst'),
+    },
+    {
+      key: 'audit',
+      label: 'Audit',
+      to: href.audit(),
+      show: has('support_lead', 'billing_admin', 'platform_owner'),
+    },
+    { key: 'staff', label: 'Staff', to: href.staff, show: can('admin.staff.read') },
   ];
-  const navKey = route.page === 'org' ? 'search' : route.page;
+  const navKey = route.page === 'org' ? 'search' : route.page === 'customer' ? 'customers' : route.page;
+  // The first page: the dashboard for business roles, the organization search for support.
+  const page: Route =
+    route.page === 'search' && window.location.hash.replace(/^#\/?/, '') === '' && can('admin.metrics.read')
+      ? { page: 'dashboard' }
+      : route;
 
   return (
     <ConsoleCtx.Provider value={ctx}>
@@ -289,7 +359,11 @@ function Shell({
         {nav
           .filter((n) => n.show)
           .map((n) => (
-            <a key={n.key} href={n.to} aria-current={navKey === n.key ? 'page' : undefined}>
+            <a
+              key={n.key}
+              href={n.to}
+              aria-current={(page.page === 'dashboard' ? 'dashboard' : navKey) === n.key ? 'page' : undefined}
+            >
               {n.label}
             </a>
           ))}
@@ -300,11 +374,23 @@ function Shell({
             The session ends in {left} minute{left === 1 ? '' : 's'}; sign in again afterwards.
           </p>
         )}
-        {route.page === 'search' && <SearchPage />}
-        {route.page === 'org' && <OrgPage key={route.id} orgId={route.id} />}
-        {route.page === 'requests' && <RequestsPage />}
-        {route.page === 'alerts' && <AlertsPage />}
-        {route.page === 'audit' && <AuditPage key={route.org ?? ''} org={route.org} />}
+        {business && mfa === false && (
+          <p className="warn" role="alert">
+            This session was opened without your one-time code. Business screens stay closed: sign out and
+            sign in again with your code.
+          </p>
+        )}
+        {page.page === 'search' && <SearchPage />}
+        {page.page === 'org' && <OrgPage key={page.id} orgId={page.id} />}
+        {page.page === 'requests' && <RequestsPage />}
+        {page.page === 'alerts' && <AlertsPage />}
+        {page.page === 'audit' && <AuditPage key={page.org ?? ''} org={page.org} />}
+        {page.page === 'dashboard' && <DashboardPage />}
+        {page.page === 'customers' && <CustomersPage />}
+        {page.page === 'customer' && <CustomerPage key={page.id} orgId={page.id} />}
+        {page.page === 'plans' && <PlansPage />}
+        {page.page === 'operations' && <OperationsPage />}
+        {page.page === 'staff' && <StaffPage />}
       </main>
     </ConsoleCtx.Provider>
   );

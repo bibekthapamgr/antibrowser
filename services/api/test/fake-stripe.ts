@@ -20,6 +20,16 @@ export interface FakeStripe {
   prices: { starter: string; team: string; agency: string; teamYear: string };
   /** R4: changes a price object (e.g. `{ active: false }`, a tax behavior). */
   setPrice(id: string, patch: Obj): void;
+  /** R5: adds a price object (another currency, an interval count) and returns its id. */
+  addPrice(p: {
+    unit_amount: number;
+    currency: string;
+    interval: 'month' | 'year';
+    interval_count?: number;
+  }): string;
+  /** R5: products, prices and portal configurations created through the API (console publishing). */
+  products: Map<string, Obj>;
+  portalConfigurations: Map<string, Obj>;
   /** Every request received: method, path, decoded form or query, selected headers. */
   requests: {
     method: string;
@@ -138,6 +148,8 @@ export async function fakeStripe(): Promise<FakeStripe> {
   const sessions = new Map<string, Obj>();
   const invoices = new Map<string, Obj>();
   const charges = new Map<string, Obj>();
+  const products = new Map<string, Obj>();
+  const portalConfigurations = new Map<string, Obj>();
   const disputes = new Map<string, Obj>();
   const idem = new Map<string, Obj>();
   const requests: FakeStripe['requests'] = [];
@@ -199,6 +211,21 @@ export async function fakeStripe(): Promise<FakeStripe> {
       const p = priceObjects.get(id);
       if (p) Object.assign(p, patch);
     },
+    addPrice(p) {
+      const id = `price_extra${rnd(8)}`;
+      priceObjects.set(id, {
+        id,
+        object: 'price',
+        unit_amount: p.unit_amount,
+        currency: p.currency,
+        recurring: { interval: p.interval, interval_count: p.interval_count ?? 1 },
+        tax_behavior: 'exclusive',
+        active: true,
+      });
+      return id;
+    },
+    products,
+    portalConfigurations,
     requests,
     down: false,
     customers,
@@ -294,7 +321,16 @@ export async function fakeStripe(): Promise<FakeStripe> {
       return sub;
     },
     refund(customer) {
-      const ch = { id: `ch_${rnd()}`, object: 'charge', customer, refunded: true };
+      const ch = {
+        id: `ch_${rnd()}`,
+        object: 'charge',
+        customer,
+        refunded: true,
+        amount: 4900,
+        amount_refunded: 4900,
+        currency: 'usd',
+        created: now(),
+      };
       charges.set(ch.id, ch);
       return [fake.event('charge.refunded', ch)];
     },
@@ -403,6 +439,69 @@ export async function fakeStripe(): Promise<FakeStripe> {
         data: [...store.values()].filter((o) => o.customer === params.customer),
         has_more: false,
       });
+    // R5: console publishing — products, prices by lookup key, portal configurations.
+    if (req.method === 'GET' && path.startsWith('/v1/products/')) {
+      const found = products.get(decodeURIComponent(path.slice('/v1/products/'.length)));
+      return found ? send(200, found) : missing();
+    }
+    if (req.method === 'POST' && path === '/v1/products') {
+      const id = params.id ?? `prod_${rnd()}`;
+      if (products.has(id)) {
+        return send(400, { error: { type: 'invalid_request_error', code: 'resource_already_exists' } });
+      }
+      const product = {
+        id,
+        object: 'product',
+        name: params.name,
+        metadata: { pb_plan: params['metadata[pb_plan]'] },
+      };
+      products.set(id, product);
+      return remember(product);
+    }
+    if (req.method === 'GET' && path === '/v1/prices') {
+      const keys = Object.entries(params)
+        .filter(([k]) => k.startsWith('lookup_keys'))
+        .map(([, v]) => v);
+      return send(200, {
+        object: 'list',
+        data: [...priceObjects.values()].filter(
+          (p) => keys.includes(p.lookup_key as string) && (params.active !== 'true' || p.active !== false),
+        ),
+        has_more: false,
+      });
+    }
+    if (req.method === 'POST' && path === '/v1/prices') {
+      if (!products.has(params.product ?? '')) return missing();
+      const id = `price_pub${rnd(10)}`;
+      const price = {
+        id,
+        object: 'price',
+        product: params.product,
+        unit_amount: Number(params.unit_amount),
+        currency: params.currency,
+        recurring: { interval: params['recurring[interval]'], interval_count: 1 },
+        lookup_key: params.lookup_key,
+        tax_behavior: 'unspecified',
+        active: true,
+        metadata: { pb_plan: params['metadata[pb_plan]'] },
+      };
+      priceObjects.set(id, price);
+      return remember(price);
+    }
+    if (req.method === 'GET' && path === '/v1/billing_portal/configurations') {
+      return send(200, { object: 'list', data: [...portalConfigurations.values()], has_more: false });
+    }
+    if (req.method === 'POST' && path === '/v1/billing_portal/configurations') {
+      const id = `bpc_${rnd(16)}`;
+      const conf = {
+        id,
+        object: 'billing_portal.configuration',
+        active: true,
+        metadata: { pb_prices: params['metadata[pb_prices]'] },
+      };
+      portalConfigurations.set(id, conf);
+      return remember(conf);
+    }
     if (req.method === 'GET' && path === '/v1/subscriptions') return listOf(subscriptions);
     if (req.method === 'GET' && path === '/v1/invoices') return listOf(invoices);
     const readable: [RegExp, Map<string, Obj>][] = [

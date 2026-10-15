@@ -36,6 +36,8 @@ export interface Principal {
   web?: { idHash: string };
   staff?: {
     roles: StaffRole[];
+    /** R5: the console session was opened with a second factor. */
+    mfa: boolean;
     /** Milestone 12: an active break-glass grant, for the organizations it names only. */
     breakGlass: { id: string; expiresAt: string; orgIds: string[] } | null;
   };
@@ -69,11 +71,12 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
       const { rows } = await withTx(pool, { orgId: null, userId: claims.userId }, (c) =>
         c.query<{
           roles: StaffRole[];
+          mfa: boolean;
           bg_id: string | null;
           bg_until: string | null;
           bg_orgs: string[] | null;
         }>(
-          `select p.roles, g.id as bg_id, to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as bg_until,
+          `select p.roles, s.mfa, g.id as bg_id, to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as bg_until,
                   g.org_ids as bg_orgs
              from staff_sessions s join platform_staff p on p.user_id = s.user_id
              join users u on u.id = s.user_id
@@ -96,6 +99,7 @@ export function createAuthenticator(config: AppConfig, pool: pg.Pool, keys: Sess
         authTime: claims.authTime,
         staff: {
           roles: row.roles,
+          mfa: row.mfa,
           breakGlass:
             row.bg_id && row.bg_until && row.bg_orgs
               ? { id: row.bg_id, expiresAt: row.bg_until, orgIds: row.bg_orgs }

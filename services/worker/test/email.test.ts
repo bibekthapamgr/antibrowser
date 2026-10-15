@@ -10,7 +10,7 @@ import { newId } from '@pb/contracts';
 import nodemailer from 'nodemailer';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type EmailDeps, processEmailTasks } from '../src/email.ts';
+import { type EmailDeps, expireFailedEmail, processEmailTasks } from '../src/email.ts';
 import { type EmailKind, renderEmail } from '../src/email-templates.ts';
 import { type SmtpSink, startSmtpSink } from './smtp-sink.ts';
 
@@ -138,11 +138,15 @@ describe('sending', () => {
   it('a refused recipient fails permanently; an unreachable server is retried later', async () => {
     const refused = await queue('welcome', 'reject-me@people.test', { display_name: 'R' });
     await processEmailTasks(deps());
-    expect(await task(refused)).toMatchObject({
-      state: 'failed',
-      last_error: 'smtp_rejected',
-      payload_enc: null,
-    });
+    // R5: a given-up e-mail keeps its sealed contents for a retry from the console, then they are erased.
+    const failed = await task(refused);
+    expect(failed).toMatchObject({ state: 'failed', last_error: 'smtp_rejected' });
+    expect(failed?.payload_enc).not.toBeNull();
+    await owner.query("update email_tasks set created_at = now() - interval '8 days' where id = $1", [
+      refused,
+    ]);
+    expect(await expireFailedEmail(worker)).toBeGreaterThanOrEqual(1);
+    expect(await task(refused)).toMatchObject({ state: 'failed', payload_enc: null });
 
     const later = await queue('welcome', 'later@people.test', { display_name: 'L' });
     const down = nodemailer.createTransport({
@@ -234,5 +238,28 @@ describe('R4 e-mails', () => {
     expect(trial.text).toContain('turn reminders off');
     const deletion = renderEmail('deletion_request', { user_id: 'usr_01J9ZSEED0U100000000000000' }, 'PB');
     expect(deletion.subject).toContain('usr_01J9ZSEED0U100000000000000');
+  });
+
+  it('R5: restriction notices say what still works and never carry the staff member’s reason', () => {
+    const pay = renderEmail(
+      'restriction_notice',
+      { workspace_name: 'Acme', restriction: 'payment', scope: 'workspace', phase: 'applied', until: '' },
+      'Project Browser',
+    );
+    expect(pay.subject).toBe('Project Browser: restriction notice');
+    expect(pay.text).toContain('exported and deleted');
+    expect(pay.text).toContain('Nothing was deleted.');
+    const sec = renderEmail(
+      'restriction_notice',
+      { workspace_name: 'Acme', restriction: 'security', scope: 'account', phase: 'applied', until: '' },
+      'Project Browser',
+    );
+    expect(sec.text).toContain('Your account was suspended');
+    const lifted = renderEmail(
+      'restriction_notice',
+      { workspace_name: 'Acme', restriction: 'payment', scope: 'workspace', phase: 'lifted' },
+      'Project Browser',
+    );
+    expect(lifted.subject).toBe('Project Browser: restriction lifted');
   });
 });

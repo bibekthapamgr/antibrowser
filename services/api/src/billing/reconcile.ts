@@ -13,7 +13,7 @@
  * Nothing here deletes customer data. No payload or personal data is logged.
  */
 import { createHash } from 'node:crypto';
-import { catalogPlan, newId, planOfPriceKey } from '@pb/contracts';
+import { newId, planOfPriceKey } from '@pb/contracts';
 import type pg from 'pg';
 import { audit } from '../audit.ts';
 import { withTx } from '../db.ts';
@@ -114,6 +114,26 @@ function planOfPrices(
     if (plan) return plan;
   }
   return null;
+}
+
+/**
+ * R5: the subscription's (first priced) item as billed — list price × quantity per interval — for recurring revenue.
+ * Nulls when the provider sent no usable price (counted as a reconciliation gap, never guessed).
+ */
+function priceFacts(sub: StripeSubscription): unknown[] {
+  const item = sub.items.find((i) => i.unitAmount !== null && i.currency && i.interval);
+  if (!item || !/^price_[A-Za-z0-9_]{1,80}$/.test(item.priceId) || !/^[a-z]{3}$/.test(item.currency ?? '')) {
+    return [null, null, null, null, null, null, null];
+  }
+  return [
+    item.priceId,
+    item.currency,
+    item.unitAmount,
+    item.interval,
+    Math.min(365, item.intervalCount),
+    item.quantity,
+    item.taxBehavior,
+  ];
 }
 
 /** Provider status -> stored state (null: an unfinished checkout, which changes nothing). */
@@ -224,7 +244,14 @@ export async function applySubscription(
     }
     const next = stateOf(sub, row, deps.graceDays);
     if (!next) return { outcome: 'incomplete', stateChanged: false, planChanged: false, effective: null };
-    let plan = planOfPrices(deps.prices, sub.priceIds);
+    // R5: published prices (plan_prices) first, then the bootstrap setting.
+    const published = await c.query<{ plan_id: string; plan_version: number }>(
+      'select plan_id, plan_version from plan_prices where provider_price_id = any($1) limit 1',
+      [sub.priceIds],
+    );
+    let plan = published.rows[0]
+      ? { id: published.rows[0].plan_id, version: published.rows[0].plan_version }
+      : planOfPrices(deps.prices, sub.priceIds);
     if (!plan) {
       await raiseAlert(
         c,
@@ -255,6 +282,8 @@ export async function applySubscription(
               provider_subscription_id = $6, provider_subscription_created = $7, provider_status = $8,
               trial_ends_at = $9, current_period_end = $10, cancel_at_period_end = $11, grace_until = $12,
               canceled_at = $13, provider_fetched_at = $14, synced_at = now(), resync_after = null, resync_requested_at = null,
+              price_id = $15, price_currency = $16, price_amount_minor = $17, price_interval = $18,
+              price_interval_count = $19, price_quantity = $20, price_tax_behavior = $21,
               updated_at = now(), version = version + 1
         where org_id = $1`,
       [
@@ -272,6 +301,7 @@ export async function applySubscription(
         next.graceUntil,
         sub.canceledAt ? new Date(sub.canceledAt * 1000) : null,
         fetchedAt,
+        ...priceFacts(sub),
       ],
     );
     const planChanged = plan.id !== row.plan_id || plan.version !== row.plan_version;
@@ -299,7 +329,11 @@ export async function applySubscription(
       // R4: the people who pay hear about the result (not on the first sight of a subscription that was already
       // active, and once per subscription period).
       const period = sub.currentPeriodEnd ?? 0;
-      const planName = catalogPlan(plan.id, plan.version)?.name ?? plan.id;
+      const named = await c.query<{ name: string }>('select name from plans where id = $1 and version = $2', [
+        plan.id,
+        plan.version,
+      ]);
+      const planName = named.rows[0]?.name ?? plan.id;
       if (
         stateChanged &&
         effective === 'active' &&
@@ -468,7 +502,20 @@ async function processEvent(deps: ReconcileDeps, ev: EventRow): Promise<Outcome>
     return { status: 'processed', orgId };
   }
   if (ev.type === 'charge.refunded' && id?.startsWith('ch_')) {
-    const orgId = await orgForCustomer(deps, await deps.stripe.customerOfCharge(id));
+    const charge = await deps.stripe.getCharge(id);
+    const orgId = await orgForCustomer(deps, charge.customer);
+    // R5: the refunded amount, for the refunds metric (the provider's current total for this charge).
+    if (orgId && /^ch_[A-Za-z0-9]{1,64}$/.test(charge.id) && /^[a-z]{3}$/.test(charge.currency)) {
+      await withTx(deps.pool, { orgId, userId: null }, (c) =>
+        c.query(
+          `insert into billing_refunds (charge_id, org_id, currency, amount_refunded, provider_created_at)
+           values ($1, $2, $3, $4, $5)
+           on conflict (charge_id) do update set amount_refunded = excluded.amount_refunded, updated_at = now()
+            where billing_refunds.org_id = excluded.org_id`,
+          [charge.id, orgId, charge.currency, charge.amountRefunded, new Date(charge.created * 1000)],
+        ),
+      );
+    }
     await alertAlone(deps, 'refund', orgId, id, 'A charge was refunded (reconcile; nothing is deleted)');
     return { status: 'processed', orgId };
   }

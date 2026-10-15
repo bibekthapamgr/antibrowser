@@ -104,7 +104,15 @@ export interface AppConfig {
     portalConfiguration: string | null;
   };
   /** The internal support console (milestone 11): static files served at /console/ and its own OIDC client. */
-  console: { dir: string | null; oidcClientId: string | null };
+  console: {
+    dir: string | null;
+    oidcClientId: string | null;
+    /**
+     * R5: `amr` values that count as a second factor at staff sign-in (STAFF_MFA_AMR, comma-separated; default
+     * otp,hwk,swk,mfa). Admin routes need a console session whose sign-in carried one of them.
+     */
+    mfaAmr: string[];
+  };
   /** R2 (ADR-0021): the terms a new workspace owner accepts (a version label; the text lives on the website). */
   onboarding: { termsVersion: string; termsUrl: string | null };
   /**
@@ -273,6 +281,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const consoleDir = env.CONSOLE_DIR || null;
   const consoleClient = env.OIDC_CONSOLE_CLIENT_ID || null;
   if (consoleClient && !oidc) problems.push('OIDC_CONSOLE_CLIENT_ID needs OIDC_ISSUER');
+  const mfaAmr = (env.STAFF_MFA_AMR || 'otp,hwk,swk,mfa')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (mfaAmr.length === 0 || mfaAmr.some((v) => !/^[a-z]{2,16}$/.test(v)) || mfaAmr.includes('pwd')) {
+    problems.push('STAFF_MFA_AMR must list second-factor amr values (e.g. otp), never pwd');
+  }
 
   const termsVersion = env.TERMS_VERSION || '2026-10-14';
   if (!/^[A-Za-z0-9._-]{1,32}$/.test(termsVersion))
@@ -353,7 +368,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     kms,
     webhooks: { allowPrivateDestinations: allowPrivateDestinations && local },
     billing,
-    console: { dir: consoleDir, oidcClientId: consoleClient },
+    console: { dir: consoleDir, oidcClientId: consoleClient, mfaAmr },
     onboarding: { termsVersion, termsUrl: env.TERMS_URL || null },
     web,
     email: { taskKey, smtpUrl, from: emailFrom },

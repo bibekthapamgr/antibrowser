@@ -29,12 +29,16 @@ export const REASON_LABEL: Record<BillingReason, string> = {
   paused: 'paused at the provider',
   no_subscription: 'no subscription',
   complimentary: 'complimentary',
+  staff_restriction: 'restricted by staff',
 };
 
 export const ROLE_LABEL: Record<StaffRole, string> = {
   support: 'Support',
   support_lead: 'Support lead',
   billing_admin: 'Billing admin',
+  platform_owner: 'Platform owner',
+  business_admin: 'Business admin',
+  business_analyst: 'Business analyst',
 };
 
 export const ACCESS_LABEL: Record<SupportAccessScope, string> = {
@@ -74,6 +78,7 @@ export const ALERT_LABEL: Record<BillingAlertKind, string> = {
   signature_failures: 'Signature failures',
   resync_failed: 'Resync failing',
   break_glass_used: 'Break-glass access',
+  publish_failed: 'Plan publication failed',
 };
 
 export function when(ts: string | null): string {

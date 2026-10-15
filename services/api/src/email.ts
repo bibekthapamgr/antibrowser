@@ -16,7 +16,8 @@ export type EmailKind =
   | 'payment_failed'
   | 'trial_ending'
   | 'contact_request'
-  | 'deletion_request';
+  | 'deletion_request'
+  | 'restriction_notice';
 export type EmailVars = Record<string, string>;
 
 export function sealEmailVars(key: Buffer, taskId: string, vars: EmailVars): Buffer {

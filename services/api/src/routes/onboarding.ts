@@ -16,7 +16,6 @@
  */
 import {
   ApiError,
-  latestPlan,
   newId,
   OnboardingComplete,
   type OnboardingOutcome,
@@ -27,6 +26,7 @@ import {
 import type pg from 'pg';
 import { type App, type Deps, principalOf } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
+import { catalogOf, newestPlan } from '../billing/catalog.ts';
 import { ts, withTx } from '../db.ts';
 import { enqueueEmail } from '../email.ts';
 import { appendEvent } from '../outbox.ts';
@@ -169,7 +169,8 @@ async function complete(
     );
   }
   if (body.plan_intent !== undefined) {
-    const plan = body.plan_intent === null ? null : latestPlan(body.plan_intent);
+    // R5: the database catalog decides what is sold (the newest version of the plan must be purchasable).
+    const plan = body.plan_intent === null ? null : newestPlan(await catalogOf(deps), body.plan_intent);
     if (body.plan_intent !== null && !plan?.purchasable) {
       throw new ApiError('PLAN_NOT_AVAILABLE', 'This plan is not offered', { plan_id: body.plan_intent });
     }

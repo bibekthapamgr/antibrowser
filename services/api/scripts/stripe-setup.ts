@@ -19,10 +19,16 @@
  * server can see).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { latestPlan, type PlanDefinition, planKey } from '@pb/contracts/billing';
-import { formEncode, STRIPE_API_VERSION } from '../src/billing/stripe.ts';
-
-type Json = Record<string, unknown>;
+import { latestPlan, planKey } from '@pb/contracts/billing';
+import {
+  ensurePortalConfiguration,
+  ensurePrice,
+  ensureProduct,
+  lookupKey,
+  type ProviderCall,
+  productId,
+  providerCaller,
+} from '../src/billing/provision.ts';
 
 export interface StripeSetupOptions {
   key: string;
@@ -43,38 +49,8 @@ export interface StripeSetupResult {
 
 export class StripeSetupError extends Error {}
 
-export function stripeCaller(key: string, apiBase: string) {
-  return async function call(
-    method: 'GET' | 'POST',
-    path: string,
-    params?: Json,
-    idempotencyKey?: string,
-  ): Promise<{ status: number; body: Json }> {
-    const encoded = params ? formEncode(params as never) : '';
-    const url = `${apiBase}${path}${method === 'GET' && encoded ? `?${encoded}` : ''}`;
-    const res = await fetch(url, {
-      method,
-      headers: {
-        authorization: `Bearer ${key}`,
-        'stripe-version': STRIPE_API_VERSION,
-        ...(method === 'POST' ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
-        ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
-      },
-      ...(method === 'POST' ? { body: encoded } : {}),
-    });
-    const body = (await res.json().catch(() => ({}))) as Json;
-    return { status: res.status, body };
-  };
-}
-type Call = ReturnType<typeof stripeCaller>;
-
-const fail = (what: string, r: { status: number; body: Json }) => {
-  const e = (r.body.error ?? {}) as { type?: string; code?: string; message?: string };
-  // Stripe's error message never contains the key; it is shown to help the owner fix the account settings.
-  return new StripeSetupError(
-    `${what}: HTTP ${r.status} ${e.type ?? ''} ${e.code ?? ''} ${e.message ?? ''}`.trim(),
-  );
-};
+/** The provider caller (R5: shared with console publishing, src/billing/provision.ts). */
+export const stripeCaller = (key: string, apiBase: string): ProviderCall => providerCaller(key, apiBase);
 
 /** Minor units of an amount like "49" or "49.50" in a currency (JPY has none, USD two). */
 export function minorUnits(amount: string, currency: string): number {
@@ -90,103 +66,7 @@ export function minorUnits(amount: string, currency: string): number {
   return minor;
 }
 
-export const productId = (plan: PlanDefinition) => `pb_plan_${plan.id}`;
-export const lookupKey = (plan: PlanDefinition, currency: string, interval: string, minor: number) =>
-  `pb_${plan.id}_${plan.version}_${currency}_${interval}_${minor}`;
-
-export async function ensureProduct(call: Call, plan: PlanDefinition): Promise<string> {
-  const id = productId(plan);
-  const got = await call('GET', `/v1/products/${id}`);
-  if (got.status === 200) return id;
-  if (got.status !== 404) throw fail(`product ${id}`, got);
-  const made = await call(
-    'POST',
-    '/v1/products',
-    {
-      id,
-      name: `Project Browser ${plan.name}`,
-      description: plan.description,
-      metadata: { pb_plan: plan.id },
-    },
-    `pb-setup-product-${id}`,
-  );
-  if (made.status !== 200) throw fail(`product ${id}`, made);
-  return id;
-}
-
-export async function ensurePrice(
-  call: Call,
-  plan: PlanDefinition,
-  product: string,
-  currency: string,
-  interval: 'month' | 'year',
-  minor: number,
-): Promise<string> {
-  const key = lookupKey(plan, currency, interval, minor);
-  const found = await call('GET', '/v1/prices', { lookup_keys: [key], active: true, limit: 1 });
-  if (found.status !== 200) throw fail(`price ${key}`, found);
-  const existing = (found.body.data as Json[] | undefined)?.[0];
-  if (existing && typeof existing.id === 'string') return existing.id;
-  const made = await call(
-    'POST',
-    '/v1/prices',
-    {
-      product,
-      currency,
-      unit_amount: minor,
-      recurring: { interval },
-      lookup_key: key,
-      metadata: { pb_plan: planKey(plan.id, plan.version) },
-    },
-    `pb-setup-price-${key}`,
-  );
-  if (made.status !== 200 || typeof made.body.id !== 'string') throw fail(`price ${key}`, made);
-  return made.body.id;
-}
-
-export async function ensurePortalConfiguration(
-  call: Call,
-  offers: { product: string; price: string }[],
-): Promise<string> {
-  const signature = offers
-    .map((o) => o.price)
-    .sort()
-    .join(',');
-  const list = await call('GET', '/v1/billing_portal/configurations', { active: true, limit: 100 });
-  if (list.status !== 200) throw fail('portal configurations', list);
-  const match = ((list.body.data as Json[] | undefined) ?? []).find(
-    (c) => (c.metadata as Json | undefined)?.pb_prices === signature,
-  );
-  if (match && typeof match.id === 'string') return match.id;
-  const made = await call(
-    'POST',
-    '/v1/billing_portal/configurations',
-    {
-      business_profile: { headline: 'Project Browser subscription' },
-      features: {
-        customer_update: { enabled: true, allowed_updates: ['email', 'address', 'tax_id'] },
-        invoice_history: { enabled: true },
-        payment_method_update: { enabled: true },
-        // Cancel at the end of the period: access continues until then and nothing is deleted.
-        subscription_cancel: { enabled: true, mode: 'at_period_end' },
-        subscription_update: {
-          enabled: true,
-          default_allowed_updates: ['price'],
-          proration_behavior: 'create_prorations',
-          // One entry per product with all of its prices (monthly and, where sold, yearly).
-          products: [...new Set(offers.map((o) => o.product))].map((product) => ({
-            product,
-            prices: offers.filter((o) => o.product === product).map((o) => o.price),
-          })),
-        },
-      },
-      metadata: { pb_prices: signature },
-    },
-    `pb-setup-portal-${signature}`.slice(0, 255),
-  );
-  if (made.status !== 200 || typeof made.body.id !== 'string') throw fail('portal configuration', made);
-  return made.body.id;
-}
+export { ensurePortalConfiguration, ensurePrice, ensureProduct, lookupKey, productId };
 
 export async function setupStripe(o: StripeSetupOptions): Promise<StripeSetupResult> {
   if (!/^(sk|rk)_test_/.test(o.key)) {

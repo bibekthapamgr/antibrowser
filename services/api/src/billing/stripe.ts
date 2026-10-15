@@ -30,6 +30,27 @@ export interface StripeSubscription {
   /** The latest period end over the items (API 2025-03-31: periods live on subscription items). */
   currentPeriodEnd: number | null;
   priceIds: string[];
+  /** R5: the items' prices as billed (for recurring-revenue metrics; list prices, before discounts and tax). */
+  items: StripeSubscriptionItem[];
+}
+
+export interface StripeSubscriptionItem {
+  priceId: string;
+  quantity: number;
+  unitAmount: number | null;
+  currency: string | null;
+  interval: 'day' | 'week' | 'month' | 'year' | null;
+  intervalCount: number;
+  taxBehavior: 'inclusive' | 'exclusive' | 'unspecified';
+}
+
+/** R5: a charge's customer and how much of it was refunded (refund metrics). */
+export interface StripeCharge {
+  id: string;
+  customer: string | null;
+  currency: string;
+  amountRefunded: number;
+  created: number;
 }
 
 export interface StripeCheckoutSession {
@@ -135,6 +156,8 @@ export interface Stripe {
   getPrice(id: string): Promise<StripePrice>;
   /** The customer a charge or dispute belongs to (refund and dispute alerts). */
   customerOfCharge(chargeId: string): Promise<string | null>;
+  /** R5: the charge itself (refunded amount for metrics). */
+  getCharge(chargeId: string): Promise<StripeCharge>;
   customerOfDispute(disputeId: string): Promise<string | null>;
 }
 
@@ -192,6 +215,30 @@ export function parseSubscription(raw: unknown): StripeSubscription {
     cancellationReason: str(obj(s.cancellation_details).reason),
     currentPeriodEnd: ends.length ? Math.max(...ends) : legacyEnd,
     priceIds: items.map((i) => idOf(i.price)).filter((p): p is string => p !== null),
+    items: items.flatMap((i) => {
+      const price = obj(i.price);
+      const priceId = idOf(i.price);
+      if (!priceId) return [];
+      const recurring = obj(price.recurring);
+      const interval = str(recurring.interval);
+      return [
+        {
+          priceId,
+          quantity: Math.max(0, Math.trunc(num(i.quantity) ?? 1)),
+          unitAmount: num(price.unit_amount),
+          currency: str(price.currency)?.toLowerCase() ?? null,
+          interval:
+            interval === 'day' || interval === 'week' || interval === 'month' || interval === 'year'
+              ? interval
+              : null,
+          intervalCount: Math.max(1, Math.trunc(num(recurring.interval_count) ?? 1)),
+          taxBehavior:
+            price.tax_behavior === 'inclusive' || price.tax_behavior === 'exclusive'
+              ? price.tax_behavior
+              : 'unspecified',
+        },
+      ];
+    }),
   };
 }
 
@@ -436,6 +483,16 @@ export function createStripe(cfg: StripeConfig, fetchImpl: typeof fetch = fetch)
     },
     async customerOfCharge(chargeId) {
       return idOf(obj(await call('GET', `/v1/charges/${encodeURIComponent(chargeId)}`)).customer);
+    },
+    async getCharge(chargeId) {
+      const ch = obj(await call('GET', `/v1/charges/${encodeURIComponent(chargeId)}`));
+      return {
+        id: need(str(ch.id), 'charge.id'),
+        customer: idOf(ch.customer),
+        currency: (str(ch.currency) ?? 'usd').toLowerCase(),
+        amountRefunded: Math.max(0, Math.trunc(num(ch.amount_refunded) ?? 0)),
+        created: num(ch.created) ?? Math.floor(Date.now() / 1000),
+      };
     },
     async customerOfDispute(disputeId) {
       const d = obj(await call('GET', `/v1/disputes/${encodeURIComponent(disputeId)}`));

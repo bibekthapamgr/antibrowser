@@ -93,10 +93,12 @@ function canonical(v: unknown): string {
 }
 
 /**
- * Milestone 11 (ADR-0018): the plan catalog in packages/contracts is the source of truth. Missing plan versions are
- * added; a released version that differs from the file stops here (versions are immutable: add a new one). Then any
- * organization without a subscription (created before billing existed) is put on the newest `beta` version, which
- * does not end. Runs after the migrations, once the plans table exists.
+ * Plan catalog bootstrap. R5 (ADR-0024): the database is the runtime authority — plan versions published from the
+ * console (source `admin`) and the seeds below. The catalog in packages/contracts only SEEDS versions the database
+ * does not have yet (milestone 11's plans on a new server); it never changes a stored version. A seed that differs
+ * from the stored version of the same number is reported and ignored (released versions are immutable: publish a new
+ * version from the console instead). Then any organization without a subscription (created before billing existed)
+ * is put on the newest stored `beta` version, which does not end. Runs after the migrations.
  */
 export async function syncCatalog(client: pg.Client, log = true): Promise<void> {
   const exists = await client.query("select to_regclass('app.plans') is not null as ok");
@@ -104,6 +106,7 @@ export async function syncCatalog(client: pg.Client, log = true): Promise<void> 
   await client.query('begin');
   try {
     let added = 0;
+    const ignored: string[] = [];
     for (const p of PLAN_CATALOG) {
       const row = {
         name: p.name,
@@ -127,12 +130,14 @@ export async function syncCatalog(client: pg.Client, log = true): Promise<void> 
         );
         added++;
       } else if (canonical(current) !== canonical(row)) {
-        throw new Error(
-          `Plan ${p.id}@${p.version} differs from the database; released plan versions are immutable — add a new version`,
-        );
+        // The stored version stays as it is (customers bought it); the seed is only a starting point.
+        ignored.push(`${p.id}@${p.version}`);
       }
     }
-    const beta = PLAN_CATALOG.filter((p) => p.id === 'beta').sort((a, b) => b.version - a.version)[0];
+    const betaRow = await client.query<{ version: number }>(
+      "select version from app.plans where id = 'beta' order by version desc limit 1",
+    );
+    const beta = betaRow.rows[0] ? { id: 'beta', version: betaRow.rows[0].version } : undefined;
     let backfilled = 0;
     if (beta) {
       const r = await client.query(
@@ -150,6 +155,12 @@ export async function syncCatalog(client: pg.Client, log = true): Promise<void> 
     await client.query('commit');
     if (log && (added || backfilled)) {
       console.log(`plan catalog: ${added} plan version(s) added, ${backfilled} organization(s) put on beta`);
+    }
+    if (log && ignored.length) {
+      console.warn(
+        `plan catalog: seed(s) ${ignored.join(', ')} differ from the stored version(s) and were ignored ` +
+          '(stored versions are immutable; publish a new version from the console)',
+      );
     }
   } catch (err) {
     await client.query('rollback');

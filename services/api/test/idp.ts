@@ -27,6 +27,8 @@ interface IdClaims {
   aud: string | string[];
   azp: string;
   iss: string;
+  /** R5: authentication method references (the staff flow's password and one-time code). */
+  amr: string[];
 }
 
 interface SignOptions {

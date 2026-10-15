@@ -124,3 +124,31 @@ billing and sharing (grants) are never grantable.
   cancellation (owners only). A billing state never widens a role: restricted and canceled organizations refuse the
   creating and opening actions listed in ADR-0018 to every role, and keep reading, closing, backing up, exporting,
   deleting and billing. Support staff are not an organization role (ADR-0018).
+
+## Platform staff (R5, [ADR-0024](adr/0024-business-owner-administration.md))
+
+Staff are not workspace members and workspace owners are not staff. Staff are added only on the server
+(`staff.ts`); the first platform owner is bootstrapped once (`staff.ts bootstrap-owner`) and the last one cannot
+be removed. Every /v1/admin route names one permission below, checks it in the API and again in the database, and
+needs a console session opened with a one-time code. Mapping version 1.
+
+| Permission | `support` | `support_lead` | `billing_admin` | `platform_owner` | `business_admin` | `business_analyst` |
+|---|---|---|---|---|---|---|
+| `admin.metrics.read` | — | — | — | yes | yes | yes |
+| `admin.customers.read` | — | — | — | yes | yes | yes |
+| `admin.customers.contact` | — | — | — | yes | yes | — |
+| `admin.restrictions.payment` | — | — | — | yes | yes | — |
+| `admin.restrictions.security` | — | — | — | yes | — | — |
+| `admin.entitlements.exception` | — | — | yes | yes | yes | — |
+| `admin.catalog.read` | — | — | — | yes | yes | yes |
+| `admin.catalog.edit` | — | — | — | yes | yes | — |
+| `admin.catalog.publish` | — | — | — | yes | yes | — |
+| `admin.operations.read` | — | yes | yes | yes | yes | yes |
+| `admin.operations.act` | — | yes | yes | yes | yes | — |
+| `admin.notes.read` | yes | yes | yes | yes | yes | yes |
+| `admin.notes.write` | yes | yes | yes | yes | yes | — |
+| `admin.staff.read` | — | — | — | yes | — | — |
+| `admin.releases.request` | — | — | — | yes | — | — |
+
+Support roles keep the milestone 11 tools (exact search, time-bound approved access to members and activity, overrides
+for billing admins, alerts and audit for leads); they do not browse all customers.

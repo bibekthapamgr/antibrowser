@@ -24,7 +24,7 @@ import { createStripe } from '@pb/api/billing/stripe';
 import { loadConfig } from '@pb/config/env';
 import { AGENT_TIMING, BILLING_TIMING, WEBHOOK_LIMITS } from '@pb/contracts';
 import pg from 'pg';
-import { type EmailDeps, processEmailTasks, smtpTransport } from './email.ts';
+import { type EmailDeps, expireFailedEmail, processEmailTasks, smtpTransport } from './email.ts';
 import { auditIndexConsumer, processBatch, purgeExpiredIdempotencyKeys, purgeRateLimits } from './outbox.ts';
 import { processWebhooks, sweepAutomation, type WebhookDeps, webhookFanoutConsumer } from './webhooks.ts';
 
@@ -166,6 +166,20 @@ while (running) {
       const counters = await purgeRateLimits(pool);
       if (counters) log('info', 'purged rate-limit counters', { counters });
       await task('billing transitions recorded', () => observeTransitions(pool));
+      // R5: the console's operations page shows when the worker last ran; restrictions whose expiry passed are
+      // undone; failed e-mail that can no longer be retried is erased.
+      await task('heartbeat', async () => {
+        await pool.query(
+          `insert into worker_heartbeats (name, at) values ('worker', now())
+           on conflict (name) do update set at = now()`,
+        );
+        return 0;
+      });
+      await task('restrictions expired', async () => {
+        const r = await pool.query<{ n: number }>('select app.restrictions_expire() as n');
+        return r.rows[0]?.n ?? 0;
+      });
+      await task('failed e-mail contents erased', () => expireFailedEmail(pool));
       // R4: trial-ending reminders (hourly; each person once per trial end), with or without a provider.
       if (config.email.taskKey && Date.now() - lastTrialReminders > 3_600_000) {
         await task('trial reminders queued', () => remindTrials(pool, billingNotify()));

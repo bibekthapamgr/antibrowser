@@ -6,6 +6,7 @@
  *   node --env-file=/etc/project-browser/api.env scripts/staff.ts list
  *   node --env-file=… scripts/staff.ts add <e-mail or usr_…> --roles support[,support_lead][,billing_admin] [--note "…"]
  *   node --env-file=… scripts/staff.ts remove <e-mail or usr_…>
+ *   node --env-file=… scripts/staff.ts bootstrap-owner <e-mail or usr_…>
  *   node --env-file=… scripts/staff.ts break-glass <e-mail or usr_…> --org org_…[,org_…] --reason "…" [--minutes 30]
  *   node --env-file=… scripts/staff.ts break-glass-end <e-mail or usr_…>
  *
@@ -17,6 +18,11 @@
  * The person must have signed in to Project Browser once (so their account exists). Roles: `support` (find
  * organizations, billing overview, ask for sensitive access), `support_lead` (approve others' access requests, read the
  * platform audit), `billing_admin` (entitlement overrides, resync, alerts).
+ *
+ * R5 (ADR-0024): the business roles `platform_owner`, `business_admin` and `business_analyst` (the console's dashboard,
+ * customers, catalog and operations; see STAFF_ROLE_PERMISSIONS). No migration grants them. `bootstrap-owner` makes
+ * the FIRST platform owner, once (it refuses when an active owner exists); after that, owners add others with `add`.
+ * The database refuses to remove, disable or demote the last active platform owner.
  */
 import { randomBytes } from 'node:crypto';
 import { userInfo } from 'node:os';
@@ -90,6 +96,31 @@ export async function addStaff(
   );
   await record(c, 'staff.added', user.id, { roles });
   const row = (await listStaff(c)).find((s) => s.user_id === user.id);
+  if (!row) throw new Error('not saved');
+  return row;
+}
+
+/** R5: the first platform owner, once. Refused when an active platform owner already exists. */
+export async function bootstrapOwner(c: pg.ClientBase, who: string): Promise<StaffRow> {
+  const existing = await c.query(
+    "select 1 from app.platform_staff where 'platform_owner' = any(roles) and disabled_at is null for update",
+  );
+  if (existing.rowCount) {
+    throw new Error(
+      'a platform owner already exists; an owner adds others with: staff.ts add … --roles platform_owner',
+    );
+  }
+  const user = await findUser(c, who);
+  if (!user) throw new Error('no such account; the person must sign in to Project Browser once first');
+  await c.query(
+    `insert into app.platform_staff (user_id, roles, note) values ($1, array['platform_owner'], 'bootstrap owner')
+     on conflict (user_id) do update set roles = (
+       select array_agg(distinct r) from unnest(app.platform_staff.roles || array['platform_owner']) r),
+       disabled_at = null, updated_at = now()`,
+    [user.id],
+  );
+  await record(c, 'staff.owner_bootstrapped', user.id, { operator: serverOperator() });
+  const row = (await listStaff(c)).find((r) => r.user_id === user.id);
   if (!row) throw new Error('not saved');
   return row;
 }
@@ -213,6 +244,11 @@ if (import.meta.main) {
     } else if (command === 'remove' && who) {
       await removeStaff(client, who);
       console.log('removed; their console sessions ended');
+    } else if (command === 'bootstrap-owner' && who) {
+      const s = await bootstrapOwner(client, who);
+      console.log(
+        `platform owner: ${s.email ?? s.user_id} → ${s.roles.join(', ')} (sign in to the console with your code)`,
+      );
     } else if (command === 'break-glass' && who) {
       const g = await grantBreakGlass(
         client,
@@ -230,7 +266,8 @@ if (import.meta.main) {
       console.log(n ? 'break-glass access ended' : 'no active break-glass access');
     } else {
       console.log(
-        'usage: staff.ts list | add <e-mail|usr_id> --roles support,support_lead,billing_admin [--note "…"] | remove <e-mail|usr_id>\n' +
+        'usage: staff.ts list | add <e-mail|usr_id> --roles support,support_lead,billing_admin,platform_owner,business_admin,business_analyst [--note "…"]\n' +
+          '       | remove <e-mail|usr_id> | bootstrap-owner <e-mail|usr_id>\n' +
           '       | break-glass <e-mail|usr_id> --org org_…[,org_…] --reason "…" [--minutes 5-60]\n' +
           '       | break-glass-end <e-mail|usr_id>',
       );
@@ -239,7 +276,10 @@ if (import.meta.main) {
     await client.query('commit');
   } catch (err) {
     await client.query('rollback');
-    console.error(`staff: ${(err as Error).message}`);
+    const m = (err as Error).message;
+    console.error(
+      `staff: ${m === 'LAST_PLATFORM_OWNER' ? 'this is the last platform owner; add another owner first' : m}`,
+    );
     process.exitCode = 1;
   } finally {
     await client.end();

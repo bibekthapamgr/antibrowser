@@ -5,6 +5,27 @@ new response fields and new enum values (clients must ignore unknown fields and 
 "other"). A breaking change needs a new path version and a deprecation period announced here first. The OpenAPI
 document ([docs/openapi.json](../openapi.json)) is regenerated and checked in CI on every change.
 
+## 0.17.0 — 2026-10-15 (R5: business-owner administration and catalog publishing)
+Added (see ADR-0024; nothing removed or renamed)
+- `/v1/admin` for platform staff (console tokens only; each route names a staff permission and needs a session opened
+  with a second factor): `GET /admin/me`, `GET /admin/metrics`, `GET /admin/customers` (cursor pages, `q`, `state`,
+  `plan`), `GET /admin/customers/{org}`, `POST /admin/customers/{org}/notes`, `POST /admin/customers/{org}/resync`,
+  `POST /admin/restrictions`, `POST /admin/restrictions/{id}/lift`, `GET /admin/catalog`, `POST /admin/plan-drafts`,
+  `PUT /admin/plan-drafts/{id}`, `POST /admin/plan-drafts/{id}/discard`, `POST /admin/plan-drafts/{id}/publish`,
+  `GET /admin/operations`, `POST /admin/email/{id}/retry`, `POST /admin/release-requests`, `GET /admin/staff`.
+- Staff roles `platform_owner`, `business_admin`, `business_analyst` (`StaffSession.staff.roles` may contain them).
+- Billing reason `staff_restriction` (a payment restriction by staff; restricted like an unpaid workspace).
+- Error codes `MFA_REQUIRED`, `LAST_PLATFORM_OWNER`, `PUBLISH_IN_PROGRESS`, `PUBLISH_FAILED`; alert kind
+  `publish_failed`.
+
+Changed (visible to clients)
+- Plans, prices, checkout, the portal and `GET /orgs/{org}/billing/plans` read the plan catalog published in the
+  database (new versions published from the console; earlier versions unchanged). Offered plans are ordered smallest
+  first (seats, then profiles).
+- A workspace suspended for security answers `WORKSPACE_SUSPENDED` (403) on every member route.
+- Milestone 11 support routes accept business roles where they extend support work; business roles need a second
+  factor there too (`MFA_REQUIRED`).
+
 ## 0.16.0 — 2026-10-15 (R4: website, customer portal and checkout)
 Added (see ADR-0023; nothing removed or renamed)
 - `GET /public/plans`: purchasable plans with limits, features, verified prices per interval (`month`, `year` only when

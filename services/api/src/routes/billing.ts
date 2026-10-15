@@ -16,10 +16,7 @@ import {
   HostedSession,
   InvoiceLinks,
   Invoices,
-  latestPlan,
   newId,
-  PLAN_CATALOG,
-  PRICE_INTERVALS,
   type PriceInterval,
   planKey,
   Subscription,
@@ -29,7 +26,16 @@ import {
 import Type from 'typebox';
 import type { App, Deps } from '../app.ts';
 import { audit, changeEntry } from '../audit.ts';
-import { configuredPrice, offeredPlans, providerPrice, sellablePrice } from '../billing/catalog.ts';
+import {
+  catalogOf,
+  configuredPrice,
+  newestPlan,
+  offeredPlans,
+  planAt,
+  providerPrice,
+  sellablePrice,
+  verifiedPrices,
+} from '../billing/catalog.ts';
 import { effectiveOf, subscriptionView, usageOf } from '../billing/state.ts';
 import { billingFailure, parseEventEnvelope, verifyStripeSignature } from '../billing/stripe.ts';
 import { ts, withTx } from '../db.ts';
@@ -173,29 +179,20 @@ export function billingRoutes(app: App, deps: Deps): void {
       const access = await resolveTenant(deps.pool, req, req.params.orgId);
       requirePermission(access, 'billing.read');
       const current = await withTx(deps.pool, access, (c) => effectiveOf(c, access.orgId));
-      const offered = offeredPlans();
-      const mine = PLAN_CATALOG.find((p) => p.id === current.planId && p.version === current.planVersion);
+      // R5: the database catalog; the workspace's own version is listed even when newer versions exist.
+      const cat = await catalogOf(deps);
+      const offered = offeredPlans(cat);
+      const mine = planAt(cat, current.planId, current.planVersion);
       const list =
         mine && !offered.some((p) => p.id === mine.id && p.version === mine.version)
           ? [mine, ...offered]
           : offered;
       const items = await Promise.all(
         list.map(async (p) => {
-          const priceId = configuredPrice(deps, p, 'month') ?? configuredPrice(deps, p, 'year');
+          const priceId = configuredPrice(deps, cat, p, 'month') ?? configuredPrice(deps, cat, p, 'year');
           const price = priceId ? (await providerPrice(deps, priceId)).price : null;
           // R4: every verified interval (checkout uses the same rule).
-          const prices = [];
-          for (const interval of PRICE_INTERVALS) {
-            const v = await sellablePrice(deps, p, interval);
-            if (v && v.price.unitAmount !== null)
-              prices.push({
-                interval,
-                amount_minor: v.price.unitAmount,
-                currency: v.price.currency,
-                tax: deps.billing.automaticTax ? ('automatic' as const) : v.price.taxBehavior,
-                verified_at: new Date(v.at).toISOString(),
-              });
-          }
+          const prices = await verifiedPrices(deps, cat, p);
           return {
             id: p.id,
             version: p.version,
@@ -238,9 +235,11 @@ export function billingRoutes(app: App, deps: Deps): void {
       const stripe = stripeOf(deps);
       await hit(deps.pool, LIMITS.billingSessionPerOrg, access.orgId);
       const interval: PriceInterval = req.body.interval ?? 'month';
-      const plan = latestPlan(req.body.plan_id);
+      // New purchases use the newest stored version (R5: the database catalog).
+      const cat = await catalogOf(deps);
+      const plan = newestPlan(cat, req.body.plan_id);
       // Live eligibility every time: a configured, readable, active price billing at this interval (R4).
-      const sellable = plan ? await sellablePrice(deps, plan, interval) : null;
+      const sellable = plan ? await sellablePrice(deps, cat, plan, interval) : null;
       if (!plan || !sellable) {
         throw new ApiError('PLAN_NOT_AVAILABLE', 'This plan is not offered on this server', {
           plan_id: req.body.plan_id,
@@ -403,7 +402,8 @@ export function billingRoutes(app: App, deps: Deps): void {
             req.query.return_to === 'portal' && deps.config.web.origin
               ? `${deps.config.web.origin}/app/#/billing`
               : `${deps.billing.returnUrl}?result=portal`,
-          configuration: deps.billing.portalConfiguration,
+          // R5: the configuration that offers the currently published prices, else the server's setting.
+          configuration: (await catalogOf(deps)).portalConfiguration ?? deps.billing.portalConfiguration,
         });
         await withTx(deps.pool, access, (c) =>
           audit(c, changeEntry(access, 'billing.portal_opened', 'organization', access.orgId)),

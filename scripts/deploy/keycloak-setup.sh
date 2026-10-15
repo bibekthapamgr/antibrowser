@@ -597,6 +597,31 @@ for i in $(seq 0 $(( n - 1 ))); do
 done
 ok "staff sign-in flow '$STAFF_FLOW': password and one-time code every time, no single sign-on ($n step(s) adjusted)"
 
+# R5: the staff flow's password and one-time-code steps carry authentication method references ("pwd", "otp"), and
+# the console client puts them in its ID token (the `amr` claim), so the API can require the second factor for the
+# business screens (STAFF_MFA_AMR below). Keycloak sets amr only from these step settings.
+kc_call GET "/$REALM/authentication/flows/$STAFF_FLOW/executions"
+[[ $KC_STATUS == 200 ]] || die "could not read the staff sign-in flow ($KC_STATUS)"
+cp "$WORK/body" "$WORK/staff-executions.json"
+for pair in "auth-username-password-form:pwd" "auth-otp-form:otp"; do
+  provider=${pair%%:*}; ref=${pair##*:}
+  exec_id=$(P=$provider js '(d.find(x => x.providerId === process.env.P) || {}).id || ""' < "$WORK/staff-executions.json")
+  conf_id=$(P=$provider js '(d.find(x => x.providerId === process.env.P) || {}).authenticationConfig || ""' < "$WORK/staff-executions.json")
+  [[ -n $exec_id ]] || die "the staff sign-in flow has no $provider step"
+  R=$ref A="pb-staff-amr-$ref" mkjson '({ alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "0" } })' \
+    > "$WORK/amr.json"
+  if [[ -z $conf_id ]]; then
+    kc_call POST "/$REALM/authentication/executions/$exec_id/config" --data-binary @"$WORK/amr.json"
+    [[ $KC_STATUS == 201 ]] || die "could not set the $ref reference on the staff flow ($KC_STATUS): $(<"$WORK/body")"
+  else
+    I=$conf_id R=$ref A="pb-staff-amr-$ref" mkjson '({ id: e.I, alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "0" } })' \
+      > "$WORK/amr.json"
+    kc_call PUT "/$REALM/authentication/config/$conf_id" --data-binary @"$WORK/amr.json"
+    [[ $KC_STATUS == 204 ]] || die "could not update the $ref reference on the staff flow ($KC_STATUS): $(<"$WORK/body")"
+  fi
+done
+ok "staff sign-in steps report how staff signed in (amr: pwd, otp)"
+
 # The client's security settings are what the API and the desktop rely on, so they are enforced on every run.
 C=$CLIENT_ID U=$REDIRECT mkjson '({ clientId: e.C, name: "Project Browser desktop", enabled: true,
     protocol: "openid-connect", publicClient: true, standardFlowEnabled: true, implicitFlowEnabled: false,
@@ -642,7 +667,17 @@ else
   [[ $KC_STATUS == 204 ]] || die "could not update the console client ($KC_STATUS): $(<"$WORK/body")"
   ok "client '$CONSOLE_CLIENT_ID' checked"
 fi
-ok "support console client: PKCE (S256) only, redirect $CONSOLE_REDIRECT only, browser origin $CONSOLE_ORIGIN only, staff flow"
+[[ -n $console_uuid ]] || { kc_call GET "/$REALM/clients" -G --data-urlencode "clientId=$CONSOLE_CLIENT_ID"; console_uuid=$(js 'd.length ? d[0].id : ""' < "$WORK/body"); }
+kc_call GET "/$REALM/clients/$console_uuid/protocol-mappers/models"
+[[ $KC_STATUS == 200 ]] || die "could not read the console client's token mappers ($KC_STATUS)"
+if [[ -z $(js '(d.find(m => m.protocolMapper === "oidc-amr-mapper") || {}).id || ""' < "$WORK/body") ]]; then
+  mkjson '({ name: "amr", protocol: "openid-connect", protocolMapper: "oidc-amr-mapper",
+             config: { "id.token.claim": "true", "access.token.claim": "false", "introspection.token.claim": "true" } })' \
+    > "$WORK/amr-mapper.json"
+  kc_call POST "/$REALM/clients/$console_uuid/protocol-mappers/models" --data-binary @"$WORK/amr-mapper.json"
+  [[ $KC_STATUS == 201 ]] || die "could not add the amr claim to the console client ($KC_STATUS): $(<"$WORK/body")"
+fi
+ok "support console client: PKCE (S256) only, redirect $CONSOLE_REDIRECT only, browser origin $CONSOLE_ORIGIN only, staff flow, amr in the ID token"
 
 # R2: the customer web portal. The API exchanges the code itself (server side), so the browser origin needs no CORS.
 C=$WEB_CLIENT_ID U=$WEB_REDIRECT mkjson '({ clientId: e.C, name: "Project Browser customer portal", enabled: true,
@@ -694,6 +729,7 @@ OIDC_CONSOLE_CLIENT_ID=$CONSOLE_CLIENT_ID
 OIDC_WEB_CLIENT_ID=$WEB_CLIENT_ID
 WEB_ORIGIN=$WEB_ORIGIN
 WEB_DIR=$APP_DIR/apps/web-customer/dist
+STAFF_MFA_AMR=otp
 SESSION_SIGNING_KEY='$key'
 EOF
 )

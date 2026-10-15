@@ -19,6 +19,11 @@ export interface VerifiedIdentity {
   authTime: Date;
   /** The ID token's own expiry (used to keep its one-time-use record exactly as long as needed). */
   expiresAt: Date;
+  /**
+   * R5: the provider's authentication method references (`amr`), e.g. `["pwd", "otp"]` — the staff console flow
+   * sets them on its password and one-time-code steps. Empty when the provider does not send the claim.
+   */
+  amr: string[];
 }
 
 export interface IdTokenVerifier {
@@ -82,6 +87,9 @@ export function createIdTokenVerifier(opts: OidcOptions): IdTokenVerifier {
         displayName: displayName(payload, validEmail),
         authTime: new Date(authTimeSeconds * 1000),
         expiresAt: new Date(((payload.exp ?? 0) + 60) * 1000),
+        amr: Array.isArray(payload.amr)
+          ? payload.amr.filter((v): v is string => typeof v === 'string' && v.length <= 32).slice(0, 10)
+          : [],
       };
     },
   };

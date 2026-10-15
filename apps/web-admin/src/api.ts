@@ -3,6 +3,24 @@
  * staff token lives in this closure only — not in storage — so a reload or a closed tab ends the session; the
  * server ends it after 30 minutes anyway.
  */
+
+import type {
+  AdminCatalog,
+  AdminCustomerDetail,
+  AdminCustomers,
+  AdminCustomersQuery,
+  AdminMe,
+  AdminMetrics,
+  AdminOperations,
+  AdminStaff,
+  CatalogPublication,
+  PlanDraft,
+  PlanDraftCreate,
+  PlanDraftUpdate,
+  Restriction,
+  RestrictionCreate,
+  SupportNote,
+} from '@pb/contracts/admin';
 import type {
   AccessRequest,
   AccessRequestCreate,
@@ -81,6 +99,24 @@ export interface ConsoleApi {
   auditExport(afterSeq?: string): Promise<AuditExport>;
   /** Milestone 12: break-glass only. */
   revokeApiTokens(orgId: string, reason: string): Promise<number>;
+  // R5: business administration (/v1/admin). Every call names a staff permission on the server and needs MFA.
+  adminMe(): Promise<AdminMe>;
+  metrics(): Promise<AdminMetrics>;
+  customers(q: AdminCustomersQuery): Promise<AdminCustomers>;
+  customer(orgId: string): Promise<AdminCustomerDetail>;
+  addNote(orgId: string, body: string): Promise<SupportNote>;
+  restrict(body: RestrictionCreate): Promise<Restriction>;
+  liftRestriction(id: string, reason: string): Promise<Restriction>;
+  adminResync(orgId: string): Promise<boolean>;
+  catalog(): Promise<AdminCatalog>;
+  createDraft(body: PlanDraftCreate): Promise<PlanDraft>;
+  updateDraft(id: string, body: PlanDraftUpdate): Promise<PlanDraft>;
+  discardDraft(id: string, revision: number): Promise<PlanDraft>;
+  publishDraft(id: string, revision: number): Promise<CatalogPublication>;
+  operations(): Promise<AdminOperations>;
+  retryEmail(id: string): Promise<boolean>;
+  requestRelease(body: { action: string; version?: string; reason: string }): Promise<{ id: string }>;
+  staffList(): Promise<AdminStaff>;
 }
 
 const enc = encodeURIComponent;
@@ -89,7 +125,12 @@ export function httpApi(): ConsoleApi {
   let token: string | null = null;
   const redirectUri = `${window.location.origin}${CONSOLE_PATH}`;
 
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, auth = true): Promise<T> {
+  async function call<T>(
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    body?: unknown,
+    auth = true,
+  ): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (auth) {
@@ -186,6 +227,29 @@ export function httpApi(): ConsoleApi {
       ).items,
     auditExport: (afterSeq) =>
       call('GET', `/support/audit/export?limit=5000${afterSeq ? `&after_seq=${enc(afterSeq)}` : ''}`),
+    adminMe: () => call('GET', '/admin/me'),
+    metrics: () => call('GET', '/admin/metrics'),
+    customers: (q) => {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') qs.set(k, String(v));
+      return call('GET', `/admin/customers${qs.size ? `?${qs}` : ''}`);
+    },
+    customer: (orgId) => call('GET', `/admin/customers/${enc(orgId)}`),
+    addNote: (orgId, body) => call('POST', `/admin/customers/${enc(orgId)}/notes`, { body }),
+    restrict: (body) => call('POST', '/admin/restrictions', body),
+    liftRestriction: (id, reason) => call('POST', `/admin/restrictions/${enc(id)}/lift`, { reason }),
+    adminResync: async (orgId) =>
+      (await call<{ queued: boolean }>('POST', `/admin/customers/${enc(orgId)}/resync`)).queued,
+    catalog: () => call('GET', '/admin/catalog'),
+    createDraft: (body) => call('POST', '/admin/plan-drafts', body),
+    updateDraft: (id, body) => call('PUT', `/admin/plan-drafts/${enc(id)}`, body),
+    discardDraft: (id, revision) => call('POST', `/admin/plan-drafts/${enc(id)}/discard`, { revision }),
+    publishDraft: (id, revision) => call('POST', `/admin/plan-drafts/${enc(id)}/publish`, { revision }),
+    operations: () => call('GET', '/admin/operations'),
+    retryEmail: async (id) =>
+      (await call<{ queued: boolean }>('POST', `/admin/email/${enc(id)}/retry`)).queued,
+    requestRelease: (body) => call('POST', '/admin/release-requests', body),
+    staffList: () => call('GET', '/admin/staff'),
     revokeApiTokens: async (orgId, reason) =>
       (
         await call<{ revoked_api_tokens: number }>(

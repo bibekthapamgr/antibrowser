@@ -23,6 +23,8 @@ import { auditAlone } from './audit.ts';
 import { type Authenticator, createAuthenticator, type Principal } from './auth.ts';
 import { localKeyProvider, type RootKeyProvider } from './backup/keys.ts';
 import { type ObjectStore, s3ObjectStore } from './backup/objects.ts';
+import { type CatalogCache, newCatalogCache } from './billing/catalog.ts';
+import { type ProviderCall, providerCaller } from './billing/provision.ts';
 import { planLimitError, restrictedFromDatabase } from './billing/state.ts';
 import { createStripe, type Stripe, type StripePrice } from './billing/stripe.ts';
 import { withTx } from './db.ts';
@@ -30,6 +32,7 @@ import { createIdTokenVerifier, type IdTokenVerifier } from './oidc.ts';
 import { hit, LIMITS } from './ratelimit.ts';
 import { downloadsReader } from './release.ts';
 import { accountRoutes } from './routes/account.ts';
+import { adminRoutes } from './routes/admin.ts';
 import { agencyRoutes } from './routes/agency.ts';
 import { auditRoutes } from './routes/audit.ts';
 import { authRoutes } from './routes/auth.ts';
@@ -100,6 +103,10 @@ export interface BillingDeps {
   livemode: boolean;
   /** Display prices read from the provider (not entitlement data; an hour old at most). */
   priceCache: Map<string, { at: number; price: StripePrice | null }>;
+  /** R5: the database catalog (plans, published prices) as last read, and the public pricing answer. */
+  catalog: CatalogCache;
+  /** R5: raw provider calls for publishing plans from the console (null: no provider configured). */
+  provider: ProviderCall | null;
 }
 
 declare module 'fastify' {
@@ -156,6 +163,8 @@ export interface BuildOptions {
   webIdTokens?: IdTokenVerifier;
   /** Tests inject the download page's source (R4). */
   downloads?: () => Promise<PublicDownloads>;
+  /** Tests inject the raw provider caller used to publish plans (R5). */
+  provider?: ProviderCall;
 }
 
 export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOptions = {}): Promise<App> {
@@ -241,6 +250,8 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       webhookSecrets: stripeCfg?.webhookSecrets ?? [],
       livemode: stripeCfg?.livemode ?? false,
       priceCache: new Map(),
+      catalog: newCatalogCache(),
+      provider: opts.provider ?? (stripeCfg ? providerCaller(stripeCfg.secretKey, stripeCfg.apiBase) : null),
     },
     consoleIdTokens,
     webIdTokens,
@@ -254,7 +265,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       openapi: '3.1.0',
       info: {
         title: 'Project Browser control-plane API',
-        version: '0.16.0',
+        version: '0.17.0',
         description:
           'Contracts: /v1 prefix, opaque ids, cursor pagination (max 100), If-Match/expected_version optimistic ' +
           'concurrency, Idempotency-Key on lease acquisition, snapshot commit, local workspace import and automation ' +
@@ -386,6 +397,18 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       const restricted = restrictedFromDatabase(pgErr.detail);
       return send(restricted.code, restricted.message, restricted.safeDetails);
     }
+    if (pgErr.code === 'P0001' && pgErr.message === 'STAFF_FORBIDDEN') {
+      return send('FORBIDDEN', 'Your staff role does not allow this', { permission: pgErr.detail ?? null });
+    }
+    if (pgErr.code === 'P0001' && pgErr.message === 'LAST_PLATFORM_OWNER') {
+      return send(
+        'LAST_PLATFORM_OWNER',
+        'The last platform owner cannot be removed; add another owner first',
+      );
+    }
+    if (pgErr.code === 'P0001' && pgErr.message === 'PLAN_VERSION_IMMUTABLE') {
+      return send('VERSION_CONFLICT', 'A published plan version never changes; publish a new version');
+    }
     if (pgErr.code === 'P0001' && pgErr.message === 'LAST_OWNER') {
       return send('LAST_OWNER', 'An organization must keep at least one owner; transfer ownership first');
     }
@@ -467,6 +490,7 @@ export async function buildApp(config: AppConfig, pool: pg.Pool, opts: BuildOpti
       workspaceRoutes(scoped, deps);
       billingRoutes(scoped, deps);
       supportRoutes(scoped, deps);
+      adminRoutes(scoped, deps);
     },
     { prefix: API_PREFIX },
   );

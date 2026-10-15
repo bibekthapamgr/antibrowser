@@ -50,7 +50,9 @@ export function stateLine(s: Subscription): string {
     case 'grace':
       return `Payment is overdue. Everything keeps working until ${day(s.grace_until ?? s.until)}; please update the payment method.`;
     case 'restricted':
-      return 'New profiles and opening profiles are paused until a plan is active. Your data is kept and can be exported.';
+      return s.reason === 'staff_restriction'
+        ? 'Our support team restricted this workspace: new profiles and opening profiles are paused. Your data is kept and can be exported. Please contact us.'
+        : 'New profiles and opening profiles are paused until a plan is active. Your data is kept and can be exported.';
     case 'canceled':
       return 'The subscription ended. Your data is kept; choose a plan to continue.';
   }

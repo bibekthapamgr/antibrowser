@@ -57,6 +57,13 @@ export const ID_PREFIXES = {
   emailTask: 'eml',
   // R4 (ADR-0023): checkout attempts (one in progress per workspace).
   checkoutAttempt: 'chk',
+  // R5 (ADR-0024): business administration — plan drafts, catalog publications, restrictions, case notes,
+  // release action requests.
+  planDraft: 'pld',
+  catalogPublish: 'cpo',
+  restriction: 'rst',
+  supportNote: 'snt',
+  releaseRequest: 'rlr',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

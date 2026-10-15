@@ -25,7 +25,7 @@ Earlier: [R2](docs/milestone-r2-status.md) (self-service accounts), [R1](docs/mi
 ## Layout
 ```
 apps/desktop          Tauri 2 shell (src-tauri) + React manager UI
-apps/web-admin        internal support console (staff only; served at /console/)
+apps/web-admin        staff console (support tools and, R5, business administration; served at /console/)
 apps/web-customer     customer portal (R4: sign up, overview, billing and checkout, team, account; served at /app/)
 apps/web-public       public website (R4: home, pricing, download, help, contact, security, legal; served at /)
 services/api          Fastify 5 API (/v1), migrations runner, fixtures

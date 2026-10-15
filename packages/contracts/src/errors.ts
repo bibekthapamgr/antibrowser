@@ -84,6 +84,14 @@ export const ERROR_CODES = {
   ACCOUNT_SUSPENDED: { status: 403, retryable: false },
   /** A web portal change without the session's CSRF token, or from another origin. */
   CSRF_FAILED: { status: 403, retryable: false },
+  /** R5: admin routes need a console session opened with a second factor (sign in again with your code). */
+  MFA_REQUIRED: { status: 403, retryable: false },
+  /** R5: the last active platform owner cannot be removed or lose the role (add another owner first). */
+  LAST_PLATFORM_OWNER: { status: 409, retryable: false },
+  /** R5: a publication of this plan is already running; its result is returned when it finishes. */
+  PUBLISH_IN_PROGRESS: { status: 409, retryable: true },
+  /** R5: the payment provider refused or could not create the plan's prices; nothing was published. */
+  PUBLISH_FAILED: { status: 502, retryable: true },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

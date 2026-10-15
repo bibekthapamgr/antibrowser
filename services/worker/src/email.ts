@@ -2,7 +2,8 @@
  * R2 (ADR-0021): sends the e-mails the API queued in `email_tasks` (invitation links, welcome), with retries and
  * backoff. Each task is taken with SKIP LOCKED in its own transaction, so several workers never send one twice; a
  * crash after sending and before committing can repeat one e-mail (at least once), never lose it. The sealed
- * variables are erased once the e-mail went out or was given up. Only counts and error classes are logged: never an
+ * variables are erased once the e-mail went out (R5: an e-mail given up after delivery errors keeps them for
+ * EMAIL_RETRY_DAYS so staff can retry it). Only counts and error classes are logged: never an
  * address, a link or the message.
  *
  * Without SMTP_URL tasks are marked `skipped` (the inviter sees the link in the app, as before R2).
@@ -13,6 +14,19 @@ import type pg from 'pg';
 import { type EmailKind, renderEmail } from './email-templates.ts';
 
 export const EMAIL_MAX_ATTEMPTS = 8;
+/** R5: days a failed e-mail keeps its sealed contents for a retry from the console. */
+export const EMAIL_RETRY_DAYS = 7;
+
+/** Erases the sealed contents of failed e-mail older than EMAIL_RETRY_DAYS (it can no longer be retried). */
+export async function expireFailedEmail(pool: EmailDeps['pool']): Promise<number> {
+  const r = await pool.query(
+    `update email_tasks set payload_enc = null
+      where state = 'failed' and payload_enc is not null
+        and coalesce(retried_at, created_at) < now() - make_interval(days => $1)`,
+    [EMAIL_RETRY_DAYS],
+  );
+  return r.rowCount ?? 0;
+}
 
 export interface EmailDeps {
   pool: pg.Pool;
@@ -71,12 +85,15 @@ export async function processEmailTasks(deps: EmailDeps, limit = 20): Promise<Em
         await client.query('commit');
         break;
       }
-      const finish = (state: 'sent' | 'failed' | 'skipped', error: string | null) =>
+      // R5: an e-mail given up after delivery errors keeps its sealed contents for EMAIL_RETRY_DAYS, so staff can
+      // retry it from the console; everything else is erased at once.
+      const finish = (state: 'sent' | 'failed' | 'skipped', error: string | null, keep = false) =>
         client.query(
-          `update email_tasks set state = $2, last_error = $3, payload_enc = null, attempts = attempts + 1,
+          `update email_tasks set state = $2, last_error = $3, attempts = attempts + 1,
+                  payload_enc = case when $4::boolean then payload_enc end,
                   sent_at = case when $2 = 'sent' then now() end
             where id = $1`,
-          [task.id, state, error],
+          [task.id, state, error, keep],
         );
       if (!deps.transport || !deps.from) {
         await finish('skipped', 'smtp_not_configured');
@@ -112,7 +129,7 @@ export async function processEmailTasks(deps: EmailDeps, limit = 20): Promise<Em
           } catch (err) {
             const { code, permanent } = errorClass(err);
             if (permanent || task.attempts + 1 >= EMAIL_MAX_ATTEMPTS) {
-              await finish('failed', code);
+              await finish('failed', code, true);
               result.failed++;
               deps.log('warn', 'e-mail given up', { kind: task.kind, error: code });
             } else {

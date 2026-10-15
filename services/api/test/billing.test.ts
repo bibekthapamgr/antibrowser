@@ -892,13 +892,13 @@ describe('plan catalog', () => {
     const client = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
     await client.connect();
     try {
-      await client.query(
-        "update app.plans set limits = jsonb_set(limits, '{seats}', '6') where id = 'team' and version = 1",
-      );
-      await expect(syncCatalog(client, false)).rejects.toThrow(/immutable/);
-      await client.query(
-        "update app.plans set limits = jsonb_set(limits, '{seats}', '5') where id = 'team' and version = 1",
-      );
+      // R5: the database refuses to change a stored version, even for the schema owner; seeds never overwrite it.
+      await expect(
+        client.query(
+          "update app.plans set limits = jsonb_set(limits, '{seats}', '6') where id = 'team' and version = 1",
+        ),
+      ).rejects.toThrow(/PLAN_VERSION_IMMUTABLE/);
+      await syncCatalog(client, false);
       const o = await newOrg('Before billing');
       await client.query('delete from app.subscriptions where org_id = $1', [o.id]);
       expect((await subscription(o)).state).toBe('restricted'); // fails closed without a row

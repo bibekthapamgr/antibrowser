@@ -17,11 +17,7 @@ import { enqueueEmail, unsubscribeUser } from '../email.ts';
 import { hit, LIMITS } from '../ratelimit.ts';
 import { errors } from './common.ts';
 
-const CATALOG_TTL_MS = 60_000;
-
 export function publicRoutes(app: App, deps: Deps): void {
-  let catalog: { at: number; value: PublicPlans } | null = null;
-
   app.get(
     '/public/plans',
     {
@@ -37,16 +33,15 @@ export function publicRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const now = Date.now();
-      if (!catalog || now - catalog.at > CATALOG_TTL_MS)
-        catalog = { at: now, value: await publicCatalog(deps) };
-      const etag = `"${catalog.value.catalog_version}"`;
+      // Cached for a minute and dropped at once when a plan is published from the console (R5).
+      const catalog = await publicCatalog(deps);
+      const etag = `"${catalog.catalog_version}"`;
       reply
         .header('cache-control', 'public, max-age=60, stale-while-revalidate=300')
         .header('etag', etag)
         .header('vary', 'accept-encoding');
       if (req.headers['if-none-match'] === etag) return reply.status(304).send(null);
-      return catalog.value;
+      return catalog;
     },
   );
 

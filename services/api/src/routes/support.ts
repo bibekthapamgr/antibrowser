@@ -21,6 +21,7 @@ import {
   AuditExportQuery,
   BILLING_TIMING,
   BillingAlert,
+  BUSINESS_ROLES,
   ConsoleConfig,
   EmergencyRevokeRequest,
   EmergencyRevokeResult,
@@ -68,8 +69,13 @@ type StaffPrincipal = Principal & { staff: NonNullable<Principal['staff']> };
 function staffOf(req: { principal: Principal | null }, ...roles: StaffRole[]): StaffPrincipal {
   const p = principalOf(req);
   if (p.kind !== 'staff' || !p.staff) throw new ApiError('UNAUTHENTICATED', 'Sign in to the support console');
-  if (roles.length && !roles.some((r) => p.staff?.roles.includes(r))) {
+  const via = roles.length ? roles.filter((r) => p.staff?.roles.includes(r)) : p.staff.roles;
+  if (via.length === 0) {
     throw new ApiError('FORBIDDEN', 'Your support role does not allow this', { required: roles });
+  }
+  // R5: business roles always act with a second factor (support roles keep the milestone 11 rules).
+  if (via.every((r) => BUSINESS_ROLES.includes(r)) && !p.staff.mfa) {
+    throw new ApiError('MFA_REQUIRED', 'Sign in again with your one-time code to use this');
   }
   return p as StaffPrincipal;
 }
@@ -272,15 +278,18 @@ export function supportRoutes(app: App, deps: Deps): void {
         const s = staff.rows[0];
         if (!s) return { refused: 'not_staff' as const };
         const sessionId = newId('staffSession');
+        // R5: whether this sign-in used a second factor (the provider's amr claim); admin routes require it.
+        const mfa = identity.amr.some((v) => deps.config.console.mfaAmr.includes(v));
         await c.query(
-          `insert into staff_sessions (id, user_id, auth_time, expires_at)
-           values ($1, $2, $3, now() + make_interval(secs => $4))`,
-          [sessionId, user.user_id, identity.authTime, STAFF_SESSION_SECONDS],
+          `insert into staff_sessions (id, user_id, auth_time, expires_at, mfa)
+           values ($1, $2, $3, now() + make_interval(secs => $4), $5)`,
+          [sessionId, user.user_id, identity.authTime, STAFF_SESSION_SECONDS, mfa],
         );
         await platformAudit(c, {
           actor: user.user_id,
           action: 'staff.signed_in',
           target: sessionId,
+          details: { mfa },
           requestId: req.id,
         });
         return { sessionId, roles: s.roles, name: s.display_name };
@@ -340,7 +349,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'support', 'support_lead', 'billing_admin');
+      const p = staffOf(req, 'support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       const q = req.query.q.trim();
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         let ids: string[] = [];
@@ -405,7 +414,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'support', 'support_lead', 'billing_admin');
+      const p = staffOf(req, 'support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       const orgId = req.params.orgId;
       return withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         const org = await orgExists(c, orgId);
@@ -484,7 +493,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const p = staffOf(req, 'support', 'support_lead', 'billing_admin');
+      const p = staffOf(req, 'support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       const orgId = req.params.orgId;
       const row = await withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         await orgExists(c, orgId);
@@ -784,7 +793,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'support', 'support_lead', 'billing_admin');
+      const p = staffOf(req, 'support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       return withTx(deps.pool, ctx(req.params.orgId, p.userId), async (c) => {
         await orgExists(c, req.params.orgId);
         const { rows } = await c.query(
@@ -812,7 +821,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const p = staffOf(req, 'billing_admin');
+      const p = staffOf(req, 'billing_admin', 'platform_owner', 'business_admin');
       const orgId = req.params.orgId;
       const b = req.body;
       if (!overrideValueValid(b.scope, b.value)) {
@@ -865,7 +874,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'billing_admin');
+      const p = staffOf(req, 'billing_admin', 'platform_owner', 'business_admin');
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         // Its organization first (overrides are organization rows under row-level security).
         const orgRow = await c.query<{ org_id: string | null }>(
@@ -911,7 +920,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req, reply) => {
-      const p = staffOf(req, 'billing_admin');
+      const p = staffOf(req, 'billing_admin', 'platform_owner', 'business_admin');
       const orgId = req.params.orgId;
       const queued = await withTx(deps.pool, ctx(orgId, p.userId), async (c) => {
         await orgExists(c, orgId);
@@ -945,7 +954,14 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'billing_admin', 'support_lead');
+      const p = staffOf(
+        req,
+        'billing_admin',
+        'support_lead',
+        'platform_owner',
+        'business_admin',
+        'business_analyst',
+      );
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         const { rows } = await c.query(
           `select id, kind, org_id, ref, detail, ${ts('first_seen_at')} as first_seen_at,
@@ -971,7 +987,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'billing_admin');
+      const p = staffOf(req, 'billing_admin', 'platform_owner', 'business_admin');
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         // Milestone 12 review (T1): someone other than the holder reviews a break-glass alert.
         const own = await c.query(
@@ -1022,7 +1038,7 @@ export function supportRoutes(app: App, deps: Deps): void {
       },
     },
     async (req) => {
-      const p = staffOf(req, 'support_lead', 'billing_admin');
+      const p = staffOf(req, 'support_lead', 'billing_admin', 'platform_owner');
       return withTx(deps.pool, ctx(null, p.userId), async (c) => {
         const { rows } = await c.query(
           `select id, ${ts('at')} as at, actor_user_id, action, org_id, target, details from platform_audit

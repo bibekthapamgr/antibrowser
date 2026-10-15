@@ -170,23 +170,35 @@ describe('roles', () => {
     // R2: the e-mail queue (the API inserts, only the worker reads, like the outbox), trial claims and pending web
     // sign-ins (reached only through security-definer functions, no grants to the application).
     // R4: contact requests from the website (the API only inserts; staff tools read them).
+    // R5: the catalog (state, published prices, drafts, publications), restrictions, case notes, release requests,
+    // the staff role → permission table and worker heartbeats — platform data used by the staff-only admin routes
+    // (every cross-workspace reader checks the staff permission in the database too) and the public catalog.
     expect(rows.map((r) => r.relname)).toEqual([
+      'account_restrictions',
       'billing_alerts',
       'billing_webhook_events',
       'break_glass_grants',
+      'catalog_publications',
+      'catalog_state',
       'contact_requests',
       'email_tasks',
       'outbox_events',
+      'plan_drafts',
+      'plan_prices',
       'plans',
       'platform_audit',
       'platform_audit_head',
       'platform_staff',
       'processed_events',
       'recovery_markers',
+      'release_action_requests',
+      'staff_role_permissions',
       'staff_sessions',
       'support_access_requests',
+      'support_notes',
       'trial_claims',
       'web_auth_requests',
+      'worker_heartbeats',
     ]);
     for (const table of [
       'outbox_events',

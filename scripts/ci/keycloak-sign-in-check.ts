@@ -246,9 +246,37 @@ if (consoleMode) {
   const meWithStaff = await fetch(`${api}/v1/me`, { headers });
   if (meWithStaff.status !== 401)
     fail(`a staff token reached an organization route (HTTP ${meWithStaff.status})`);
+  // R5: the staff flow reports its second factor in the ID token (amr), and the API recorded it for this session.
+  const claims = JSON.parse(Buffer.from(id_token.split('.')[1] ?? '', 'base64url').toString('utf8')) as {
+    amr?: string[];
+  };
+  if (!claims.amr?.includes('otp'))
+    fail(`the console ID token has no one-time-code amr (${JSON.stringify(claims.amr)})`);
+  const adminMe = await fetch(`${api}/v1/admin/me`, { headers });
+  const adminBody = (await adminMe.json()) as { mfa?: boolean; permissions?: string[] };
+  if (adminMe.status !== 200 || adminBody.mfa !== true) {
+    fail(
+      `the console session was not recorded with a second factor (HTTP ${adminMe.status}, mfa ${adminBody.mfa})`,
+    );
+  }
+  // PB_EXPECT_ADMIN=1: a platform owner reaches the business screens' data.
+  if (process.env.PB_EXPECT_ADMIN === '1') {
+    for (const path of [
+      '/v1/admin/metrics',
+      '/v1/admin/customers?limit=5',
+      '/v1/admin/catalog',
+      '/v1/admin/operations',
+    ]) {
+      const r = await fetch(`${api}${path}`, { headers });
+      if (r.status !== 200) fail(`GET ${path} answered ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    }
+    ok(
+      'admin console: metrics, customers, catalog and operations answer for the platform owner (MFA session)',
+    );
+  }
   await fetch(`${api}/v1/support/sign-out`, { method: 'POST', headers });
   ok(
-    `support console: staff session (${body.staff?.roles.join(', ')}), alerts 200, organization routes refused`,
+    `support console: staff session (${body.staff?.roles.join(', ')}), amr ${claims.amr?.join('+')}, alerts 200, organization routes refused`,
   );
   process.exit(0);
 }

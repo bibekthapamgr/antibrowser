@@ -85,7 +85,7 @@ function stateText(s: Pick<Subscription, 'state' | 'reason' | 'until' | 'plan'>,
         ? `The renewal could not be confirmed with the payment provider yet. Full access continues until ${day(s.until)}.`
         : `The payment could not be collected. Full access continues until ${day(s.until)}; after that the organization is restricted.`;
     case 'restricted':
-      return `${s.reason === 'trial_ended' ? 'The trial ended.' : s.reason === 'paused' ? 'The subscription is paused.' : 'The subscription needs attention.'} ${RESTRICTED_HELP}`;
+      return `${s.reason === 'trial_ended' ? 'The trial ended.' : s.reason === 'paused' ? 'The subscription is paused.' : s.reason === 'staff_restriction' ? 'Project Browser support restricted this workspace; contact support.' : 'The subscription needs attention.'} ${RESTRICTED_HELP}`;
     case 'canceled':
       return `The subscription ended. ${RESTRICTED_HELP}`;
   }

@@ -141,6 +141,15 @@ jobs:
             /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts add owner@example.test --roles support_lead,billing_admin'
           PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" \
             scripts/ci/annotate.sh "console sign-in (staff)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
+          # R5: the first platform owner, once, on the server; then the business screens' data answers (MFA session).
+          scripts/ci/annotate.sh "staff.ts bootstrap-owner" sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && \
+            /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts bootstrap-owner owner@example.test'
+          if sudo runuser -u pb -- bash -c 'cd /home/pb/antibrowser/services/api && \
+               /opt/node/bin/node --env-file=/etc/project-browser/api.env scripts/staff.ts bootstrap-owner owner@example.test' 2>/dev/null; then
+            echo "::error title=bootstrap-owner::a second bootstrap was not refused"; exit 1
+          fi
+          PB_CONSOLE=1 PB_EXPECT_STAFF=1 PB_EXPECT_ADMIN=1 PB_EMAIL=owner@example.test PB_PASSWORD="$OWNER_PASSWORD" \
+            scripts/ci/annotate.sh "console sign-in (platform owner)" /opt/node/bin/node scripts/ci/keycloak-sign-in-check.ts
           # Without a Stripe key nothing billing-related runs; the owner's settings file exists, readable by pb only.
           grep -q "billing not set up yet" "$RUNNER_TEMP/vps-setup.log" \
             || { echo "::error title=billing::vps-setup.sh did not report billing as not set up"; exit 1; }

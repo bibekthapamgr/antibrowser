@@ -50,7 +50,8 @@ export type EmailKind =
   | 'payment_failed'
   | 'trial_ending'
   | 'contact_request'
-  | 'deletion_request';
+  | 'deletion_request'
+  | 'restriction_notice';
 
 const TOPICS: Record<string, string> = {
   sales: 'Sales',
@@ -128,6 +129,37 @@ function renderR4(kind: EmailKind, vars: Record<string, string>, brand: string):
       subject: line(`Account deletion request (${line(vars.user_id, 40)})`, 200),
       text: `${lines.join('\n\n')}\n`,
       html: page(brand, 'Account deletion request', lines),
+    };
+  }
+  if (kind === 'restriction_notice') {
+    // R5: a staff restriction applied or lifted. The staff member's reason is internal and never sent.
+    const security = vars.restriction === 'security';
+    const lifted = vars.phase === 'lifted';
+    const account = vars.scope === 'account';
+    const scope = account ? 'your account' : ws;
+    const until = vars.until ? ` until ${new Date(vars.until).toUTCString()}` : '';
+    const lines = lifted
+      ? [`The restriction on ${scope} was lifted. Everything works as before.`]
+      : security
+        ? [
+            `${account ? 'Your account' : `The workspace ${ws}`} was suspended${until} for security reasons.`,
+            'Open profiles were closed and access is paused. Nothing was deleted.',
+            'Reply to this e-mail or use the contact form on our website if you have questions.',
+          ]
+        : [
+            `${ws} is restricted${until}: new profiles cannot be created or opened, and people cannot be invited.`,
+            'Everything else keeps working: profiles can be closed, backed up, exported and deleted, and billing stays available. Nothing was deleted.',
+            'Please contact us to resolve it.',
+          ];
+    return {
+      subject: line(
+        lifted
+          ? `${brand}: restriction lifted`
+          : `${brand}: ${security ? 'suspension' : 'restriction'} notice`,
+        200,
+      ),
+      text: `${lines.join('\n\n')}\n`,
+      html: page(brand, lifted ? 'Restriction lifted' : security ? 'Suspended' : 'Restricted', lines),
     };
   }
   return null;

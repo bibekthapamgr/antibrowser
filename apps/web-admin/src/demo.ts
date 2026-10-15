@@ -21,6 +21,7 @@ import {
   type SupportOrgOverview,
 } from '@pb/contracts/billing';
 import { type ConsoleApi, ConsoleError, type Session, type Staff } from './api.ts';
+import { type AdminDemoControls, type AdminDemoOrg, adminDemo } from './demo-admin.ts';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -41,6 +42,12 @@ export const PERSONAS: Record<string, Staff> = {
     display_name: 'Jordan Park',
     roles: ['support_lead', 'billing_admin'],
   },
+  // R5: business roles.
+  owner: { user_id: 'usr_01J9Z0WNERBIBEK000000000', display_name: 'Pat Owner', roles: ['platform_owner'] },
+  badmin: { user_id: 'usr_01J9ZBADM1NN0RA00000000', display_name: 'Nora Admin', roles: ['business_admin'] },
+  analyst: { user_id: 'usr_01J9ZANA1YST00000000000', display_name: 'Ana Lyst', roles: ['business_analyst'] },
+  /** A business admin whose session was opened without the one-time code. */
+  nomfa: { user_id: 'usr_01J9ZN0MFA00000000000000', display_name: 'Max Nocode', roles: ['business_admin'] },
 };
 
 interface DemoOrg {
@@ -64,7 +71,7 @@ interface DemoOrg {
   resyncQueued: boolean;
 }
 
-export interface DemoControls {
+export interface DemoControls extends AdminDemoControls {
   /** The next sign-in is this staff member (the in-memory data stays). */
   switchTo(persona: keyof typeof PERSONAS): void;
   /** Ends every approved access window now (tests of expiry). */
@@ -89,6 +96,8 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
   /** API tokens per organization (counts only). */
   const apiTokens = new Map<string, number>();
   let current: Staff = PERSONAS[persona] ?? (PERSONAS.all as Staff);
+  let currentKey = PERSONAS[persona] ? persona : 'all';
+  let meKey = currentKey;
 
   const invoice = (n: number, amount: number, paid: boolean, at: number): Invoice => ({
     id: `in_1Demo${n}${'x'.repeat(8)}`,
@@ -435,10 +444,20 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
     };
   };
 
+  const admin = adminDemo({
+    orgs: orgs as unknown as AdminDemoOrg[],
+    me: () => me,
+    mfa: () => meKey !== 'nomfa',
+    record,
+    delay,
+    staff: Object.values(PERSONAS).filter((p) => p.user_id !== PERSONAS.nomfa?.user_id),
+  });
+
   const api: ConsoleApi & { controls: DemoControls } = {
     demo: true,
     async signIn(): Promise<Session> {
       me = current;
+      meKey = currentKey;
       record('staff.signed_in');
       return delay({ staff: me, expiresAt: Date.now() + BILLING_TIMING.staffSessionMinutes * MIN });
     },
@@ -450,7 +469,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       me = null;
     },
     async search(raw) {
-      who('support', 'support_lead', 'billing_admin');
+      who('support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       const q = raw.trim();
       let matched: 'org_id' | 'customer_id' | 'email';
       let hits: DemoOrg[];
@@ -477,7 +496,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       });
     },
     async org(orgId) {
-      const s = who('support', 'support_lead', 'billing_admin');
+      const s = who('support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       const o = orgOf(orgId);
       record('support.viewed_overview', o.id);
       return delay({
@@ -497,7 +516,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       });
     },
     async overrides(orgId) {
-      who('support', 'support_lead', 'billing_admin');
+      who('support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       orgOf(orgId);
       return delay(overrides.filter((x) => x.org_id === orgId));
     },
@@ -552,7 +571,7 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       return delay(queued);
     },
     async requestAccess(orgId, body) {
-      const s = who('support', 'support_lead', 'billing_admin');
+      const s = who('support', 'support_lead', 'billing_admin', 'platform_owner', 'business_admin');
       orgOf(orgId);
       if (body.reason.trim().length < 20) {
         throw new ConsoleError('VALIDATION_FAILED', 'Request failed validation', 422, {
@@ -744,9 +763,12 @@ export function demoApi(persona: string): ConsoleApi & { controls: DemoControls 
       record('support.revoked_api_tokens', o.id, null, { revoked: n, reason, by: s.user_id });
       return delay(n);
     },
+    ...admin,
     controls: {
+      ...admin.adminControls,
       switchTo(p) {
         current = PERSONAS[p] ?? current;
+        if (PERSONAS[p]) currentKey = p;
       },
       expireAccess() {
         for (const r of requests) {

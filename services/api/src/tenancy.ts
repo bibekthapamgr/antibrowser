@@ -61,8 +61,9 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
       billing_blocked: boolean;
       billing_plan_id: string;
       billing_plan_name: string;
+      suspended: boolean;
     }>(
-      `select m.role, ${BILLING_ACCESS_COLUMNS}
+      `select m.role, ${BILLING_ACCESS_COLUMNS}, app.org_suspended($1) as suspended
          from memberships m cross join app.billing_effective($1) e
         where m.org_id = $1 and m.user_id = $2`,
       [orgId, principal.userId],
@@ -81,6 +82,11 @@ export async function resolveTenant(pool: pg.Pool, req: RequestInfo, orgId: stri
       requestId: req.id,
     });
     throw notFound;
+  }
+  // R5: a workspace suspended for security answers nothing to its members (desktop, portal and API tokens alike);
+  // nothing is deleted and the suspension can be lifted by staff.
+  if (rows[0]?.suspended) {
+    throw new ApiError('WORKSPACE_SUSPENDED', 'This workspace is suspended. Contact support.');
   }
   const access: TenantAccess = {
     orgId,

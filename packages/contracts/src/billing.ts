@@ -140,6 +140,8 @@ export const BILLING_REASONS = [
   'no_subscription',
   /** Beta and internal organizations: no charge. */
   'complimentary',
+  /** R5: a payment restriction set by staff (reason, scope and expiry recorded; data kept, export allowed). */
+  'staff_restriction',
 ] as const;
 export type BillingReason = (typeof BILLING_REASONS)[number];
 
@@ -214,7 +216,21 @@ export function overrideValueValid(scope: OverrideScope, value: unknown): boolea
 }
 
 // ================================================================ Staff
-export const STAFF_ROLES = ['support', 'support_lead', 'billing_admin'] as const;
+/**
+ * Staff roles. Milestone 11: `support`, `support_lead`, `billing_admin`. R5 (ADR-0024): the business roles
+ * `platform_owner` (everything, including security suspensions and release requests), `business_admin` (customers,
+ * catalog, payment restrictions, operations) and `business_analyst` (read-only metrics and customers without contact
+ * details). They are never granted by a migration: the first platform owner is bootstrapped once on the server
+ * (`staff.ts bootstrap-owner`); what each role may do is STAFF_ROLE_PERMISSIONS in ./admin.ts.
+ */
+export const STAFF_ROLES = [
+  'support',
+  'support_lead',
+  'billing_admin',
+  'platform_owner',
+  'business_admin',
+  'business_analyst',
+] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
 export const SUPPORT_ACCESS_SCOPES = ['members', 'activity'] as const;
 export type SupportAccessScope = (typeof SUPPORT_ACCESS_SCOPES)[number];
@@ -540,6 +556,8 @@ export const BILLING_ALERT_KINDS = [
   'resync_failed',
   // Milestone 12: emergency staff access was granted or used.
   'break_glass_used',
+  // R5: a catalog publication failed at the payment provider (nothing was published).
+  'publish_failed',
 ] as const;
 export type BillingAlertKind = (typeof BILLING_ALERT_KINDS)[number];
 
