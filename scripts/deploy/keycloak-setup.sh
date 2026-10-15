@@ -631,7 +631,10 @@ ok "staff sign-in flow '$STAFF_FLOW': password and one-time code every time, no 
 
 # R5: the staff flow's password and one-time-code steps carry authentication method references ("pwd", "otp"), and
 # the console client puts them in its ID token (the `amr` claim), so the API can require the second factor for the
-# business screens (STAFF_MFA_AMR below). Keycloak sets amr only from these step settings.
+# business screens (STAFF_MFA_AMR below). Keycloak sets amr only from these step settings, and keeps a value only
+# for maxAge seconds after that step (0 would mean "the same second": a person's sign-in, unlike an automated check,
+# reaches the token a moment later). 600 s matches the staff console's "recent sign-in" window.
+# Running this script again updates an existing realm.
 kc_call GET "/$REALM/authentication/flows/$STAFF_FLOW/executions"
 [[ $KC_STATUS == 200 ]] || die "could not read the staff sign-in flow ($KC_STATUS)"
 cp "$WORK/body" "$WORK/staff-executions.json"
@@ -640,13 +643,13 @@ for pair in "auth-username-password-form:pwd" "auth-otp-form:otp"; do
   exec_id=$(P=$provider js '(d.find(x => x.providerId === process.env.P) || {}).id || ""' < "$WORK/staff-executions.json")
   conf_id=$(P=$provider js '(d.find(x => x.providerId === process.env.P) || {}).authenticationConfig || ""' < "$WORK/staff-executions.json")
   [[ -n $exec_id ]] || die "the staff sign-in flow has no $provider step"
-  R=$ref A="pb-staff-amr-$ref" mkjson '({ alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "0" } })' \
+  R=$ref A="pb-staff-amr-$ref" mkjson '({ alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "600" } })' \
     > "$WORK/amr.json"
   if [[ -z $conf_id ]]; then
     kc_call POST "/$REALM/authentication/executions/$exec_id/config" --data-binary @"$WORK/amr.json"
     [[ $KC_STATUS == 201 ]] || die "could not set the $ref reference on the staff flow ($KC_STATUS): $(<"$WORK/body")"
   else
-    I=$conf_id R=$ref A="pb-staff-amr-$ref" mkjson '({ id: e.I, alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "0" } })' \
+    I=$conf_id R=$ref A="pb-staff-amr-$ref" mkjson '({ id: e.I, alias: e.A, config: { "default.reference.value": e.R, "default.reference.maxAge": "600" } })' \
       > "$WORK/amr.json"
     kc_call PUT "/$REALM/authentication/config/$conf_id" --data-binary @"$WORK/amr.json"
     [[ $KC_STATUS == 204 ]] || die "could not update the $ref reference on the staff flow ($KC_STATUS): $(<"$WORK/body")"
