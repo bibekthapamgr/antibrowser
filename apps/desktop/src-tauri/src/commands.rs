@@ -443,15 +443,21 @@ pub async fn export_profiles<Rt: Runtime>(
 }
 
 /// `profile_id` is typed: a malformed id or path fails inside the IPC layer and this body never runs.
+/// `allow_location_change`: "Open anyway" after `PROXY_LOCATION_CHANGED` (ADR-0029), for this open only.
 #[tauri::command]
 pub fn launch_profile<Rt: Runtime>(
     webview: Webview<Rt>,
     state: S<'_>,
     profile_id: ProfileId,
     start_url: Option<String>,
+    allow_location_change: Option<bool>,
 ) -> R<Started> {
     caller(&webview)?;
-    state.launch_profile(&profile_id, start_url.as_deref())
+    state.launch_profile_with(
+        &profile_id,
+        start_url.as_deref(),
+        allow_location_change.unwrap_or(false),
+    )
 }
 
 /// Graceful close; `force: true` is the explicit force close offered after a graceful close timed out.

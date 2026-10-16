@@ -90,10 +90,41 @@ export const PrivacyConfig = Type.Object(
           "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed.",
       }),
     ),
+    location_lock: Type.Optional(
+      Nullable(
+        Type.Boolean({
+          description:
+            "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy.",
+        }),
+      ),
+    ),
+    open_check_page: Type.Optional(
+      Type.Boolean({
+        description:
+          "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions.",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
 export type PrivacyConfig = Static<typeof PrivacyConfig>;
+
+/** A proxy's exit address and where the check service estimated it to be (ADR-0029's location lock). */
+export const ObservedPlace = Type.Object({
+  ip: Nullable(Type.String({ maxLength: 45 })),
+  country: Nullable(Type.String({ pattern: '^[A-Z]{2}$' })),
+  city: Nullable(Type.String({ maxLength: 64 })),
+  timezone: Nullable(Type.String({ maxLength: 64 })),
+});
+export type ObservedPlace = Static<typeof ObservedPlace>;
+export const RememberedLocation = Type.Object({
+  egress_ip: Nullable(Type.String({ maxLength: 45 })),
+  country: Nullable(Type.String({ pattern: '^[A-Z]{2}$' })),
+  city: Nullable(Type.String({ maxLength: 64 })),
+  timezone: Nullable(Type.String({ maxLength: 64 })),
+  seen_at: Type.String(),
+});
+export type RememberedLocation = Static<typeof RememberedLocation>;
 
 export const NetworkView = Type.Object({
   status: Type.Enum(['off', 'ready', 'active', 'failing', 'bypassing', 'lost'], {
@@ -195,6 +226,7 @@ export const SettingValue = Type.Object({
     'updates.channel',
     'updates.automatic',
     'ui.unified_profiles',
+    'profiles.open_check_page',
   ]),
   value: Type.Unknown(),
   version: Type.Integer({ minimum: 0 }),
@@ -389,6 +421,8 @@ export const ProfileStatus = Type.Object({
   suggested_recovery: Nullable(
     Type.Enum(['reopen', 'restore_backup', 'restore_before_upgrade', 'start_fresh']),
   ),
+  /** ADR-0029: where the profile's proxy exited at its last open (the location lock compares with it). */
+  last_location: Type.Optional(Nullable(RememberedLocation)),
 });
 export type ProfileStatus = Static<typeof ProfileStatus>;
 
@@ -1323,6 +1357,12 @@ export const COMMANDS = {
     args: Type.Object({
       profileId: Type.String({ pattern: ProfileIdPattern }),
       startUrl: Type.Optional(Type.String({ maxLength: 2048, pattern: '^https?://' })),
+      allowLocationChange: Type.Optional(
+        Type.Boolean({
+          description:
+            'ADR-0029: the person chose "Open anyway" after PROXY_LOCATION_CHANGED; applies to this open only.',
+        }),
+      ),
     }),
     result: Started,
   },
@@ -1882,6 +1922,20 @@ export const EVENTS = {
       profile_id: Type.String({ pattern: ProfileIdPattern }),
       reason: Type.String({ maxLength: 64 }),
       partial: Type.Boolean(),
+    }),
+    // ADR-0029: the proxy location lock. PROXY_LOCATION_CHANGED: the open did not start (another country, or no
+    // country could be checked; the launch failed with the same code) until the person opens anyway.
+    // PROXY_LOCATION_NOTICE: it opened from the same country with another city or exit address. Shown in this app only.
+    Type.Object({
+      code: Type.Union([Type.Literal('PROXY_LOCATION_CHANGED'), Type.Literal('PROXY_LOCATION_NOTICE')]),
+      profile_id: Type.String({ pattern: ProfileIdPattern }),
+      verdict: Type.Enum(['country_changed', 'unverified', 'ip_changed', 'city_changed']),
+      previous: Nullable(ObservedPlace),
+      previous_seen_at: Nullable(Type.String()),
+      current: Nullable(ObservedPlace),
+      reason: Nullable(
+        Type.String({ maxLength: 64, description: 'Why there is no current place (a check error).' }),
+      ),
     }),
     Type.Object({
       code: Type.Union([Type.Literal('PROXY_EXPIRING'), Type.Literal('PROXY_EXPIRED')]),

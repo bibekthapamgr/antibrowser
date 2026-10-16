@@ -72,6 +72,10 @@ update channel.
 - UI: e2e coverage of the Proxies location line, the switch, the summary, manual override and the create-dialog
   default; axe and 900×600 checks include the new state.
 
+## Follow-up
+ADR-0029 adds the proxy location lock (compare the proxy's location with the last open's before opening) and the
+public `/check/` page, both built on this decision's check service.
+
 ## Revisit when
 - A coordinate override for the Geolocation API is wanted (needs its own review: it would replace, not refuse, a
   value and must stay honest about being configuration).

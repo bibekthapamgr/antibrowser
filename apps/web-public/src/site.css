@@ -1813,6 +1813,133 @@ textarea:focus {
   padding: clamp(40px, 8vw, 96px) 0;
 }
 
+/* ------------------------------------------------------------------ IP check (/check/, ADR-0029) */
+.ipcheck {
+  display: grid;
+  gap: 20px;
+}
+.ipcheck-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+.ipcheck-bar p {
+  margin: 0;
+  flex: 1 1 18rem;
+}
+.ipcheck-bar .warn {
+  border-left-color: var(--pb-warn);
+}
+.ipcheck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.ipcheck-grid[hidden] {
+  display: none;
+}
+.ipcheck-card {
+  padding: 22px 24px;
+  min-width: 0;
+}
+.ipcheck-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  margin: 0 0 14px;
+}
+.ipcheck-card h2 .icon {
+  color: var(--primary);
+  flex: none;
+}
+.ipcheck-facts {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.ipcheck-facts div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, auto) minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.ipcheck-facts dt {
+  color: var(--muted);
+}
+.ipcheck-facts dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ipcheck-facts .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.ipcheck-compare {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+.ipcheck-compare li {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.ipcheck-compare li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.ipcheck-compare h3 {
+  font-size: 15px;
+  margin: 0 0 2px;
+}
+.ipcheck-compare p {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  overflow-wrap: anywhere;
+}
+.ipcheck-compare p > span:first-child {
+  min-width: 7.5rem;
+}
+.ipcheck-compare p.check-status {
+  display: inline-block;
+  justify-self: start;
+  margin-top: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ipcheck-compare p.check-status:empty {
+  display: none;
+}
+.check-status.is-match {
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+.check-status.is-mismatch {
+  background: var(--busy-bg);
+  color: var(--busy-ink);
+}
+.check-status.is-unknown {
+  background: var(--bg-alt);
+  color: var(--muted);
+}
+.ipcheck-note {
+  margin: 0;
+  max-width: 48rem;
+}
+
 /* ------------------------------------------------------------------ footer */
 .foot {
   border-top: 1px solid var(--line);

@@ -295,7 +295,10 @@ fn job_view(stored: &pb_storage::sync::StoredJob, data: &AppState) -> JobView {
     }
 }
 
-fn settings_json(p: &pb_storage::LocalProfile) -> Vec<u8> {
+/// The profile's settings carried in its encrypted backup. `network_location` (ADR-0029) is where the profile's proxy
+/// exited at its last open, so a teammate's computer can warn before the account is used from another country; it
+/// travels only inside the encrypted snapshot (never the proxy itself or its login).
+fn settings_json(p: &pb_storage::LocalProfile, store: &LocalStore) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "format": "project-browser-profile-settings",
         "version": 1,
@@ -305,8 +308,25 @@ fn settings_json(p: &pb_storage::LocalProfile) -> Vec<u8> {
         "microphone": p.microphone,
         "location": p.location,
         "privacy": p.privacy,
+        "network_location": store.profile_location(&p.id).ok().flatten(),
     }))
     .unwrap_or_default()
+}
+
+/// A remembered location from a backup's settings, accepted only in the shapes a check produces (ADR-0029).
+fn carried_location(v: &Value) -> Option<pb_storage::network::ProfileLocation> {
+    use pb_netproxy::check::{valid_city, valid_country, valid_time_zone};
+    let l: pb_storage::network::ProfileLocation = serde_json::from_value(v.clone()).ok()?;
+    let ok = l
+        .egress_ip
+        .as_deref()
+        .is_none_or(|ip| ip.parse::<std::net::IpAddr>().is_ok())
+        && l.country.as_deref().is_none_or(valid_country)
+        && l.city.as_deref().is_none_or(valid_city)
+        && l.timezone.as_deref().is_none_or(valid_time_zone)
+        && pb_storage::network::valid_timestamp(&l.seen_at)
+        && (l.egress_ip.is_some() || l.country.is_some());
+    ok.then_some(l)
 }
 
 // ================================================================================================ state
@@ -631,7 +651,7 @@ impl AppState {
                 .team_quarantine_dir(store, local)
                 .filter(|d| d.is_dir())
                 .ok_or_else(|| SyncError::Local("RECOVERY_COPY_MISSING".into()))?;
-            let settings = settings_json(&profile);
+            let settings = settings_json(&profile, store);
             let browser = profile
                 .runtime_version
                 .clone()
@@ -668,7 +688,7 @@ impl AppState {
             if !dirs.user_data.is_dir() {
                 return Err(SyncError::Local("PROFILE_NEVER_OPENED".into()));
             }
-            let settings = settings_json(&profile);
+            let settings = settings_json(&profile, store);
             let browser = profile
                 .runtime_version
                 .clone()
@@ -1010,6 +1030,17 @@ impl AppState {
         let privacy: Option<pb_runtime::PrivacyConfig> = v
             .get("privacy")
             .and_then(|p| serde_json::from_value(p.clone()).ok());
+        // ADR-0029: a location seen later than the one this computer remembers (a teammate's open) replaces it.
+        if let Some(carried) = v.get("network_location").and_then(carried_location) {
+            let newer = store
+                .profile_location(local)
+                .ok()
+                .flatten()
+                .is_none_or(|here| here.seen_at < carried.seen_at);
+            if newer {
+                let _ = store.set_profile_location(local, &carried);
+            }
+        }
         let text = |k: &str| v.get(k).and_then(Value::as_str);
         let _ = self.update_profile(
             local,
@@ -1614,4 +1645,34 @@ pub(crate) fn tidy_restore(root: &Path, user_data: &Path) {
 /// Where unfinished sync jobs keep sealed files and downloads.
 pub fn work_dir(data: &Path) -> PathBuf {
     data.join("sync")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::carried_location;
+    use serde_json::json;
+
+    #[test]
+    fn a_carried_location_is_accepted_only_in_a_checks_shapes() {
+        let good = json!({ "egress_ip": "198.51.100.7", "country": "US", "city": "New York",
+                           "timezone": "America/New_York", "seen_at": "2026-10-16T09:30:00.000Z" });
+        let l = carried_location(&good).unwrap_or_else(|| panic!("accepted"));
+        assert_eq!(l.country.as_deref(), Some("US"));
+        for (key, bad) in [
+            ("egress_ip", json!("not-an-ip")),
+            ("country", json!("usa")),
+            ("city", json!("<b>x</b>")),
+            ("timezone", json!("../../etc/passwd")),
+            ("seen_at", json!("yesterday")),
+            ("extra", json!(1)),
+        ] {
+            let mut v = good.clone();
+            v[key] = bad;
+            assert!(carried_location(&v).is_none(), "{key}");
+        }
+        let empty = json!({ "egress_ip": null, "country": null, "city": null, "timezone": null,
+                            "seen_at": "2026-10-16T09:30:00.000Z" });
+        assert!(carried_location(&empty).is_none());
+        assert!(carried_location(&json!(null)).is_none());
+    }
 }

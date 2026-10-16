@@ -138,6 +138,7 @@ export function SettingsScreen(props: {
   const perClient = setting(app, 'downloads.per_client_folders')?.value === true;
   const reminder = String(setting(app, 'profiles.open_reminder_hours')?.value ?? 'off');
   const memoryWarning = setting(app, 'resources.memory_warning')?.value !== false;
+  const checkPage = setting(app, 'profiles.open_check_page')?.value !== false;
 
   const choose = async () => {
     try {
@@ -305,6 +306,20 @@ export function SettingsScreen(props: {
             <Toggle
               checked={localProxies}
               onChange={(on) => update('proxies.allow_private_addresses', on)}
+              id={controlId}
+              describedBy={descId}
+            />
+          )}
+        </SettingRow>
+        <SettingRow
+          labelFor
+          title="Open the IP check page first in new profiles with a proxy"
+          description="The page on your account server shows the address and location websites see, and whether the browser’s time zone and language match it. Each profile can turn it on or off in its Network settings."
+        >
+          {({ controlId, descId }) => (
+            <Toggle
+              checked={checkPage}
+              onChange={(on) => update('profiles.open_check_page', on)}
               id={controlId}
               describedBy={descId}
             />

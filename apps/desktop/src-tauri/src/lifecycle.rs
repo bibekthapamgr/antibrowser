@@ -18,6 +18,12 @@
 //! a fresh check (repeated here for at most 10 s when the last one is older than a day; on failure the profile opens
 //! without the match and the person is told), profile settings are written into Chromium's Preferences, and the
 //! process is spawned from a structured argument list.
+//!
+//! Before all of this, a profile with the proxy location lock (ADR-0029, `location.rs`) compares its proxy's location
+//! with the one seen at its last open: a check at most 10 minutes old decides at once; otherwise the check is
+//! repeated (at most 10 s) on a worker thread and the click returns the launch operation. A changed country stops
+//! the open with `PROXY_LOCATION_CHANGED` until the person confirms. With `open_check_page`, the account server's
+//! `/check/` page is the first tab.
 
 use crate::events::{QUIT_REQUESTED, WARNING};
 use crate::ipc::{self, IpcError, limits};
@@ -78,6 +84,8 @@ pub struct ProfileStatus {
     /// Suggested next step for a crashed/damaged profile: reopen | restore_backup | start_fresh, or
     /// restore_before_upgrade when newer data cannot open with the installed browser.
     pub suggested_recovery: Option<&'static str>,
+    /// ADR-0029: where the profile's proxy exited at its last open.
+    pub last_location: Option<pb_storage::network::ProfileLocation>,
 }
 
 /// Whether data written by `data_version` may be opened by the browser `runtime_version` (same or newer major).
@@ -103,6 +111,17 @@ impl AppState {
         profile_id: &ProfileId,
         start_url: Option<&str>,
     ) -> Result<Started, IpcError> {
+        self.launch_profile_with(profile_id, start_url, false)
+    }
+
+    /// `allow_location_change`: the person chose "Open anyway" after `PROXY_LOCATION_CHANGED` (ADR-0029), for this
+    /// one open.
+    pub fn launch_profile_with(
+        self: &Arc<Self>,
+        profile_id: &ProfileId,
+        start_url: Option<&str>,
+        allow_location_change: bool,
+    ) -> Result<Started, IpcError> {
         if start_url.is_some_and(|u| u.len() > limits::URL_BYTES || !pb_runtime::valid_start_url(u))
         {
             return Err(pb_runtime::LaunchError::BadStartUrl.into());
@@ -114,18 +133,107 @@ impl AppState {
                 return Ok(started);
             }
         }
+        // ADR-0029: with the location lock, the proxy's location is compared with the last open's first.
+        if let Some(op) = self.location_gate_op(profile_id) {
+            return Ok(Started { operation_id: op });
+        }
+        let profile = store.get_profile(profile_id)?.ok_or(ipc::UNKNOWN_PROFILE)?;
+        if Self::lock_applies(&profile) && profile.trashed_at.is_none() {
+            // A missing login or a disallowed address fails here, as without the lock, before anything is checked.
+            let proxy = profile
+                .proxy_id
+                .as_ref()
+                .and_then(|p| store.get_proxy(p).ok().flatten())
+                .ok_or(ipc::UNKNOWN_PROXY)?;
+            self.upstream_for(&store, &proxy)?;
+            match self.recent_lock_check(&store, &profile) {
+                Some(check) => {
+                    self.decide_location(&store, &profile, Ok(check), allow_location_change)?;
+                }
+                None => {
+                    return self.launch_after_location_check(
+                        profile,
+                        start_url,
+                        allow_location_change,
+                    );
+                }
+            }
+        } else {
+            self.forget_pending_location(profile_id);
+        }
+        self.launch_resolved(&store, profile_id, start_url, None)
+    }
+
+    /// The rest of a launch once the location lock (if any) let it through: install the pinned browser first when
+    /// needed, then open through a session lease (organization profiles) or directly.
+    fn launch_resolved(
+        self: &Arc<Self>,
+        store: &Arc<LocalStore>,
+        profile_id: &ProfileId,
+        start_url: Option<&str>,
+        op: Option<String>,
+    ) -> Result<Started, IpcError> {
         // The pinned browser installs itself on first use: if it is not installed yet (but the signed manifest
         // names one for this computer and it is not revoked), download and install it, then open — all on a
         // background thread, so the click returns at once and the person sees install progress on the launch
         // operation instead of being sent to a screen to start it by hand.
-        if self.runtime_installable(&store) {
-            return self.launch_when_runtime_ready(profile_id, start_url);
+        if self.runtime_installable(store) {
+            return self.launch_when_runtime_ready(profile_id, start_url, op);
         }
         // Milestone 08: an organization profile opens through a session lease (one writer per profile).
         if store.sync_link(profile_id)?.is_some() {
-            return self.launch_shared(&store, profile_id, start_url, None);
+            return self.launch_shared(store, profile_id, start_url, op);
         }
-        self.launch_local(profile_id, start_url, None)
+        self.launch_local(profile_id, start_url, op)
+    }
+
+    /// The launch operation of an open still waiting for its location check.
+    fn location_gate_op(&self, profile_id: &ProfileId) -> Option<String> {
+        self.location_gates
+            .lock()
+            .ok()
+            .and_then(|g| g.get(profile_id).cloned())
+    }
+
+    /// ADR-0029: the proxy's last check is too old for the lock, so it is repeated (at most 10 s) on a worker
+    /// thread before the launch continues; the click returns the launch operation at once. A changed country fails
+    /// that operation with `PROXY_LOCATION_CHANGED` (the details are in the warning sent with it).
+    fn launch_after_location_check(
+        self: &Arc<Self>,
+        profile: pb_storage::LocalProfile,
+        start_url: Option<&str>,
+        allow_location_change: bool,
+    ) -> Result<Started, IpcError> {
+        let id = profile.id.clone();
+        let op = {
+            let mut gates = self.location_gates.lock().map_err(|_| ipc::INTERNAL)?;
+            if let Some(op) = gates.get(&id) {
+                return Ok(Started {
+                    operation_id: op.clone(),
+                });
+            }
+            let op = self.ops.start(OpKind::LaunchProfile, Some(id.to_string()));
+            gates.insert(id.clone(), op.clone());
+            op
+        };
+        let this = self.clone();
+        let url = start_url.map(str::to_owned);
+        let op_id = op.clone();
+        std::thread::spawn(move || {
+            let result = this.store().and_then(|store| {
+                let check = this.lock_check(&store, &profile);
+                this.decide_location(&store, &profile, check, allow_location_change)?;
+                this.launch_resolved(&store, &id, url.as_deref(), Some(op_id.clone()))
+            });
+            if let Ok(mut gates) = this.location_gates.lock() {
+                gates.remove(&id);
+            }
+            if let Err(e) = result {
+                this.ops.fail(&op_id, e.code, e.message);
+                this.notify_running_changed();
+            }
+        });
+        Ok(Started { operation_id: op })
     }
 
     /// True when the pinned runtime simply is not installed yet but can be (the manifest is verified, this
@@ -141,10 +249,12 @@ impl AppState {
         self: &Arc<Self>,
         profile_id: &ProfileId,
         start_url: Option<&str>,
+        existing_op: Option<String>,
     ) -> Result<Started, IpcError> {
-        let op = self
-            .ops
-            .start(OpKind::LaunchProfile, Some(profile_id.to_string()));
+        let op = existing_op.unwrap_or_else(|| {
+            self.ops
+                .start(OpKind::LaunchProfile, Some(profile_id.to_string()))
+        });
         let this = self.clone();
         let id = profile_id.clone();
         let url = start_url.map(str::to_owned);
@@ -235,6 +345,12 @@ impl AppState {
             Some(u) => vec![u.to_owned()],
             None => profile.start_urls.clone(),
         };
+        // ADR-0029: the account server's IP check page first, when wanted (never for an automation session).
+        let automation = self.wants_devtools(profile_id);
+        let check_page = (profile.privacy.open_check_page && !automation)
+            .then(|| self.check_page_url(&store))
+            .flatten();
+        let urls = crate::location::with_check_page(check_page, urls);
         // Milestone 09: the installed extensions, judged by the organization's policy (cached copy).
         let gate = self.extension_gate(&store, profile_id);
         // The proxy route and its gateway (dropped, and so stopped, on any early return below).
@@ -263,7 +379,7 @@ impl AppState {
                 environment: Some(&profile.privacy),
                 extensions_disabled: gate.disable,
                 // Milestone 10: an automation job opens this profile (DevTools over a protected pipe).
-                automation: self.wants_devtools(profile_id),
+                automation,
             },
         )?;
         // 5.
@@ -503,6 +619,9 @@ impl AppState {
             let _ = self.supervisor.force_stop(store, id);
             self.ops
                 .fail(op, "LOCAL_STORE_ERROR", "The launch could not be recorded.");
+        } else {
+            // ADR-0029: where the proxy exited for this open is now the profile's remembered location.
+            self.remember_location(store, id);
         }
         self.notify_running_changed();
         // Readiness is reported by the monitor; poll here too so the operation finishes promptly.
@@ -727,6 +846,7 @@ impl AppState {
             _ => None,
         };
         Ok(ProfileStatus {
+            last_location: store.profile_location(profile_id).ok().flatten(),
             evidence_count: self.backups.evidence_count(profile_id.as_str()),
             profile: view,
             runs,

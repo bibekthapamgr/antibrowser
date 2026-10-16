@@ -51,6 +51,9 @@ pub const UPDATE_AUTOMATIC: &str = "updates.automatic";
 /// R1 (ADR-0020): this device shows the unified Profiles view. On by default since R3 (ADR-0022); off restores the
 /// earlier screens (the rollback switch).
 pub const UNIFIED_PROFILES: &str = "ui.unified_profiles";
+/// ADR-0029: a new profile with a proxy opens the account server's IP check page as its first tab (on by default;
+/// each profile has its own switch, set from this when it first gets a proxy).
+pub const OPEN_CHECK_PAGE: &str = "profiles.open_check_page";
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -133,6 +136,12 @@ pub const SETTINGS: &[SettingSpec] = &[
     },
     SettingSpec {
         key: UNIFIED_PROFILES,
+        kind: SettingKind::Bool,
+        ui_settable: true,
+        default: || Value::Bool(true),
+    },
+    SettingSpec {
+        key: OPEN_CHECK_PAGE,
         kind: SettingKind::Bool,
         ui_settable: true,
         default: || Value::Bool(true),

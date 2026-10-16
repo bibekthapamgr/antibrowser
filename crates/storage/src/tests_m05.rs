@@ -389,3 +389,90 @@ fn upgrade_from_v12_keeps_checks_without_a_location() -> Result<(), StoreError> 
     );
     Ok(())
 }
+
+#[test]
+fn upgrade_from_v13_adds_remembered_locations_with_the_check_shapes() -> Result<(), StoreError> {
+    use crate::network::ProfileLocation;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("local.db");
+    {
+        let mut conn = Connection::open(&path)?;
+        let tx = conn.transaction()?;
+        for (_, _, step) in &migrations::MIGRATIONS[..13] {
+            step(&tx)?;
+        }
+        tx.pragma_update(None, "user_version", 13)?;
+        tx.execute(
+            "insert into workspaces (id, name) values ('wsp_01J9ZSEED0A010000000000000', 'W')",
+            [],
+        )?;
+        tx.execute(
+            "insert into profiles (id, workspace_id, name, search_text, data_dir_ref)
+             values (?1, 'wsp_01J9ZSEED0A010000000000000', 'Old', 'old', ?1)",
+            [pid(1).as_str()],
+        )?;
+        tx.commit()?;
+    }
+    let store = LocalStore::open(&path)?;
+    assert_eq!(store.schema_version()?, migrations::SCHEMA_VERSION);
+    // Existing profiles have no remembered location: their next open records one.
+    assert_eq!(store.profile_location(&pid(1))?, None);
+    let ny = ProfileLocation {
+        egress_ip: Some("198.51.100.7".into()),
+        country: Some("US".into()),
+        city: Some("New York".into()),
+        timezone: Some("America/New_York".into()),
+        seen_at: String::new(),
+    };
+    let saved = store.set_profile_location(&pid(1), &ny)?;
+    assert!(crate::network::valid_timestamp(&saved.seen_at), "{saved:?}");
+    assert_eq!(
+        ProfileLocation {
+            seen_at: String::new(),
+            ..saved.clone()
+        },
+        ny
+    );
+    // Replaced, never duplicated; a carried location keeps the time it was seen.
+    let berlin = ProfileLocation {
+        egress_ip: Some("203.0.113.9".into()),
+        country: Some("DE".into()),
+        city: Some("Berlin".into()),
+        timezone: Some("Europe/Berlin".into()),
+        seen_at: "2026-10-01T08:00:00.000Z".into(),
+    };
+    assert_eq!(store.set_profile_location(&pid(1), &berlin)?, berlin);
+    // The table holds the values to the check's shapes; nothing else gets in.
+    for bad in [
+        ProfileLocation {
+            country: Some("us".into()),
+            ..berlin.clone()
+        },
+        ProfileLocation {
+            timezone: Some("../../etc".into()),
+            ..berlin.clone()
+        },
+        ProfileLocation {
+            egress_ip: None,
+            country: None,
+            ..berlin.clone()
+        },
+        ProfileLocation {
+            seen_at: "yesterday".into(),
+            ..berlin.clone()
+        },
+    ] {
+        assert!(
+            store.set_profile_location(&pid(1), &bad).is_err(),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(store.profile_location(&pid(1))?, Some(berlin));
+    // Deleted with the profile.
+    store
+        .w()?
+        .execute("delete from profiles where id = ?1", [pid(1).as_str()])?;
+    assert_eq!(store.profile_location(&pid(1))?, None);
+    store.clear_profile_location(&pid(1))?;
+    Ok(())
+}

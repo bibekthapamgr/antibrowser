@@ -19,6 +19,7 @@ pub mod events;
 pub mod external;
 pub mod ipc;
 pub mod lifecycle;
+pub mod location;
 pub mod manage;
 pub mod migration;
 pub mod network;

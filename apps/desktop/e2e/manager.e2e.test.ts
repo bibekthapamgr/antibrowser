@@ -599,6 +599,24 @@ const SCREENS: { name: string; demo: string; nav?: string; prepare?: (p: Page) =
     },
   },
   {
+    name: 'profile-open-checks',
+    demo: '',
+    prepare: async (p) => {
+      await clickRow(p, 'Shop admin');
+      await p.waitForSelector('form[aria-label=Network] .open-checks input[role=switch]');
+      await p.$eval('form[aria-label=Network] .open-checks', (el) => el.scrollIntoView());
+    },
+  },
+  {
+    name: 'proxy-location-changed',
+    demo: '',
+    prepare: async (p) => {
+      await openedOnceThenMoved(p);
+      await clickButton(p, '.drawer', 'Open profile');
+      await p.waitForSelector('[role=alertdialog] .location-change');
+    },
+  },
+  {
     name: 'proxy-login-prompt',
     demo: 'nologin',
     prepare: async (p) => {
@@ -719,6 +737,34 @@ const toastContains = (page: Page, needle: string) =>
     {},
     needle,
   );
+
+/** ADR-0029 (demo): Shop admin's proxy, "Residential DE", now exits from `ip` in `geo`. */
+const moveExit = (
+  page: Page,
+  ip: string,
+  geo: { country: string; city: string; timezone: string; language: string },
+) =>
+  page.evaluate(
+    (i, g) =>
+      (
+        window as unknown as {
+          __pbDemo: { simulateProxyExit(name: string, ip: string, geo: unknown): void };
+        }
+      ).__pbDemo.simulateProxyExit('Residential DE', i, { ...g, latitude: null, longitude: null }),
+    ip,
+    geo,
+  );
+const NEW_YORK = { country: 'US', city: 'New York', timezone: 'America/New_York', language: 'en-US' };
+
+/** Opens Shop admin once (its location is remembered), closes it, and moves its proxy to New York. */
+async function openedOnceThenMoved(page: Page) {
+  await clickRow(page, 'Shop admin');
+  await clickButton(page, '.drawer', 'Open profile');
+  await toastContains(page, 'Profile opened.');
+  await clickButton(page, '.drawer', 'Close profile');
+  await toastContains(page, 'Profile closed.');
+  await moveExit(page, '198.51.100.77', NEW_YORK);
+}
 
 async function clickButton(page: Page, scope: string, label: string) {
   // Waits for the button to exist and be enabled (dialogs and previews render asynchronously).
@@ -1151,6 +1197,140 @@ describe('proxies and privacy (milestone 05)', () => {
     await toastContains(page, 'stopped working');
     await page.waitForFunction(() =>
       document.querySelector('.drawer')?.textContent?.includes('Traffic is blocked'),
+    );
+    await page.close();
+  });
+
+  it('asks before opening from a new country; "Open anyway" opens it and remembers the new place', async () => {
+    const page = await open('');
+    await openedOnceThenMoved(page);
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForSelector('[role=alertdialog] .location-change');
+    const dialog = await text(page, '[role=alertdialog]');
+    expect(dialog).toContain('Open “Shop admin (Client North)” from United States?');
+    expect(dialog).toContain(
+      'This profile usually opens from Germany · Frankfurt am Main (IP 198.51.100.23)',
+    );
+    expect(dialog).toContain('Its proxy now exits from United States · New York (IP 198.51.100.77)');
+    expect(dialog).toContain('Opening from a new country can trigger the site’s security checks');
+    // Nothing started, and no error toast competes with the question.
+    expect(await text(page, '.drawer')).toContain('Open profile');
+    expect(
+      await page.$$eval('.toast', (t) => t.some((x) => x.textContent?.includes('Confirm before opening'))),
+    ).toBe(false);
+    expect(await axeSerious(page)).toEqual([]);
+    // Cancel keeps it closed.
+    await clickButton(page, '[role=alertdialog]', 'Cancel');
+    await toastContains(page, '“Shop admin (Client North)” was not opened.');
+    expect(await page.$('[role=alertdialog]')).toBeNull();
+    // Asked again; this time open anyway.
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForSelector('[role=alertdialog] .location-change');
+    await clickButton(page, '[role=alertdialog]', 'Open anyway');
+    await toastContains(page, 'Profile opened.');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer')?.textContent?.includes('Close profile'),
+    );
+    // The new place is the remembered one: the next open does not ask.
+    await page.waitForFunction(() =>
+      document
+        .querySelector('form[aria-label=Network]')
+        ?.textContent?.includes('Last opened from United States · New York (IP 198.51.100.77)'),
+    );
+    await clickButton(page, '.drawer', 'Close profile');
+    await toastContains(page, 'Profile closed.');
+    await clickButton(page, '.drawer', 'Open profile');
+    await page.waitForFunction(() =>
+      document.querySelector('.drawer')?.textContent?.includes('Close profile'),
+    );
+    expect(await page.$('[role=alertdialog]')).toBeNull();
+    await page.close();
+  });
+
+  it('opens with a notice when only the address changed within the same country', async () => {
+    const page = await open('');
+    await clickRow(page, 'Shop admin');
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'Profile opened.');
+    await clickButton(page, '.drawer', 'Close profile');
+    await toastContains(page, 'Profile closed.');
+    await moveExit(page, '198.51.100.99', {
+      country: 'DE',
+      city: 'Frankfurt am Main',
+      timezone: 'Europe/Berlin',
+      language: 'de-DE',
+    });
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(
+      page,
+      '“Shop admin (Client North)” opened from the same country (Germany). IP changed from 198.51.100.23 to 198.51.100.99.',
+    );
+    await toastContains(page, 'Profile opened.');
+    expect(await page.$('[role=alertdialog]')).toBeNull();
+    await page.close();
+  });
+
+  it('turns the location warning and the IP check page on and off per profile and in Settings', async () => {
+    const page = await open('');
+    await clickRow(page, 'Shop admin');
+    const form = 'form[aria-label=Network]';
+    await page.waitForSelector(`${form} .open-checks input[role=switch]`);
+    const states = () =>
+      page.$$eval('form[aria-label=Network] .open-checks input[role=switch]', (all) =>
+        all.map((i) => (i as HTMLInputElement).checked),
+      );
+    // Shop admin has a proxy: warning on by default; the check page is off for this existing profile.
+    expect(await states()).toEqual([true, false]);
+    expect(await text(page, form)).toContain(
+      'Warn me before opening if this profile’s proxy location has changed',
+    );
+    const switches = await page.$$(`${form} .open-checks input[role=switch]`);
+    await switches[0]?.click();
+    await switches[1]?.click();
+    expect(await text(page, form)).toContain('Off: the profile opens whatever its proxy’s location is.');
+    await clickButton(page, form, 'Save network settings');
+    await toastContains(page, 'Network settings saved.');
+    // Saved: the form is clean again and shows the stored values.
+    await page.waitForFunction(
+      (f) => document.querySelector<HTMLButtonElement>(`${f} button[type=submit]`)?.disabled === true,
+      {},
+      form,
+    );
+    expect(await states()).toEqual([false, true]);
+    // With the warning off, a moved proxy opens without asking.
+    await moveExit(page, '198.51.100.77', NEW_YORK);
+    await clickButton(page, '.drawer', 'Open profile');
+    await toastContains(page, 'Profile opened.');
+    expect(await page.$('[role=alertdialog]')).toBeNull();
+    // A profile without a proxy cannot use the warning.
+    await clickRow(page, 'Ads QA');
+    await page.waitForFunction(
+      (f) => document.querySelector(f)?.textContent?.includes('Needs a proxy.'),
+      {},
+      form,
+    );
+    expect(
+      await page.$eval(`${form} .open-checks input[role=switch]`, (i) => (i as HTMLInputElement).disabled),
+    ).toBe(true);
+    // The Settings default for new profiles with a proxy.
+    await goTo(page, 'Settings');
+    const label = 'Open the IP check page first in new profiles with a proxy';
+    await page.waitForFunction((l) => document.querySelector('main')?.textContent?.includes(l), {}, label);
+    const id = await page.evaluate(
+      (l) =>
+        [...document.querySelectorAll<HTMLLabelElement>('main label.set-row__title')].find(
+          (e) => e.textContent?.trim() === l,
+        )?.htmlFor ?? '',
+      label,
+    );
+    const checked = () =>
+      page.evaluate((i) => (document.getElementById(i) as HTMLInputElement | null)?.checked, id);
+    expect(await checked()).toBe(true);
+    await page.click(`[id="${id}"]`);
+    await page.waitForFunction(
+      (i) => (document.getElementById(i) as HTMLInputElement | null)?.checked === false,
+      {},
+      id,
     );
     await page.close();
   });

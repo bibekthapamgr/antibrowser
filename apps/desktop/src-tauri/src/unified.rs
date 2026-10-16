@@ -108,6 +108,7 @@ impl AppState {
         match proxy {
             Some(proxy) => {
                 let id = ProfileId::parse(&made.id).map_err(|_| ipc::INTERNAL)?;
+                // A copy that was never opened here also gets the IP check page (ADR-0029) from the Settings default.
                 let assigned = self.assign_proxy(&id, Some(proxy), true, made.version)?;
                 if !match_proxy || assigned.privacy.match_proxy {
                     return Ok(assigned);

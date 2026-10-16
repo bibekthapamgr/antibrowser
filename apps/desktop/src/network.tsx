@@ -22,6 +22,7 @@ import type {
   ProxyGeo,
   ProxyInput,
   ProxyView,
+  RememberedLocation,
 } from './backend/types.ts';
 import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog } from './components.tsx';
@@ -78,6 +79,17 @@ export const languageLabel = (tag: string) => {
 /** "New York, US", or the country's name when the city is unknown. */
 export const placeLabel = (g: ProxyGeo) =>
   g.city && g.country ? `${g.city}, ${g.country}` : g.country ? countryName(g.country) : (g.city ?? '');
+
+/** "United States · New York (IP 198.51.100.7)": a remembered or observed exit place, for the location lock. */
+export const placeText = (
+  country: string | null | undefined,
+  city: string | null | undefined,
+  ip: string | null | undefined,
+) => {
+  const where =
+    [country ? countryName(country) : null, city].filter(Boolean).join(' · ') || 'an unknown place';
+  return ip ? `${where} (IP ${ip})` : where;
+};
 
 /** Where the check service estimated the exit address to be. */
 export function GeoLine({ geo }: { geo: ProxyGeo | null | undefined }) {
@@ -721,9 +733,19 @@ export function NetworkSection(props: {
   const [proxies, setProxies] = useState<ProxyView[] | null>(null);
   const [proxyId, setProxyId] = useState(p.proxy_id ?? '');
   const [failClosed, setFailClosed] = useState(p.fail_closed);
+  // ADR-0029: app behaviour when the profile opens (kept in its privacy settings, never sent to the browser).
+  const savedLock = p.privacy.location_lock ?? true;
+  const savedCheckPage = p.privacy.open_check_page ?? false;
+  const [lock, setLock] = useState(savedLock);
+  const [checkPage, setCheckPage] = useState(savedCheckPage);
+  const [last, setLast] = useState<RememberedLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const help = useId();
+  const lockId = useId();
+  const lockHelp = useId();
+  const pageId = useId();
+  const pageHelp = useId();
 
   useEffect(() => {
     backend.network
@@ -735,8 +757,26 @@ export function NetworkSection(props: {
     setProxyId(p.proxy_id ?? '');
     setFailClosed(p.fail_closed);
   }, [p.proxy_id, p.fail_closed]);
+  useEffect(() => {
+    setLock(savedLock);
+    setCheckPage(savedCheckPage);
+  }, [savedLock, savedCheckPage]);
+  // Where the proxy exited at the last open (reloaded when the profile changes, e.g. after it opened).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: p.version and p.state reload it
+  useEffect(() => {
+    let live = true;
+    backend.profiles
+      .status(p.id)
+      .then((s) => live && setLast(s.last_location ?? null))
+      .catch(() => live && setLast(null));
+    return () => {
+      live = false;
+    };
+  }, [backend, p.id, p.version, p.state]);
 
-  const dirty = proxyId !== (p.proxy_id ?? '') || failClosed !== p.fail_closed;
+  const routeDirty = proxyId !== (p.proxy_id ?? '') || failClosed !== p.fail_closed;
+  const behaviourDirty = lock !== savedLock || checkPage !== savedCheckPage;
+  const dirty = routeDirty || behaviourDirty;
   const open = p.state !== 'stopped' && p.state !== 'crashed';
   const chosen = proxies?.find((x) => x.id === proxyId) ?? null;
 
@@ -744,7 +784,13 @@ export function NetworkSection(props: {
     e.preventDefault();
     setError(null);
     try {
-      const saved = await backend.network.assign(p.id, proxyId || null, failClosed, p.version);
+      let saved = p;
+      if (routeDirty) saved = await backend.network.assign(p.id, proxyId || null, failClosed, p.version);
+      if (behaviourDirty)
+        saved = await backend.profiles.update(p.id, {
+          expectedVersion: saved.version,
+          privacy: { ...saved.privacy, location_lock: lock, open_check_page: checkPage },
+        });
       props.onSaved(saved);
       notify(
         open
@@ -837,6 +883,35 @@ export function NetworkSection(props: {
             ? 'Recommended. If the proxy stops working, pages fail instead of loading through this computer’s own connection. WebRTC (calls) can then use only the proxy.'
             : 'If the proxy cannot be reached, pages load through this computer’s own connection and the profile shows “Direct”. Login, certificate and address problems still block.'}
         </p>
+        <div className="open-checks">
+          <label className="choice" htmlFor={lockId}>
+            <Toggle
+              id={lockId}
+              checked={lock && Boolean(proxyId)}
+              disabled={!proxyId}
+              describedBy={lockHelp}
+              onChange={setLock}
+            />
+            Warn me before opening if this profile’s proxy location has changed
+          </label>
+          <p id={lockHelp} className="muted small">
+            {!proxyId
+              ? 'Needs a proxy.'
+              : lock
+                ? `Each open checks where the proxy exits (a check from the last 10 minutes is reused). Another country: you are asked before it opens, because a sign-in from a new country can trigger a site’s security checks. Same country, new address: it opens and you get a notice.${
+                    last ? ` Last opened from ${placeText(last.country, last.city, last.egress_ip)}.` : ''
+                  }`
+                : 'Off: the profile opens whatever its proxy’s location is.'}
+          </p>
+          <label className="choice" htmlFor={pageId}>
+            <Toggle id={pageId} checked={checkPage} describedBy={pageHelp} onChange={setCheckPage} />
+            Open the IP check page first
+          </label>
+          <p id={pageHelp} className="muted small">
+            A first tab from your account server that shows the address and location websites see, and whether
+            the browser’s time zone and language match them. Needs an account server; not used for automation.
+          </p>
+        </div>
         {error && (
           <p role="alert" className="error">
             {error}
@@ -862,6 +937,8 @@ const fullConfig = (c: PrivacyConfig): Required<PrivacyConfig> => ({
   reduced_motion: c.reduced_motion ?? false,
   preset: c.preset ?? null,
   match_proxy: c.match_proxy ?? false,
+  location_lock: c.location_lock ?? null,
+  open_check_page: c.open_check_page ?? false,
 });
 
 const SUPPORT_LABEL: Record<FieldReport['support'], string> = {
@@ -1061,7 +1138,14 @@ export function PrivacySection(props: {
             value={config.preset ?? ''}
             onChange={(e) => {
               const pr = presets.find((x) => x.id === e.target.value);
-              if (pr) setConfig({ ...fullConfig(pr.config), match_proxy: config.match_proxy });
+              // A preset sets browser settings only: matching the proxy, the location lock and the check page stay.
+              if (pr)
+                setConfig({
+                  ...fullConfig(pr.config),
+                  match_proxy: config.match_proxy,
+                  location_lock: config.location_lock,
+                  open_check_page: config.open_check_page,
+                });
             }}
           >
             <option value="">{config.preset ? 'Custom' : 'Custom (choose a preset to fill in)'}</option>

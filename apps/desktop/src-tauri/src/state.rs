@@ -106,6 +106,10 @@ pub struct AppState {
     pub(crate) networks: Mutex<Networks>,
     /// Expiry reminders already shown in this session.
     pub(crate) expiry_warned: Mutex<Vec<(pb_runtime::ProxyId, &'static str)>>,
+    /// ADR-0029: opens waiting for the proxy location check (the launch operation of each).
+    pub(crate) location_gates: Mutex<HashMap<ProfileId, String>>,
+    /// ADR-0029: the location each starting open saw, remembered once its browser has started.
+    pub(crate) pending_locations: Mutex<HashMap<ProfileId, pb_storage::network::ProfileLocation>>,
     /// The signed-in account and organization requests (milestone 06).
     pub(crate) cloud: crate::account::Cloud,
     /// Encrypted backups and restores of organization profiles (milestone 07).
@@ -307,6 +311,8 @@ impl AppState {
             network_settings: RwLock::new(NetworkSettings::default()),
             networks: Mutex::new(HashMap::new()),
             expiry_warned: Mutex::new(Vec::new()),
+            location_gates: Mutex::new(HashMap::new()),
+            pending_locations: Mutex::new(HashMap::new()),
             cloud: crate::account::Cloud::new(signed_in),
             sync: crate::sync::SyncRuntime::new(),
             team: crate::team::TeamRuntime::new(),

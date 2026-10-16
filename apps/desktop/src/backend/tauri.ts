@@ -126,7 +126,11 @@ export function tauriBackend(): Backend {
       undo: (token) => call('undo_action', { token }),
       deletePermanently: (selection, expectedCount) =>
         call('delete_profiles', { selection, confirm: 'DELETE', expectedCount }),
-      launch: (profileId) => call('launch_profile', { profileId }),
+      launch: (profileId, opts) =>
+        call('launch_profile', {
+          profileId,
+          ...(opts?.allowLocationChange ? { allowLocationChange: true } : {}),
+        }),
       stop: (profileId, force) => call('stop_profile', force ? { profileId, force } : { profileId }),
       closeAll: (force) => call('close_all_profiles', force ? { force } : {}),
       status: (profileId) => call('get_profile_status', { profileId }),

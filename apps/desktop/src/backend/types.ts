@@ -85,6 +85,7 @@ export type {
   Library,
   NetworkCheck,
   NetworkView,
+  ObservedPlace,
   Operation,
   OrgImportView,
   OrgLink,
@@ -101,6 +102,7 @@ export type {
   ProxyGeo,
   ProxyInput,
   ProxyView,
+  RememberedLocation,
   ResourcesView,
   RunState,
   RuntimeStatus,
@@ -179,7 +181,8 @@ export interface ProfileRepository {
   undo(token: string): Promise<{ restored: number; skipped: number }>;
   /** Permanent deletion from the trash; `count` is the number the user confirmed. */
   deletePermanently(selection: Selection, count: number): Promise<BulkResult>;
-  launch(id: string): Promise<Started>;
+  /** `allowLocationChange`: "Open anyway" after PROXY_LOCATION_CHANGED (ADR-0029), for this open only. */
+  launch(id: string, opts?: { allowLocationChange?: boolean }): Promise<Started>;
   /** Graceful close; `force` is the explicit force close offered after a timeout. */
   stop(id: string, force?: boolean): Promise<Started>;
   closeAll(force?: boolean): Promise<Started>;

@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { esc, LEGAL, PAGES } from './src/pages.mjs';
+import { CHECK, esc, LEGAL, PAGES } from './src/pages.mjs';
 
 const ROOT = import.meta.dirname;
 const outArg = process.argv.indexOf('--out');
@@ -34,6 +34,8 @@ emit(
   ),
 );
 emit('site.js', readFileSync(join(ROOT, 'src/site.js')));
+// ADR-0029: the IP check page's own script (loaded on /check/ only).
+emit('check.js', readFileSync(join(ROOT, 'src/check.js')));
 const asset = (name) => {
   const url = assets.get(name);
   if (!url) throw new Error(`missing asset ${name}`);
@@ -50,7 +52,7 @@ const NAV = [
 const YEAR = new Date().getUTCFullYear();
 const LOGO = `<svg class="logo" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><rect x="1" y="1" width="26" height="26" rx="8" class="logo-bg"/><rect x="7" y="7.5" width="9" height="9" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/><rect x="12" y="11.5" width="9" height="9" rx="2.5" fill="#fff"/></svg>`;
 
-function layout({ path, title, description, body, bare }) {
+function layout({ path, title, description, body, bare, noindex, scripts = [] }) {
   const isHome = path === '';
   const pageTitle = isHome ? `${BRAND} — ${title}` : `${title} · ${BRAND}`;
   const nav = NAV.map(
@@ -64,11 +66,11 @@ function layout({ path, title, description, body, bare }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(pageTitle)}</title>
-<meta name="description" content="${esc(description)}">
+<meta name="description" content="${esc(description)}">${noindex ? '\n<meta name="robots" content="noindex">' : ''}
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="${asset('site.css')}">
-<script type="module" src="${asset('site.js')}"></script>
+<script type="module" src="${asset('site.js')}"></script>${scripts.map((name) => `\n<script type="module" src="${asset(name)}"></script>`).join('')}
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -114,6 +116,7 @@ function write(path, html) {
 }
 
 for (const page of PAGES) write(page.path, layout(page));
+write(CHECK.path, layout(CHECK));
 
 const meta = JSON.parse(readFileSync(join(ROOT, 'content/legal/meta.json'), 'utf8'));
 for (const l of LEGAL) {
@@ -143,6 +146,6 @@ writeFileSync(
 );
 writeFileSync(
   join(OUT, 'robots.txt'),
-  'User-agent: *\nDisallow: /app/\nDisallow: /console/\nDisallow: /v1/\n',
+  'User-agent: *\nDisallow: /app/\nDisallow: /check/\nDisallow: /console/\nDisallow: /v1/\n',
 );
-console.log(`built ${PAGES.length + LEGAL.length + 1} pages and ${assets.size} assets into ${OUT}`);
+console.log(`built ${PAGES.length + LEGAL.length + 2} pages and ${assets.size} assets into ${OUT}`);

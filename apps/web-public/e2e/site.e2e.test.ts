@@ -4,6 +4,8 @@
  *   is offered (and nothing shown as free) when prices cannot be verified or the API is down
  * - download offers verified files only; "not yet available" otherwise
  * - the contact form validates, sends, and reports rate limits
+ * - the IP check page (ADR-0029) shows what /v1/netcheck saw and compares it with the browser's own time zone and
+ *   language; it says so when the check fails or has no location, and stores nothing
  * - no CSP violations; no serious axe violations in light and dark at phone and desktop widths; no sideways scroll
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
@@ -98,12 +100,17 @@ const NOT_AVAILABLE = {
   platforms: [],
 };
 
+const NETCHECK =
+  'ip=198.51.100.7\nloc=US\ncity=New York\ntz=America/New_York\nlat=40.71\nlon=-74.01\nlang=en-US\n';
+
 // What the stand-in API answers; each test sets what it needs.
-let api: { plans: unknown; downloads: unknown; contact: number } = {
+let api: { plans: unknown; downloads: unknown; contact: number; netcheck: string | null } = {
   plans: PLANS,
   downloads: RELEASE,
   contact: 202,
+  netcheck: NETCHECK,
 };
+let netchecks = 0;
 const contactBodies: unknown[] = [];
 
 let server: Server;
@@ -123,6 +130,13 @@ beforeAll(async () => {
       return api.plans ? json(200, api.plans) : json(503, { code: 'UNAVAILABLE' });
     if (path === '/v1/public/downloads') return json(200, api.downloads);
     if (path === '/v1/web/config') return json(200, { status_url: 'https://status.example.test/' });
+    if (path === '/v1/netcheck') {
+      netchecks++;
+      if (api.netcheck === null) return json(503, { code: 'UNAVAILABLE' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(api.netcheck);
+      return;
+    }
     if (path === '/v1/public/contact' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => {
@@ -160,11 +174,15 @@ afterAll(async () => {
   expect(problems).toEqual([]);
 });
 beforeEach(() => {
-  api = { plans: PLANS, downloads: RELEASE, contact: 202 };
+  api = { plans: PLANS, downloads: RELEASE, contact: 202, netcheck: NETCHECK };
 });
 
-async function open(path: string, opts: { dark?: boolean; width?: number } = {}): Promise<Page> {
+async function open(
+  path: string,
+  opts: { dark?: boolean; width?: number; timezone?: string } = {},
+): Promise<Page> {
   const page = await browser.newPage();
+  if (opts.timezone) await page.emulateTimezone(opts.timezone);
   await page.setViewport({ width: opts.width ?? 1280, height: 860 });
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: opts.dark ? 'dark' : 'light' }]);
   page.on('console', (m) => {
@@ -324,6 +342,62 @@ describe('site', () => {
   });
 });
 
+describe('IP check', () => {
+  const status = (page: Page, id: string) =>
+    page.$eval(`#${id}`, (el) => [el.className, (el as HTMLElement).innerText.trim()]);
+
+  it('shows what the server saw, and a match when the browser agrees', async () => {
+    const page = await open('/check/', { timezone: 'America/New_York' });
+    await sees(page, 'America/New York');
+    const t = await text(page);
+    expect(t).toContain('198.51.100.7');
+    expect(t).toContain('United States (US)');
+    expect(t).toContain('New York');
+    expect(t).toContain('IP geolocation by DB-IP');
+    expect(await status(page, 's-tz')).toEqual(['check-status is-match', '✅ Match']);
+    expect(await status(page, 's-lang')).toEqual(['check-status is-match', '✅ Match']);
+    expect(await page.$eval('#check-status', (el) => el.textContent)).toContain('match the estimate');
+    // The local time at the address is shown.
+    expect(await page.$eval('#c-time', (el) => el.textContent)).toMatch(/\d{2}:\d{2}/);
+    // Nothing is stored.
+    expect(
+      await page.evaluate(() => localStorage.length + sessionStorage.length + document.cookie.length),
+    ).toBe(0);
+    await page.close();
+  });
+
+  it('flags a time zone that differs from the address’s', async () => {
+    const page = await open('/check/', { timezone: 'Asia/Tokyo' });
+    await sees(page, 'America/New York');
+    expect(await status(page, 's-tz')).toEqual(['check-status is-mismatch', '⚠️ Mismatch']);
+    expect(await text(page)).toContain('Asia/Tokyo');
+    expect(await page.$eval('#check-status', (el) => el.textContent)).toContain('differs from the estimate');
+    await page.close();
+  });
+
+  it('says when the check fails, and checks again on request', async () => {
+    api.netcheck = null;
+    const page = await open('/check/');
+    await sees(page, 'The check could not be completed');
+    expect(await page.$eval('#check-results', (el) => (el as HTMLElement).hidden)).toBe(true);
+    api.netcheck = NETCHECK;
+    const before = netchecks;
+    await page.click('#check-again');
+    await sees(page, 'America/New York');
+    expect(netchecks).toBe(before + 1);
+    await page.close();
+  });
+
+  it('shows the address alone when the server has no location for it', async () => {
+    api.netcheck = 'ip=2001:db8::5\n';
+    const page = await open('/check/');
+    await sees(page, 'no location estimate');
+    expect(await page.$eval('#c-ip', (el) => el.textContent)).toBe('2001:db8::5');
+    expect(await status(page, 's-tz')).toEqual(['check-status is-unknown', '– Not compared']);
+    await page.close();
+  });
+});
+
 const PAGES = [
   { name: 'home', path: '/', ready: 'What it does' },
   { name: 'pricing', path: '/pricing/', ready: '$49.00' },
@@ -332,6 +406,7 @@ const PAGES = [
   { name: 'contact', path: '/contact/', ready: 'Topic' },
   { name: 'security', path: '/security/', ready: 'Backups' },
   { name: 'privacy', path: '/legal/privacy/', ready: 'Draft' },
+  { name: 'check', path: '/check/', ready: 'America/New York' },
 ];
 for (const dark of [false, true]) {
   describe(`every page, ${dark ? 'dark' : 'light'}`, () => {

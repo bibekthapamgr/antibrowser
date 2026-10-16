@@ -17,7 +17,13 @@ import {
   USABLE_PLAN,
 } from './gate.tsx';
 import { HealthScreen, type HealthTab } from './health.tsx';
-import { useLauncher } from './launch.tsx';
+import {
+  LOCATION_CHANGED,
+  LocationChangeDialog,
+  type LocationWarning,
+  locationNoticeText,
+  useLauncher,
+} from './launch.tsx';
 import { PROXY_ERROR_HELP, ProxiesScreen } from './network.tsx';
 import { NoticeCentre, ReconnectBanner, Toasts, useNotifications } from './notices.tsx';
 import {
@@ -154,6 +160,8 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
   const [noticesOpen, setNoticesOpen] = useState(false);
   const [showProfile, setShowProfile] = useState<{ id: string; nonce: number } | null>(null);
   const [quit, setQuit] = useState<{ running: number; unresponsive: number } | null>(null);
+  // ADR-0029: an open that waits for the person because its proxy's location changed.
+  const [locationChange, setLocationChange] = useState<{ w: LocationWarning; name: string } | null>(null);
   const [importOp, setImportOp] = useState<Operation | null>(null);
   const [folderSlot, setFolderSlot] = useState<HTMLElement | null>(null);
   const [account, setAccount] = useState<AccountView | null>(null);
@@ -445,6 +453,8 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
       if (op.kind === 'import_profiles') setImportOp(op.status === 'running' ? op : null);
       if (op.status === 'running') return;
       setRefreshKey((k) => k + 1);
+      // The proxy location lock asks in its own dialog (from the warning sent with the failure).
+      if (op.status === 'failed' && op.error_code === LOCATION_CHANGED) return;
       if (op.status === 'failed') notify(op.message ?? 'The action failed.', 'error');
       else if (op.kind === 'stop_profile') notify('Profile closed.');
       else if (op.kind === 'launch_profile') notify('Profile opened.');
@@ -610,6 +620,14 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
             'error',
           ),
         );
+      else if (w.code === 'PROXY_LOCATION_CHANGED')
+        void nameOf(w.profile_id).then((name) => setLocationChange({ w, name }));
+      else if (w.code === 'PROXY_LOCATION_NOTICE')
+        void nameOf(w.profile_id).then((n) => {
+          const text = locationNoticeText(n, w);
+          notify(text);
+          raise({ key: `location:${w.profile_id}`, tone: 'info', text });
+        });
       else if (w.code === 'PROXY_EXPIRED' || w.code === 'PROXY_EXPIRING') {
         notify(
           w.code === 'PROXY_EXPIRED'
@@ -819,6 +837,24 @@ export function App({ backend, requireAccount = true }: { backend: Backend; requ
         <NoticeCentre notices={notices} onDismiss={resolve} onClose={() => setNoticesOpen(false)} />
       )}
       {launcher.dialog}
+      {locationChange && (
+        <LocationChangeDialog
+          change={locationChange.w}
+          name={locationChange.name}
+          onCancel={() => {
+            setLocationChange(null);
+            notify(`${locationChange.name} was not opened.`);
+          }}
+          onOpenAnyway={() => {
+            const { w, name } = locationChange;
+            setLocationChange(null);
+            backend.profiles.launch(w.profile_id, { allowLocationChange: true }).then(
+              () => notify(`Opening ${name}…`),
+              (e) => notify(errorMessage(e), 'error'),
+            );
+          }}
+        />
+      )}
       {live}
     </>
   );

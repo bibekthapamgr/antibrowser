@@ -7,6 +7,7 @@
 | [leak-test-evidence.md](leak-test-evidence.md) | Real-browser leak tests (DNS, UDP/QUIC, TCP, WebRTC, environment) on Windows, macOS and Linux |
 | [ADR-0012](../adr/0012-proxy-gateway-and-privacy-controls.md) | Design decisions: loopback gateway, fail-closed, logins in the keychain, checks, no rotation |
 | [ADR-0027](../adr/0027-match-profile-to-proxy-location.md) | Matching a profile's time zone and language to its proxy's location (server-side geo from DB-IP Lite) |
+| [ADR-0029](../adr/0029-proxy-location-lock-and-ip-check-page.md) | Warning before a profile opens from another country than last time (location lock), and the `/check/` page |
 
 What a proxy does and does not do (also in the UI): a proxy changes the network path a profile uses and the address
 websites see. It does not make a profile undetectable, does not change the device a website sees, and does not
@@ -37,8 +38,9 @@ protect an account from being restricted. Use proxies only where the website's t
    asks for them again. Linux is a development platform only.
 10. **Connectivity checks** contact a check service through the proxy: the account server's `/v1/netcheck` when one
     is configured (https; ADR-0027), otherwise Cloudflare's `/cdn-cgi/trace`. It sees the proxy's exit address.
-    Checks run when you press Test and, for a profile that matches its proxy, before it opens when the last check is
-    older than a day (at most 10 s).
+    Checks run when you press Test; for a profile that matches its proxy, before it opens when the last check is
+    older than a day; and, with the location lock (ADR-0029, on by default for profiles with a proxy), before it
+    opens when the last check is older than 10 minutes (at most 10 s each).
 13. **Matching the proxy's location is an estimate and only configuration** (ADR-0027). A profile with “Match
     timezone, language and location to the proxy” takes its time zone and language from the check service's estimate
     for the exit address (DB-IP City Lite: country-level is usually right, the city often is not), keeps WebRTC on the
@@ -51,4 +53,10 @@ protect an account from being restricted. Use proxies only where the website's t
     survives sleep/wake or a network change; connections that were open at that moment fail and the page retries.
     The outage/recovery tests cover this behaviour; an actual OS sleep/wake cycle has **not** been tested yet (CI
     machines cannot sleep); it stays an open item for the pilot (milestone 14).
+14. **The location lock compares estimates** (ADR-0029). Another country than at the last open, or no country when one
+    was known (the check failed), stops the open until you choose “Open anyway”; the same country with another city
+    or address opens with a notice. Cities from DB-IP Lite are approximate, so they never block. The lock only tells
+    you; it does not change what websites see. Automation jobs are not stopped by it yet. The IP check page
+    (`<server>/check/`, opened first when “Open the IP check page first” is on) shows the same estimate next to the
+    browser's own time zone and language; it compares a few values only.
 12. **The browser is Chrome for Testing** in this alpha (ADR-0010): not for customer distribution.

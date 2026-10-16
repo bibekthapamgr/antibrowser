@@ -44,6 +44,15 @@ values, and the coordinates a page could get from the Geolocation API (it is ref
 evidence: `matching_profile_shows_the_proxy_locations_time_zone_and_language` (Linux: `Asia/Tokyo`, UTC+9,
 `navigator.languages = ["ja-JP"]`, `Accept-Language: ja-JP,ja;q=0.9`, 0 STUN packets with fail-closed off).
 
+### When the profile opens (ADR-0029; app behaviour, never sent to the browser)
+
+| Switch | Default | What it does |
+|---|---|---|
+| `location_lock` — “Warn me before opening if this profile's proxy location has changed” | On for a profile with a proxy (also existing ones) | Compares a check of the proxy (≤ 10 minutes old, else repeated for ≤ 10 s) with the place seen at the last open. Another country, or none when one was known: asks first (“Open anyway” opens that once). Same country, new city or address: opens with a notice. |
+| `open_check_page` — “Open the IP check page first” | From Settings (on) for a profile that gets its first proxy before it was ever opened; off for existing profiles | Opens `<account server>/check/` as the first tab, then the profile's own start pages (within the 10-page limit; never for automation). |
+
+Neither switch changes what the browser sends, and changing one never asks for a restart.
+
 Forced by routing: a profile with a proxy and fail-closed on always gets WebRTC “only through the proxy” and has
 speculative pre-connects/DNS prefetch turned off (`net.network_prediction_options = 2`); the drawer shows the WebRTC
 choice as locked and says why.

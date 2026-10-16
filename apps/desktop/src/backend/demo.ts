@@ -23,6 +23,7 @@ import type {
   ImportSettings,
   Library,
   NetworkCheck,
+  ObservedPlace,
   Operation,
   PrivacyConfig,
   PrivacyValidation,
@@ -31,6 +32,7 @@ import type {
   ProxyEdit,
   ProxyInput,
   ProxyView,
+  RememberedLocation,
   SavedFilter,
   Selection,
   Sort,
@@ -169,6 +171,21 @@ const DEFAULT_PRIVACY: FullPrivacy = {
   reduced_motion: false,
   preset: null,
   match_proxy: false,
+  location_lock: null,
+  open_check_page: false,
+};
+/** ADR-0029: mirrors `location::compare` in the desktop shell. */
+const compareLocation = (
+  prev: RememberedLocation | null,
+  cur: ObservedPlace | null,
+): 'first' | 'same' | 'ip_changed' | 'city_changed' | 'country_changed' | 'unverified' => {
+  if (!prev || (!prev.egress_ip && !prev.country)) return 'first';
+  if (!cur || (!cur.ip && !cur.country)) return 'unverified';
+  if (prev.country && !cur.country) return 'unverified';
+  if (prev.country && cur.country && prev.country !== cur.country) return 'country_changed';
+  if (prev.country && prev.city && cur.city && prev.city !== cur.city) return 'city_changed';
+  if (prev.egress_ip && cur.ip && prev.egress_ip !== cur.ip) return 'ip_changed';
+  return 'same';
 };
 /** Demo locations of the sample exit addresses (documentation ranges; what the project's server would estimate). */
 const DEMO_GEO = {
@@ -306,6 +323,8 @@ interface ProxyRec {
   updated_at: string;
   /** Demo: the proxy does not answer. */
   down: boolean;
+  /** Demo (ADR-0029): the proxy's exit moved (`__pbDemo.simulateProxyExit`); checks report this instead. */
+  exit?: { ip: string; geo: NonNullable<NetworkCheck['geo']> };
 }
 const ipv4 = (h: string) => {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
@@ -438,6 +457,8 @@ export function demoBackend(requested = ''): Backend {
   const backups = new Map<string, { created_at_unix: number; files: number }>();
   const proxies: ProxyRec[] = [];
   const checks: NetworkCheck[] = [];
+  /** ADR-0029: where each profile's proxy exited at its last open. */
+  const remembered = new Map<string, RememberedLocation>();
   const platform = demoPlatform(mode);
   const ops: Operation[] = [];
   let opSeq = 0;
@@ -486,6 +507,13 @@ export function demoBackend(requested = ''): Backend {
     },
     'updates.channel': { key: 'updates.channel', value: 'stable', version: 0, ui_settable: true },
     'updates.automatic': { key: 'updates.automatic', value: true, version: 0, ui_settable: true },
+    // ADR-0029: new profiles with a proxy open the IP check page first.
+    'profiles.open_check_page': {
+      key: 'profiles.open_check_page',
+      value: true,
+      version: 0,
+      ui_settable: true,
+    },
     // R3: on by default; `?demo=classic` shows the earlier screens (the rollback switch).
     'ui.unified_profiles': {
       key: 'ui.unified_profiles',
@@ -502,6 +530,7 @@ export function demoBackend(requested = ''): Backend {
     'updates.channel': ['stable', 'canary', 'dev'],
     'updates.automatic': [true, false],
     'ui.unified_profiles': [true, false],
+    'profiles.open_check_page': [true, false],
     'appearance.theme': ['system', 'light', 'dark'],
     'manager.close_behavior': ['ask', 'keep_running', 'close_all'],
     'profiles.trash_retention_days': ['7', '30', '90'],
@@ -1789,7 +1818,7 @@ export function demoBackend(requested = ''): Backend {
           undo_token: null,
         };
       },
-      async launch(pid: string) {
+      async launch(pid: string, opts?: { allowLocationChange?: boolean }) {
         const p = find(pid);
         if (p.trashed_at) throw E.PROFILE_IN_TRASH;
         if (newerData.has(pid))
@@ -1827,6 +1856,59 @@ export function demoBackend(requested = ''): Backend {
         if (px?.login_missing) throw E.PROXY_CREDENTIALS_MISSING;
         if (px && addressClass(px.host) === 'private' && !settings['proxies.allow_private_addresses']?.value)
           throw E.PROXY_PRIVATE_ADDRESS;
+        // ADR-0029: the proxy location lock (on unless turned off) compares the proxy's exit with the last open's.
+        let seen: RememberedLocation | null = null;
+        if (px && p.proxy_id && p.privacy.location_lock !== false) {
+          const last = checks.find((c) => c.proxy_id === px.id);
+          const recent =
+            last?.result === 'ok' && Date.now() - new Date(last.checked_at).getTime() < 10 * 60_000;
+          const check = recent && last ? last : await backend.network.testProxy(px.id);
+          const prev = remembered.get(pid) ?? null;
+          const cur: ObservedPlace | null =
+            check.result === 'ok'
+              ? {
+                  ip: check.egress_ip,
+                  country: check.geo?.country ?? null,
+                  city: check.geo?.city ?? null,
+                  timezone: check.geo?.timezone ?? null,
+                }
+              : null;
+          const verdict = compareLocation(prev, cur);
+          const details = {
+            profile_id: pid,
+            previous: prev
+              ? { ip: prev.egress_ip, country: prev.country, city: prev.city, timezone: prev.timezone }
+              : null,
+            previous_seen_at: prev?.seen_at ?? null,
+            current: cur,
+            reason: cur ? null : check.error_code,
+          };
+          if ((verdict === 'country_changed' || verdict === 'unverified') && !opts?.allowLocationChange) {
+            const op = startOp('launch_profile', pid);
+            emit('warning', { code: 'PROXY_LOCATION_CHANGED', verdict, ...details });
+            setTimeout(
+              () =>
+                finish(op, {
+                  status: 'failed',
+                  error_code: 'PROXY_LOCATION_CHANGED',
+                  message:
+                    "This profile's proxy location changed since it was last opened. Confirm before opening it.",
+                }),
+              50,
+            );
+            return { operation_id: op.operation_id };
+          }
+          if (verdict === 'ip_changed' || verdict === 'city_changed')
+            emit('warning', { code: 'PROXY_LOCATION_NOTICE', verdict, ...details });
+          if (cur && (cur.ip || cur.country))
+            seen = {
+              egress_ip: cur.ip,
+              country: cur.country,
+              city: cur.city,
+              timezone: cur.timezone,
+              seen_at: now(),
+            };
+        }
         // Milestone 08: an organization profile opens only with its session lease.
         const refused = teamHooks?.open(pid) ?? null;
         if (refused) {
@@ -1878,6 +1960,7 @@ export function demoBackend(requested = ''): Backend {
         changed();
         setTimeout(() => {
           set(pid, { state: 'running', ready: true, window_open: true, runtime_version: RUNTIME_VERSION });
+          if (seen) remembered.set(pid, seen);
           launchOps.delete(pid);
           teamHooks?.opened(pid);
           finish(op, { status: 'succeeded', progress: 1 });
@@ -1939,6 +2022,7 @@ export function demoBackend(requested = ''): Backend {
         const ended = p.state === 'stopped' || p.state === 'crashed';
         return {
           profile: view(p),
+          last_location: remembered.get(pid) ?? null,
           runs:
             p.last_started_at || p.state === 'crashed'
               ? [
@@ -2439,10 +2523,10 @@ export function demoBackend(requested = ''): Backend {
           result: error ? 'error' : 'ok',
           error_code: error,
           latency_ms: error ? null : 120 + Math.floor(Math.random() * 180),
-          egress_ip: error ? null : x.type === 'socks5' ? '203.0.113.40' : '198.51.100.23',
+          egress_ip: error ? null : (x.exit?.ip ?? (x.type === 'socks5' ? '203.0.113.40' : '198.51.100.23')),
           checked_at: now(),
           // Demo: the location the project's server would report for the exit address (an estimate).
-          geo: error ? null : x.type === 'socks5' ? DEMO_GEO.socks5 : DEMO_GEO.other,
+          geo: error ? null : (x.exit?.geo ?? (x.type === 'socks5' ? DEMO_GEO.socks5 : DEMO_GEO.other)),
         };
         checks.unshift(c);
         return c;
@@ -2462,9 +2546,16 @@ export function demoBackend(requested = ''): Backend {
             ...err('VERSION_CONFLICT', 'This was changed elsewhere. Reload and try again.'),
             current_version: p.version,
           };
+        // ADR-0029: a new profile's first proxy turns the IP check page on when that is the default in Settings.
+        const checkPage =
+          Boolean(proxyId) &&
+          !p.proxy_id &&
+          !p.last_started_at &&
+          settings['profiles.open_check_page']?.value !== false;
         set(profileId, {
           proxy_id: proxyId,
           fail_closed: failClosed,
+          ...(checkPage ? { privacy: { ...p.privacy, open_check_page: true } } : {}),
           version: p.version + 1,
           updated_at: now(),
         });
@@ -2597,7 +2688,20 @@ export function demoBackend(requested = ''): Backend {
     simulateQuitRequest(unresponsive = 0) {
       emit('quit-requested', { running: running(), unresponsive });
     },
-  } satisfies Backend & { simulateQuitRequest(unresponsive?: number): void };
+    /**
+     * Demo-only (ADR-0029): the named proxy now exits elsewhere. Its recent checks are forgotten, so the next open
+     * checks again (as a real check older than 10 minutes would be repeated).
+     */
+    simulateProxyExit(name: string, ip: string, geo: NonNullable<NetworkCheck['geo']>) {
+      const x = proxies.find((p) => p.name === name);
+      if (!x) return;
+      x.exit = { ip, geo };
+      for (let i = checks.length - 1; i >= 0; i--) if (checks[i]?.proxy_id === x.id) checks.splice(i, 1);
+    },
+  } satisfies Backend & {
+    simulateQuitRequest(unresponsive?: number): void;
+    simulateProxyExit(name: string, ip: string, geo: NonNullable<NetworkCheck['geo']>): void;
+  };
   // Mirror the desktop runtime worker: when the pinned browser is missing it installs itself shortly after
   // start, with no manual step.
   if (!runtimeInstalled) {

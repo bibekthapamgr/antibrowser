@@ -277,6 +277,12 @@ pub const PROXY_CREDENTIALS_MISSING: IpcError = IpcError::new(
     "PROXY_CREDENTIALS_MISSING",
     "The proxy's saved login is missing from this computer's secure storage. Enter it again.",
 );
+/// ADR-0029: the proxy now exits from another country than at this profile's last open (or its location could not
+/// be checked). The details arrive in the `PROXY_LOCATION_CHANGED` warning; opening anyway is an explicit choice.
+pub const PROXY_LOCATION_CHANGED: IpcError = IpcError::new(
+    "PROXY_LOCATION_CHANGED",
+    "This profile's proxy location changed since it was last opened. Confirm before opening it.",
+);
 pub const GATEWAY_FAILED: IpcError = IpcError::new(
     "GATEWAY_FAILED",
     "The profile's proxy connection could not be prepared.",

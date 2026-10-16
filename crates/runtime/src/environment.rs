@@ -97,6 +97,31 @@ pub struct PrivacyConfig {
     /// With a proxy: time zone and language follow the proxy's exit address (from its last check; manual `language`
     /// and `timezone` win), WebRTC uses only the proxy and websites are refused this computer's location (unless you allowed it).
     pub match_proxy: bool,
+    /// ADR-0029, app behaviour (not a browser setting): with a proxy, warn before opening when the proxy's exit
+    /// location differs from the one seen at the profile's last open. `None` = the default, which is on for a
+    /// profile with a proxy. Never sent to the browser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_lock: Option<bool>,
+    /// ADR-0029, app behaviour: open the account server's IP check page (`<server>/check/`) as the first tab.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub open_check_page: bool,
+}
+
+impl PrivacyConfig {
+    /// Whether the proxy location lock (ADR-0029) applies to a launch: only with a proxy, on unless turned off.
+    pub fn location_lock_on(&self, proxied: bool) -> bool {
+        proxied && self.location_lock.unwrap_or(true)
+    }
+
+    /// The settings that reach the browser (the app-behaviour switches cleared): two configurations that differ only
+    /// in those switches open the same browser, so changing them never asks for a restart.
+    pub fn browser_settings(&self) -> PrivacyConfig {
+        PrivacyConfig {
+            location_lock: None,
+            open_check_page: false,
+            ..self.clone()
+        }
+    }
 }
 
 /// Where the check service estimated a proxy's exit address to be (ADR-0027). Each value was validated when the
@@ -738,5 +763,35 @@ mod tests {
             serde_json::from_str(r#"{"match_proxy": true}"#).unwrap_or_else(|e| panic!("{e}"));
         assert!(c.match_proxy);
         assert!(!PrivacyConfig::default().match_proxy);
+    }
+
+    #[test]
+    fn location_lock_defaults_on_with_a_proxy_and_never_reaches_the_browser() {
+        let none = PrivacyConfig::default();
+        assert!(none.location_lock_on(true), "absent = on with a proxy");
+        assert!(!none.location_lock_on(false), "no proxy, nothing to lock");
+        let off = PrivacyConfig {
+            location_lock: Some(false),
+            open_check_page: true,
+            ..Default::default()
+        };
+        assert!(!off.location_lock_on(true));
+        // App-behaviour switches are not browser settings: they never ask for a restart.
+        assert_eq!(off.browser_settings(), PrivacyConfig::default());
+        // Stored documents stay as they were unless a switch is set (older builds keep reading them).
+        assert_eq!(
+            serde_json::to_string(&PrivacyConfig::default()).unwrap_or_default(),
+            serde_json::to_string(&serde_json::from_str::<PrivacyConfig>("{}").unwrap_or_default())
+                .unwrap_or_default()
+        );
+        let text = serde_json::to_string(&none).unwrap_or_default();
+        assert!(
+            !text.contains("location_lock") && !text.contains("open_check_page"),
+            "{text}"
+        );
+        let back: PrivacyConfig =
+            serde_json::from_str(&serde_json::to_string(&off).unwrap_or_default())
+                .unwrap_or_default();
+        assert_eq!(back, off);
     }
 }

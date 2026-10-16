@@ -426,6 +426,26 @@ legend {
 .choice input {
   min-height: auto;
 }
+/* ADR-0029: what happens when the profile opens (location lock, IP check page), set apart from routing. */
+.open-checks {
+  display: grid;
+  gap: var(--pb-space-2);
+  padding-top: var(--pb-space-3);
+  border-top: 1px solid var(--pb-border);
+}
+.open-checks .choice {
+  align-items: flex-start;
+}
+.open-checks .choice .switch {
+  flex: none;
+}
+.open-checks p {
+  margin: 0 0 var(--pb-space-1);
+}
+.location-change p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 fieldset.danger {
   border-color: var(--pb-danger);
 }

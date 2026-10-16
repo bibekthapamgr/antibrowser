@@ -1,7 +1,7 @@
 /**
  * ADR-0027: GET /v1/netcheck, the desktop proxy check service (trace format, optional IP geolocation).
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CityResponse } from 'maxmind';
@@ -126,7 +126,16 @@ describe('GET /v1/netcheck', () => {
       : null;
   };
   beforeAll(async () => {
-    h = await harness({ geo });
+    // ADR-0029: the public website (with its IP check page) is served by the same API.
+    const site = mkdtempSync(join(tmpdir(), 'pb-site-'));
+    mkdirSync(join(site, 'check'));
+    writeFileSync(
+      join(site, 'check', 'index.html'),
+      '<!doctype html><title>IP check</title><h1>IP check</h1>',
+    );
+    writeFileSync(join(site, 'index.html'), '<!doctype html><title>Home</title>');
+    writeFileSync(join(site, '404.html'), '<!doctype html><title>Not found</title>');
+    h = await harness({ geo, env: { PUBLIC_DIR: site } });
     trusted = await harness({ geo, env: { TRUST_PROXY_HOPS: '1' } });
     await h.owner.query("delete from rate_limit_counters where bucket = 'netcheck.ip'");
   });
@@ -189,5 +198,20 @@ describe('GET /v1/netcheck', () => {
     const other = await h.app.inject({ method: 'GET', url: '/v1/netcheck', remoteAddress: '192.0.2.78' });
     expect(other.statusCode).toBe(200);
     await h.owner.query("delete from rate_limit_counters where bucket = 'netcheck.ip'");
+  });
+
+  it('serves the IP check page whose script reads this route from the same origin (ADR-0029)', async () => {
+    const page = await h.app.inject({ method: 'GET', url: '/check/', remoteAddress: '198.51.100.7' });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('<h1>IP check</h1>');
+    const csp = String(page.headers['content-security-policy']);
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).not.toContain('unsafe-inline');
+    expect((await h.app.inject({ method: 'GET', url: '/check' })).statusCode).toBe(308);
+    // The route the page fetches stays the API's (the website never shadows /v1).
+    const check = await h.app.inject({ method: 'GET', url: '/v1/netcheck', remoteAddress: '198.51.100.7' });
+    expect(check.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(lines(check.body).loc).toBe('US');
   });
 });

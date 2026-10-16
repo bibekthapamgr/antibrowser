@@ -4,12 +4,21 @@
  * then is anything asked; otherwise the profile simply opens. The estimate is about this computer, never a promise
  * about what a website will use.
  */
+import type { EventPayload } from '@pb/contracts/ipc';
 import { useCallback, useState } from 'react';
 import type { Backend, LaunchCheck, ProfileView } from './backend/types.ts';
-import { errorMessage } from './backend/types.ts';
+import { errorMessage, isIpcError } from './backend/types.ts';
 import { Dialog, formatBytes } from './components.tsx';
 import { verdictText } from './health.tsx';
-import { type Notify, plural, withClient } from './status.tsx';
+import { countryName, PROXY_ERROR_HELP, placeText } from './network.tsx';
+import { type Notify, plural, when, withClient } from './status.tsx';
+
+/** ADR-0029: the launch stopped until the person confirms; the details arrive in the warning of the same name. */
+export const LOCATION_CHANGED = 'PROXY_LOCATION_CHANGED';
+export type LocationWarning = Extract<
+  EventPayload<'warning'>,
+  { code: 'PROXY_LOCATION_CHANGED' | 'PROXY_LOCATION_NOTICE' }
+>;
 
 type Target = Pick<ProfileView, 'id' | 'name' | 'client_name'>;
 
@@ -24,6 +33,8 @@ export function useLauncher(backend: Backend, notify: Notify, onError?: (e: unkn
           notify(`Opening ${withClient(p)}…`);
         } catch (e) {
           if (onError?.(e, p)) continue;
+          // The proxy location lock asks in its own dialog (App), from the warning sent with this error.
+          if (isIpcError(e) && e.code === LOCATION_CHANGED) continue;
           notify(errorMessage(e), 'error');
         }
       }
@@ -133,4 +144,76 @@ function LaunchCheckDialog(props: {
       </div>
     </Dialog>
   );
+}
+
+/**
+ * ADR-0029: the profile's proxy now exits from another country than at its last open (or its location could not be
+ * checked). Nothing has started; "Open anyway" opens it this once and makes the new location the remembered one.
+ */
+export function LocationChangeDialog(props: {
+  change: LocationWarning;
+  name: string;
+  onCancel: () => void;
+  onOpenAnyway: () => void;
+}) {
+  const { change: w } = props;
+  const prev = w.previous;
+  const cur = w.current;
+  const usual = prev ? placeText(prev.country, prev.city, prev.ip) : 'an earlier location';
+  const country = cur?.country ? countryName(cur.country) : null;
+  const unverified = w.verdict === 'unverified' || !cur;
+  return (
+    <Dialog
+      title={
+        unverified
+          ? `Open ${props.name} without checking its location?`
+          : `Open ${props.name} from ${country ?? 'a new country'}?`
+      }
+      onClose={props.onCancel}
+      role="alertdialog"
+    >
+      <div className="stack location-change">
+        <p>
+          This profile usually opens from <strong>{usual}</strong>
+          {w.previous_seen_at ? <span className="muted"> (last open {when(w.previous_seen_at)})</span> : null}
+          .
+        </p>
+        {unverified ? (
+          <p>
+            Its proxy’s location could not be checked just now
+            {w.reason ? `: ${PROXY_ERROR_HELP[w.reason] ?? 'the check did not work.'}` : '.'}
+          </p>
+        ) : (
+          <p>
+            Its proxy now exits from <strong>{placeText(cur?.country, cur?.city, cur?.ip)}</strong>.
+          </p>
+        )}
+        <p className="warn small">
+          Opening from a new country can trigger the site’s security checks (extra verification, a locked
+          session). If you did not expect this, check the proxy first.
+        </p>
+        <div className="row row--end">
+          <button type="button" className="pb-button" onClick={props.onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="pb-button" data-variant="primary" onClick={props.onOpenAnyway}>
+            Open anyway
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** The non-blocking notice: same country, another city or exit address. */
+export function locationNoticeText(name: string, w: LocationWarning): string {
+  const prev = w.previous;
+  const cur = w.current;
+  const country = cur?.country ? countryName(cur.country) : null;
+  const ip = prev?.ip && cur?.ip && prev.ip !== cur.ip ? ` IP changed from ${prev.ip} to ${cur.ip}.` : '';
+  const city =
+    w.verdict === 'city_changed' && prev?.city && cur?.city
+      ? ` City changed from ${prev.city} to ${cur.city}.`
+      : '';
+  return `${name} opened from the same country${country ? ` (${country})` : ''}.${city}${ip}`;
 }

@@ -36,6 +36,7 @@ test('the expected pages exist', () => {
     '/legal/privacy/index.html',
     '/legal/terms/index.html',
     '/legal/refund/index.html',
+    '/check/index.html',
     '/404.html',
   ])
     assert.ok(names.includes(want), want);
@@ -101,4 +102,63 @@ test('legal pages are marked as drafts until the owner has reviewed them', () =>
 
 test('asset names carry a content hash (safe to cache forever)', () => {
   for (const name of readdirSync(join(OUT, 'assets'))) assert.match(name, /\.[0-9a-f]{10}\.[a-z]+$/, name);
+});
+
+// ADR-0029: the IP check page (opened by the desktop app as a profile's first tab).
+const { compareLanguage, compareZone, parseTrace, readCheck } = await import('../src/check.js');
+
+test('the IP check page loads its own script, is not indexed and credits DB-IP', () => {
+  const page = pages.find((p) => p.file === '/check/index.html');
+  assert.ok(page);
+  const { html } = page;
+  assert.match(html, /<meta name="robots" content="noindex">/);
+  assert.match(html, /<script type="module" src="\/assets\/check\.[0-9a-f]{10}\.js"><\/script>/);
+  assert.match(html, /IP geolocation by <a href="https:\/\/db-ip\.com">DB-IP<\/a>/);
+  for (const id of ['c-ip', 'c-country', 'c-city', 'c-tz', 'b-tz', 'c-lang', 'b-lang', 'c-time', 'b-time'])
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  // Other pages do not load it, and the check page is not in the navigation.
+  for (const p of pages.filter((x) => x.file !== '/check/index.html')) {
+    assert.doesNotMatch(p.html, /check\.[0-9a-f]{10}\.js/, p.file);
+    assert.doesNotMatch(p.html, /href="\/check\/"/, p.file);
+  }
+  assert.match(readFileSync(join(OUT, 'robots.txt'), 'utf8'), /Disallow: \/check\//);
+});
+
+test('the IP check reads the check answer strictly', () => {
+  const t = parseTrace('ip=198.51.100.7\r\nloc=US\ncity=New York\ntz=America/New_York\nlang=en-US\nloc=DE\n');
+  assert.equal(t.loc, 'US', 'the first value counts');
+  assert.deepEqual(readCheck('ip=198.51.100.7\nloc=US\ncity=New York\ntz=America/New_York\nlang=en-US\n'), {
+    ip: '198.51.100.7',
+    country: 'US',
+    city: 'New York',
+    timezone: 'America/New_York',
+    language: 'en-US',
+  });
+  // Address only (no geolocation database on the server).
+  assert.deepEqual(readCheck('ip=2001:db8::5\n'), {
+    ip: '2001:db8::5',
+    country: null,
+    city: null,
+    timezone: null,
+    language: null,
+  });
+  assert.deepEqual(readCheck('ip=<b>\nloc=us\ncity=<script>\ntz=../../x\nlang=en_US\n'), {
+    ip: null,
+    country: null,
+    city: null,
+    timezone: null,
+    language: null,
+  });
+});
+
+test('the IP check compares time zone and language honestly', () => {
+  assert.equal(compareZone('America/New_York', 'America/New_York'), 'match');
+  assert.equal(compareZone('Asia/Kolkata', 'Asia/Calcutta'), 'match', 'aliases of one zone');
+  assert.equal(compareZone('Europe/Berlin', 'Asia/Kathmandu'), 'mismatch');
+  assert.equal(compareZone(null, 'Europe/Berlin'), 'unknown');
+  assert.equal(compareZone('Not/AZone', 'Europe/Berlin'), 'unknown');
+  assert.equal(compareLanguage('en-US', 'en-US'), 'match');
+  assert.equal(compareLanguage('en-US', 'en-GB'), 'match', 'same language, another region');
+  assert.equal(compareLanguage('de-DE', 'en-US'), 'mismatch');
+  assert.equal(compareLanguage('de-DE', null), 'unknown');
 });

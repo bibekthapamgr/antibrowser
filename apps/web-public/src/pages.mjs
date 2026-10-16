@@ -470,6 +470,49 @@ ${pageHead('Security', 'An overview of how the product protects your accounts an
   },
 ];
 
+/**
+ * ADR-0029: the IP check page. The desktop app can open it as a profile's first tab (through the profile's proxy);
+ * check.js asks /v1/netcheck what this server sees and compares the estimate with what the browser reports. Not
+ * linked from the navigation and not indexed; it works without an account and stores nothing.
+ */
+export const CHECK = {
+  path: 'check',
+  title: 'IP check',
+  description:
+    'The address and estimated location this server sees for your connection, next to your browser’s time zone and language.',
+  noindex: true,
+  scripts: ['check.js'],
+  body: `
+${pageHead('IP check', 'What our server sees for this connection, and what this browser reports. Nothing is stored, and you do not need an account.')}
+<div id="ipcheck" class="ipcheck">
+  <div class="ipcheck-bar">
+    <p id="check-status" class="muted" role="status" aria-live="polite">Checking…</p>
+    <button id="check-again" type="button" class="button" disabled>Check again</button>
+  </div>
+  <noscript><p>This check runs in your browser; please enable JavaScript.</p></noscript>
+  <div id="check-results" class="ipcheck-grid" hidden>
+    <section class="card ipcheck-card" aria-labelledby="seen-h">
+      <h2 id="seen-h">${icon('globe')}What this server sees</h2>
+      <dl class="ipcheck-facts">
+        <div><dt>IP address</dt><dd id="c-ip" class="mono"></dd></div>
+        <div><dt>Country</dt><dd id="c-country"></dd></div>
+        <div><dt>City</dt><dd id="c-city"></dd></div>
+      </dl>
+      <p class="small muted">The location is an estimate for the address, from an IP database. City-level estimates are often approximate. IP geolocation by <a href="https://db-ip.com">DB-IP</a>.</p>
+    </section>
+    <section class="card ipcheck-card" aria-labelledby="cmp-h">
+      <h2 id="cmp-h">${icon('laptop')}Compared with this browser</h2>
+      <ul class="ipcheck-compare">
+        <li><h3>Time zone</h3><p><span class="small muted">For this address</span> <span id="c-tz"></span></p><p><span class="small muted">This browser</span> <span id="b-tz"></span></p><p id="s-tz" class="check-status"></p></li>
+        <li><h3>Language</h3><p><span class="small muted">For this address</span> <span id="c-lang"></span></p><p><span class="small muted">This browser</span> <span id="b-lang"></span></p><p id="s-lang" class="check-status"></p></li>
+        <li><h3>Local time</h3><p><span class="small muted">At this address</span> <span id="c-time"></span></p><p><span class="small muted">This browser</span> <span id="b-time"></span></p><p id="s-time" class="check-status"></p></li>
+      </ul>
+    </section>
+  </div>
+  <p class="small muted ipcheck-note">This page compares a few values only. Websites can see much more about a browser and decide for themselves what they trust; a match here does not change that.</p>
+</div>`,
+};
+
 /** Legal pages: the owner supplies and reviews the text (content/legal/*.html); see content/legal/meta.json. */
 export const LEGAL = [
   { path: 'legal/privacy', file: 'privacy.html', title: 'Privacy policy' },

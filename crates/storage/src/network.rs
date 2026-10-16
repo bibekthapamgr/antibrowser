@@ -8,7 +8,7 @@ use crate::migrations::name_key;
 use crate::{LocalStore, StoreError};
 use pb_runtime::{NetworkCheckId, ProfileId, ProxyGeo, ProxyId, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Diagnostic records (with the observed exit address) are kept this long.
 pub const CHECK_RETENTION_DAYS: u32 = 7;
@@ -82,6 +82,30 @@ pub struct GatewaySession {
     pub proxy_version: i64,
     /// The routing mode the browser was started with.
     pub fail_closed: bool,
+}
+
+/// Where a profile's proxy exited at its last successful open (ADR-0029: the proxy location lock). At least an address
+/// or a country is known. `seen_at` is the store's timestamp format (`YYYY-MM-DDTHH:MM:SS.fffZ`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileLocation {
+    pub egress_ip: Option<String>,
+    pub country: Option<String>,
+    pub city: Option<String>,
+    pub timezone: Option<String>,
+    pub seen_at: String,
+}
+
+/// `2026-10-16T09:30:00.000Z` (or without fractions): the shape of the store's timestamps.
+pub fn valid_timestamp(s: &str) -> bool {
+    let b = s.as_bytes();
+    (20..=30).contains(&b.len())
+        && valid_date(s.get(0..10).unwrap_or_default())
+        && b[10] == b'T'
+        && b[b.len() - 1] == b'Z'
+        && s[11..b.len() - 1]
+            .bytes()
+            .all(|c| c.is_ascii_digit() || c == b':' || c == b'.')
 }
 
 /// `YYYY-MM-DD` with a plausible month and day.
@@ -539,6 +563,67 @@ impl LocalStore {
             .collect()
     }
 
+    /// The location a profile's proxy exited from at its last successful open (ADR-0029).
+    pub fn profile_location(
+        &self,
+        profile: &ProfileId,
+    ) -> Result<Option<ProfileLocation>, StoreError> {
+        let conn = self.r()?;
+        let mut stmt = conn.prepare_cached(
+            "select egress_ip, country, city, timezone, seen_at from profile_locations where profile_id = ?1",
+        )?;
+        Ok(stmt
+            .query_row([profile.as_str()], |r| {
+                Ok(ProfileLocation {
+                    egress_ip: r.get(0)?,
+                    country: r.get(1)?,
+                    city: r.get(2)?,
+                    timezone: r.get(3)?,
+                    seen_at: r.get(4)?,
+                })
+            })
+            .optional()?)
+    }
+
+    /// Remembers where a profile's proxy exited (replacing the previous location). An empty `seen_at` means now;
+    /// otherwise it must be a store timestamp (a location carried in a backup keeps the time it was seen). The values
+    /// are held to the same shapes as a check's by the table.
+    pub fn set_profile_location(
+        &self,
+        profile: &ProfileId,
+        location: &ProfileLocation,
+    ) -> Result<ProfileLocation, StoreError> {
+        if location.egress_ip.is_none() && location.country.is_none() {
+            return Err(StoreError::Invalid(
+                "a location needs an address or a country",
+            ));
+        }
+        if !location.seen_at.is_empty() && !valid_timestamp(&location.seen_at) {
+            return Err(StoreError::Invalid("not a timestamp"));
+        }
+        self.w()?.execute(
+            "insert or replace into profile_locations (profile_id, egress_ip, country, city, timezone, seen_at)
+             values (?1, ?2, ?3, ?4, ?5, coalesce(?6, strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
+            params![
+                profile.as_str(),
+                location.egress_ip,
+                location.country,
+                location.city,
+                location.timezone,
+                Some(location.seen_at.as_str()).filter(|s| !s.is_empty()),
+            ],
+        )?;
+        self.profile_location(profile)?.ok_or(StoreError::Corrupt)
+    }
+
+    pub fn clear_profile_location(&self, profile: &ProfileId) -> Result<(), StoreError> {
+        self.w()?.execute(
+            "delete from profile_locations where profile_id = ?1",
+            [profile.as_str()],
+        )?;
+        Ok(())
+    }
+
     pub fn clear_gateway_session(&self, profile: &ProfileId) -> Result<(), StoreError> {
         self.w()?.execute(
             "delete from gateway_sessions where profile_id = ?1",
@@ -551,6 +636,21 @@ impl LocalStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timestamps() {
+        assert!(valid_timestamp("2026-10-16T09:30:00.123Z"));
+        assert!(valid_timestamp("2026-10-16T09:30:00Z"));
+        for bad in [
+            "2026-10-16",
+            "2026-10-16 09:30:00Z",
+            "2026-10-16T09:30:00",
+            "2026-10-16T09:30:0x.1Z",
+            "",
+        ] {
+            assert!(!valid_timestamp(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn dates() {

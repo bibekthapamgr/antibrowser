@@ -165,7 +165,8 @@
                     "automation.allow_debugging",
                     "updates.channel",
                     "updates.automatic",
-                    "ui.unified_profiles"
+                    "ui.unified_profiles",
+                    "profiles.open_check_page"
                   ]
                 },
                 "value": {},
@@ -639,6 +640,21 @@
                 "match_proxy": {
                   "type": "boolean",
                   "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+                },
+                "location_lock": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "open_check_page": {
+                  "type": "boolean",
+                  "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
                 }
               },
               "additionalProperties": false
@@ -1183,6 +1199,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -1543,6 +1574,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -1874,6 +1920,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -2083,6 +2144,10 @@
             "type": "string",
             "maxLength": 2048,
             "pattern": "^https?://"
+          },
+          "allowLocationChange": {
+            "type": "boolean",
+            "description": "ADR-0029: the person chose \"Open anyway\" after PROXY_LOCATION_CHANGED; applies to this open only."
           }
         }
       },
@@ -2498,6 +2563,21 @@
                   "match_proxy": {
                     "type": "boolean",
                     "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+                  },
+                  "location_lock": {
+                    "anyOf": [
+                      {
+                        "type": "boolean",
+                        "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "open_check_page": {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
                   }
                 },
                 "additionalProperties": false
@@ -2884,6 +2964,72 @@
                   "restore_before_upgrade",
                   "start_fresh"
                 ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_location": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "egress_ip",
+                  "country",
+                  "city",
+                  "timezone",
+                  "seen_at"
+                ],
+                "properties": {
+                  "egress_ip": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 45
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "country": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Z]{2}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "city": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timezone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "seen_at": {
+                    "type": "string"
+                  }
+                }
               },
               {
                 "type": "null"
@@ -3660,7 +3806,8 @@
               "automation.allow_debugging",
               "updates.channel",
               "updates.automatic",
-              "ui.unified_profiles"
+              "ui.unified_profiles",
+              "profiles.open_check_page"
             ]
           },
           "value": {},
@@ -4315,6 +4462,21 @@
                     "match_proxy": {
                       "type": "boolean",
                       "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+                    },
+                    "location_lock": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "open_check_page": {
+                      "type": "boolean",
+                      "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
                     }
                   },
                   "additionalProperties": false
@@ -6056,6 +6218,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -9338,6 +9515,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -9628,6 +9820,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -9896,6 +10103,21 @@
                     "match_proxy": {
                       "type": "boolean",
                       "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+                    },
+                    "location_lock": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "open_check_page": {
+                      "type": "boolean",
+                      "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
                     }
                   },
                   "additionalProperties": false
@@ -12501,6 +12723,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -14385,6 +14622,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -19876,6 +20128,21 @@
                     "match_proxy": {
                       "type": "boolean",
                       "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+                    },
+                    "location_lock": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "open_check_page": {
+                      "type": "boolean",
+                      "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
                     }
                   },
                   "additionalProperties": false
@@ -20690,6 +20957,21 @@
               "match_proxy": {
                 "type": "boolean",
                 "description": "With a proxy: time zone and language follow the proxy's location (from its last check), WebRTC uses only the proxy, websites are refused this computer's location unless it was allowed."
+              },
+              "location_lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "description": "ADR-0029, app behaviour: with a proxy, warn before opening when the proxy's location differs from the one seen at the last open (another country: the open waits for a confirmation). Absent or null: on for a profile with a proxy."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "open_check_page": {
+                "type": "boolean",
+                "description": "ADR-0029, app behaviour: open the account server's IP check page (<server>/check/) as the first tab. Never for automation sessions."
               }
             },
             "additionalProperties": false
@@ -21598,6 +21880,190 @@
             },
             "partial": {
               "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "profile_id",
+            "verdict",
+            "previous",
+            "previous_seen_at",
+            "current",
+            "reason"
+          ],
+          "properties": {
+            "code": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "PROXY_LOCATION_CHANGED"
+                },
+                {
+                  "type": "string",
+                  "const": "PROXY_LOCATION_NOTICE"
+                }
+              ]
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^prf_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "verdict": {
+              "enum": [
+                "country_changed",
+                "unverified",
+                "ip_changed",
+                "city_changed"
+              ]
+            },
+            "previous": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "ip",
+                    "country",
+                    "city",
+                    "timezone"
+                  ],
+                  "properties": {
+                    "ip": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 45
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "country": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Z]{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "city": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "previous_seen_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "current": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "ip",
+                    "country",
+                    "city",
+                    "timezone"
+                  ],
+                  "properties": {
+                    "ip": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 45
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "country": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Z]{2}$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "city": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timezone": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64,
+                  "description": "Why there is no current place (a check error)."
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },

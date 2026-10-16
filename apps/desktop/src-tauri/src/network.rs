@@ -265,7 +265,7 @@ pub fn epoch_seconds(ts: &str) -> Option<i64> {
     Some(days * 86_400 + h * 3600 + m * 60 + sec)
 }
 
-fn now_seconds() -> i64 {
+pub(crate) fn now_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -275,11 +275,16 @@ fn now_seconds() -> i64 {
 /// Whether a proxy's last check can be used for matching without checking again: it worked, it is less than a day
 /// old, and the proxy was not edited after it.
 pub fn check_is_fresh(proxy: &ProxyConfig, now: i64) -> bool {
+    check_is_fresh_within(proxy, now, MATCH_CHECK_MAX_AGE_SECS)
+}
+
+/// [`check_is_fresh`] with another age limit (the location lock, ADR-0029, wants a check at most 10 minutes old).
+pub fn check_is_fresh_within(proxy: &ProxyConfig, now: i64, max_age_secs: i64) -> bool {
     proxy.last_check.as_ref().is_some_and(|c| {
         c.result == "ok"
             && c.checked_at >= proxy.updated_at
             && epoch_seconds(&c.checked_at)
-                .is_some_and(|t| now - t < MATCH_CHECK_MAX_AGE_SECS && t <= now + 300)
+                .is_some_and(|t| now - t < max_age_secs && t <= now + 300)
     })
 }
 
@@ -471,6 +476,15 @@ impl AppState {
         }
     }
 
+    /// Settings → "Open the IP check page first in new profiles with a proxy" (ADR-0029; on by default).
+    pub(crate) fn open_check_page_default(&self, store: &LocalStore) -> bool {
+        store
+            .get_setting(settings::OPEN_CHECK_PAGE)
+            .ok()
+            .and_then(|v| v.value.as_bool())
+            .unwrap_or(true)
+    }
+
     fn proxy_policy(&self, store: &LocalStore) -> AddressPolicy {
         AddressPolicy {
             allow_private: store
@@ -491,7 +505,11 @@ impl AppState {
     }
 
     /// The upstream for a saved proxy, re-validated against the current local-address policy.
-    fn upstream_for(&self, store: &LocalStore, proxy: &ProxyConfig) -> Result<Upstream, IpcError> {
+    pub(crate) fn upstream_for(
+        &self,
+        store: &LocalStore,
+        proxy: &ProxyConfig,
+    ) -> Result<Upstream, IpcError> {
         let kind = ProxyKind::parse(&proxy.kind).ok_or(ipc::INVALID_PROXY_TYPE)?;
         let credentials = self.load_login(proxy)?;
         let policy = self.proxy_policy(store);
@@ -756,6 +774,36 @@ impl AppState {
         Ok(record)
     }
 
+    /// The proxy's last check when it worked and is younger than `max_age_secs` (and not older than the proxy's last
+    /// edit); otherwise a new check through the proxy, at most [`MATCH_CHECK_TIMEOUT`], which is recorded like any
+    /// other. `Err`: why there is no check at all (a code). Blocks: runs on a launch's worker thread, never inside the
+    /// network runtime or on the UI thread.
+    pub(crate) fn proxy_check_for_launch(
+        &self,
+        store: &LocalStore,
+        proxy: &ProxyConfig,
+        max_age_secs: i64,
+    ) -> Result<NetworkCheck, String> {
+        if check_is_fresh_within(proxy, now_seconds(), max_age_secs)
+            && let Some(c) = &proxy.last_check
+        {
+            return Ok(c.clone());
+        }
+        let upstream = self
+            .upstream_for(store, proxy)
+            .map_err(|e| e.code.to_owned())?;
+        let settings = self.network_settings();
+        let target = self.check_target(store, &settings);
+        let outcome = self.net.block_on(check::run_within(
+            &upstream,
+            &settings.trust,
+            &target,
+            MATCH_CHECK_TIMEOUT,
+        ));
+        self.record_outcome(store, &proxy.id, &outcome)
+            .map_err(|e| e.code.to_owned())
+    }
+
     /// The proxy location a matching profile's launch uses: the last check when it is fresh, otherwise a new check
     /// (at most [`MATCH_CHECK_TIMEOUT`]). Runs on the launch's worker thread, never inside the network runtime.
     pub(crate) fn launch_geo(&self, store: &LocalStore, profile: &LocalProfile) -> LaunchGeo {
@@ -770,28 +818,9 @@ impl AppState {
         else {
             return none(ipc::UNKNOWN_PROXY.code);
         };
-        let check = if check_is_fresh(&proxy, now_seconds()) {
-            proxy.last_check.clone()
-        } else {
-            let upstream = match self.upstream_for(store, &proxy) {
-                Ok(u) => u,
-                Err(e) => return none(e.code),
-            };
-            let settings = self.network_settings();
-            let target = self.check_target(store, &settings);
-            let outcome = self.net.block_on(check::run_within(
-                &upstream,
-                &settings.trust,
-                &target,
-                MATCH_CHECK_TIMEOUT,
-            ));
-            match self.record_outcome(store, &proxy.id, &outcome) {
-                Ok(c) => Some(c),
-                Err(e) => return none(e.code),
-            }
-        };
-        let Some(check) = check else {
-            return none("CHECK_FAILED");
+        let check = match self.proxy_check_for_launch(store, &proxy, MATCH_CHECK_MAX_AGE_SECS) {
+            Ok(c) => c,
+            Err(code) => return none(&code),
         };
         if let Some(code) = check.error_code {
             return LaunchGeo {
@@ -829,10 +858,22 @@ impl AppState {
                 return Err(ipc::UNKNOWN_PROXY);
             }
         }
+        // ADR-0029: a new profile (never opened) that gets its first proxy opens the IP check page first, when that
+        // is the default in Settings. Existing profiles keep what they had.
+        let privacy = (proxy_id.is_some()
+            && profile.proxy_id.is_none()
+            && profile.last_started_at.is_none()
+            && !profile.privacy.open_check_page
+            && self.open_check_page_default(&store))
+        .then(|| PrivacyConfig {
+            open_check_page: true,
+            ..profile.privacy.clone()
+        });
         let updated = store.update_profile(
             profile_id,
             ProfileUpdate {
                 network: Some((proxy_id, fail_closed)),
+                privacy: privacy.as_ref(),
                 ..ProfileUpdate::default()
             },
             expected_version,
@@ -1101,7 +1142,10 @@ impl AppState {
             || n.launched.proxy != p.proxy_id
             || (p.proxy_id.is_some() && n.launched.fail_closed != p.fail_closed)
             || n.launched.config_version != p.network_config_version
-            || n.launched.privacy.as_ref().is_some_and(|c| c != &p.privacy);
+            || n.launched
+                .privacy
+                .as_ref()
+                .is_some_and(|c| c.browser_settings() != p.privacy.browser_settings());
         let Some(g) = &n.gateway else {
             return NetworkView {
                 status: if n.lost { "lost" } else { "off" },

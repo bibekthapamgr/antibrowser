@@ -12,7 +12,7 @@ use pb_runtime::{ClientId, TagId, WorkspaceId};
 use rusqlite::{Connection, Transaction, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
@@ -31,6 +31,7 @@ pub(crate) const MIGRATIONS: &[(i64, &str, Step)] = &[
     (11, "product_model", v11),
     (12, "self_service", v12),
     (13, "proxy_location", v13),
+    (14, "profile_location_lock", v14),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -840,4 +841,23 @@ fn v13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          alter table network_checks add column longitude real
            check (longitude is null or longitude between -180 and 180);",
     )
+}
+
+/// ADR-0029: where each profile's proxy exited at its last successful open (address, country, city, time zone), so the
+/// next open can warn before the location changes unnoticed. One row per profile, deleted with it; the values have
+/// the same shapes as a check's (v13). Kept on this computer; a workspace profile also carries it in its encrypted
+/// backup's settings.
+fn v14(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(&format!(
+        "create table profile_locations (
+           profile_id  text primary key references profiles(id) on delete cascade,
+           egress_ip   text check (egress_ip is null or length(egress_ip) between 2 and 45),
+           country     text check (country is null or (length(country) = 2 and country glob '[A-Z][A-Z]')),
+           city        text check (city is null or length(city) between 1 and 64),
+           timezone    text
+             check (timezone is null or (length(timezone) between 3 and 64 and timezone not glob '*[^A-Za-z0-9_/+-]*')),
+           seen_at     text not null default {NOW},
+           check (egress_ip is not null or country is not null)
+         ) strict;"
+    ))
 }

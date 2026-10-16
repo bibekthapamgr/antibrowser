@@ -1037,7 +1037,7 @@ fn a_matching_profile_takes_time_zone_and_language_from_the_proxy_check() {
     stop(&f, &profile_id);
 
     // The proxy stops working: the profile still opens (blocked by fail-closed as usual), without the match, and
-    // the person is told why.
+    // the person is told why. (With the location lock on, ADR-0029, it would first ask: see the lock's own test.)
     rusqlite::Connection::open(f.data().join("local.db"))
         .and_then(|c| c.execute("delete from network_checks", []))
         .unwrap_or_else(|e| panic!("{e}"));
@@ -1045,7 +1045,7 @@ fn a_matching_profile_takes_time_zone_and_language_from_the_proxy_check() {
         &f,
         "update_profile",
         json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
-                "privacy": { "match_proxy": true } }),
+                "privacy": { "match_proxy": true, "location_lock": false } }),
     ));
     proxy.stop();
     launch(&f, &profile_id);
@@ -1079,6 +1079,354 @@ fn checks_use_the_account_servers_netcheck_when_one_is_configured() {
     for bad in ["http://pb.example.com", "https://203.0.113.5", "not a url"] {
         assert!(server_check_target(bad).is_none(), "{bad}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------- location lock
+
+fn age_checks(f: &Fixture, minutes: u32) {
+    rusqlite::Connection::open(f.data().join("local.db"))
+        .and_then(|c| {
+            c.execute(
+                "update network_checks set checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?1)",
+                [format!("-{minutes} minutes")],
+            )
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+fn use_service(f: &Fixture, service: &TestCheckService, host: &str) {
+    f.state
+        .set_network_settings(pb_desktop_lib::network::NetworkSettings {
+            trust: service.ca.trust(),
+            check: Some(CheckTarget {
+                host: host.into(),
+                port: 443,
+                path: "/v1/netcheck".into(),
+            }),
+        });
+}
+
+fn remembered(f: &Fixture, id: &str) -> Option<pb_storage::network::ProfileLocation> {
+    let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    let pid = pb_runtime::ProfileId::parse(id).unwrap_or_else(|e| panic!("{e}"));
+    store
+        .profile_location(&pid)
+        .unwrap_or_else(|e| panic!("{e:?}"))
+}
+
+fn op_error(f: &Fixture, op: &Value) -> Option<&'static str> {
+    f.state
+        .ops
+        .get(op["operation_id"].as_str().unwrap_or_default())
+        .and_then(|o| o.error_code)
+}
+
+#[test]
+fn the_location_lock_asks_before_a_new_country_and_notes_a_new_address() {
+    let f = fixture();
+    keychain(&f);
+    let ny = TestCheckService::start_with_body(
+        "ny.pb.test",
+        "ip=198.51.100.7\nloc=US\ncity=New York\ntz=America/New_York\nlang=en-US\n",
+    );
+    let ny2 = TestCheckService::start_with_body(
+        "ny2.pb.test",
+        "ip=198.51.100.8\nloc=US\ncity=New York\ntz=America/New_York\nlang=en-US\n",
+    );
+    let berlin = TestCheckService::start_with_body(
+        "de.pb.test",
+        "ip=203.0.113.5\nloc=DE\ncity=Berlin\ntz=Europe/Berlin\nlang=de-DE\n",
+    );
+    let proxy = TestProxy::http(ProxyOptions {
+        hosts: hosts(&[
+            ("ny.pb.test", ny.addr()),
+            ("ny2.pb.test", ny2.addr()),
+            ("de.pb.test", berlin.addr()),
+        ]),
+        ..Default::default()
+    });
+    let profile_id = workspace_with_profile(&f);
+    allow_local_proxies(&f);
+    let px = local_proxy(&f, "Residential", &proxy, None);
+    assign(&f, &profile_id, Some(&px), true);
+    // On by default for a profile with a proxy, without being stored (existing profiles get it too).
+    assert_eq!(
+        profile(&f, &profile_id)["privacy"].get("location_lock"),
+        None
+    );
+
+    // First open: checked (no recent check), opens, and the location is remembered once the browser started.
+    use_service(&f, &ny, "ny.pb.test");
+    launch(&f, &profile_id);
+    assert_eq!(ny.requests(), 1);
+    let first = remembered(&f, &profile_id).unwrap_or_else(|| panic!("remembered"));
+    assert_eq!(
+        (
+            first.egress_ip.as_deref(),
+            first.country.as_deref(),
+            first.city.as_deref(),
+            first.timezone.as_deref()
+        ),
+        (
+            Some("198.51.100.7"),
+            Some("US"),
+            Some("New York"),
+            Some("America/New_York")
+        )
+    );
+    assert!(warnings(&f, "PROXY_LOCATION_CHANGED").is_empty());
+    assert!(warnings(&f, "PROXY_LOCATION_NOTICE").is_empty());
+    stop(&f, &profile_id);
+
+    // A check younger than 10 minutes is reused: nothing is asked of the network.
+    launch(&f, &profile_id);
+    assert_eq!(ny.requests(), 1, "a recent check is reused");
+    stop(&f, &profile_id);
+
+    // Same country, new address: it opens, with a notice.
+    age_checks(&f, 11);
+    use_service(&f, &ny2, "ny2.pb.test");
+    launch(&f, &profile_id);
+    assert_eq!(ny2.requests(), 1, "an older check is repeated");
+    let notice = warnings(&f, "PROXY_LOCATION_NOTICE");
+    assert_eq!(notice.len(), 1, "{notice:?}");
+    assert_eq!(
+        (
+            &notice[0]["verdict"],
+            &notice[0]["previous"]["ip"],
+            &notice[0]["current"]["ip"],
+            &notice[0]["current"]["country"]
+        ),
+        (
+            &json!("ip_changed"),
+            &json!("198.51.100.7"),
+            &json!("198.51.100.8"),
+            &json!("US")
+        )
+    );
+    assert_eq!(
+        remembered(&f, &profile_id).and_then(|l| l.egress_ip),
+        Some("198.51.100.8".into())
+    );
+    stop(&f, &profile_id);
+
+    // Another country: nothing starts until the person confirms.
+    age_checks(&f, 11);
+    use_service(&f, &berlin, "de.pb.test");
+    let spawns = f.launcher.spawns.load(std::sync::atomic::Ordering::SeqCst);
+    let op = ok(invoke(
+        &f,
+        "launch_profile",
+        json!({ "profileId": profile_id }),
+    ));
+    assert_eq!(wait_op(&f, &op), OpStatus::Failed);
+    assert_eq!(op_error(&f, &op), Some("PROXY_LOCATION_CHANGED"));
+    let changed = warnings(&f, "PROXY_LOCATION_CHANGED");
+    assert_eq!(changed.len(), 1, "{changed:?}");
+    assert_eq!(
+        (
+            &changed[0]["profile_id"],
+            &changed[0]["verdict"],
+            &changed[0]["previous"]["country"],
+            &changed[0]["previous"]["city"],
+            &changed[0]["previous"]["ip"],
+            &changed[0]["current"]["country"],
+            &changed[0]["current"]["city"],
+            &changed[0]["current"]["ip"]
+        ),
+        (
+            &json!(profile_id),
+            &json!("country_changed"),
+            &json!("US"),
+            &json!("New York"),
+            &json!("198.51.100.8"),
+            &json!("DE"),
+            &json!("Berlin"),
+            &json!("203.0.113.5")
+        )
+    );
+    assert_eq!(
+        f.launcher.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        spawns,
+        "no browser was started"
+    );
+    assert_eq!(
+        remembered(&f, &profile_id).and_then(|l| l.country),
+        Some("US".into()),
+        "a refused open changes nothing"
+    );
+    assert_eq!(profile(&f, &profile_id)["state"], json!("stopped"));
+    // Asking again (the check is now recent) is refused at once, with the same details.
+    let again = invoke(&f, "launch_profile", json!({ "profileId": profile_id }));
+    assert_eq!(code(&again).as_deref(), Some("PROXY_LOCATION_CHANGED"));
+    assert_eq!(warnings(&f, "PROXY_LOCATION_CHANGED").len(), 2);
+
+    // "Open anyway": this one open goes ahead, and the new location becomes the remembered one.
+    let op = ok(invoke(
+        &f,
+        "launch_profile",
+        json!({ "profileId": profile_id, "allowLocationChange": true }),
+    ));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    let now = remembered(&f, &profile_id).unwrap_or_else(|| panic!("remembered"));
+    assert_eq!(
+        (
+            now.country.as_deref(),
+            now.city.as_deref(),
+            now.egress_ip.as_deref()
+        ),
+        (Some("DE"), Some("Berlin"), Some("203.0.113.5"))
+    );
+    stop(&f, &profile_id);
+
+    // The proxy cannot be checked while a country is known: that is not waved through either.
+    age_checks(&f, 11);
+    proxy.stop();
+    let op = ok(invoke(
+        &f,
+        "launch_profile",
+        json!({ "profileId": profile_id }),
+    ));
+    assert_eq!(wait_op(&f, &op), OpStatus::Failed);
+    assert_eq!(op_error(&f, &op), Some("PROXY_LOCATION_CHANGED"));
+    let unverified = warnings(&f, "PROXY_LOCATION_CHANGED");
+    let last = unverified.last().cloned().unwrap_or_default();
+    assert_eq!(
+        (
+            &last["verdict"],
+            &last["current"],
+            &last["previous"]["country"]
+        ),
+        (&json!("unverified"), &Value::Null, &json!("DE"))
+    );
+    assert!(
+        last["reason"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("PROXY_")),
+        "{last}"
+    );
+    proxy.restart();
+
+    // The audit log says what happened, never where: no address or place in it.
+    let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    let pid = pb_runtime::ProfileId::parse(&profile_id).unwrap_or_else(|e| panic!("{e}"));
+    let audit = store.list_audit(Some(&pid), 200).unwrap_or_default();
+    let outcomes: Vec<(String, Option<String>)> = audit
+        .iter()
+        .filter(|a| a.outcome.starts_with("location_"))
+        .map(|a| (a.outcome.clone(), a.detail.clone()))
+        .collect();
+    for expected in [
+        ("location_notice", "IP_CHANGED"),
+        ("location_changed", "COUNTRY_CHANGED"),
+        ("location_override", "COUNTRY_CHANGED"),
+        ("location_changed", "UNVERIFIED"),
+    ] {
+        assert!(
+            outcomes
+                .iter()
+                .any(|(o, d)| o == expected.0 && d.as_deref() == Some(expected.1)),
+            "{expected:?} in {outcomes:?}"
+        );
+    }
+    let text = format!("{audit:?}");
+    for value in ["198.51.100", "203.0.113", "Berlin", "New York"] {
+        assert!(!text.contains(value), "{value} in the audit log");
+    }
+
+    // With the lock off nothing is checked or blocked.
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "privacy": { "location_lock": false } }),
+    ));
+    age_checks(&f, 11);
+    use_service(&f, &ny, "ny.pb.test");
+    let before = ny.requests();
+    launch(&f, &profile_id);
+    assert_eq!(ny.requests(), before, "no check with the lock off");
+    stop(&f, &profile_id);
+}
+
+#[test]
+fn the_ip_check_page_opens_first_from_the_account_server() {
+    let f = fixture();
+    keychain(&f);
+    let proxy = TestProxy::http(ProxyOptions::default());
+    let profile_id = workspace_with_profile(&f);
+    allow_local_proxies(&f);
+    let px = local_proxy(&f, "Plain", &proxy, None);
+    // A new profile that gets its first proxy takes the Settings default (on).
+    let assigned = assign(&f, &profile_id, Some(&px), true);
+    assert_eq!(assigned["privacy"]["open_check_page"], json!(true));
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "startUrls": ["https://shop.example/"],
+                "privacy": { "open_check_page": true, "location_lock": false } }),
+    ));
+    let after_dash = |a: &[String]| -> Vec<String> {
+        a.iter()
+            .skip_while(|x| x.as_str() != "--")
+            .skip(1)
+            .cloned()
+            .collect()
+    };
+    // Without an https account server there is no page to open.
+    launch(&f, &profile_id);
+    assert_eq!(after_dash(&args(&f)), ["https://shop.example/"]);
+    stop(&f, &profile_id);
+
+    let store = f.state.store().unwrap_or_else(|e| panic!("{e:?}"));
+    store
+        .set_cloud_state(
+            pb_storage::cloud::SERVER_URL,
+            Some("https://app.example.com"),
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    launch(&f, &profile_id);
+    assert_eq!(
+        after_dash(&args(&f)),
+        ["https://app.example.com/check/", "https://shop.example/"]
+    );
+    stop(&f, &profile_id);
+
+    // An explicit start page (a link opened in the profile) still comes after the check page.
+    let op = ok(invoke(
+        &f,
+        "launch_profile",
+        json!({ "profileId": profile_id, "startUrl": "https://docs.example/a" }),
+    ));
+    assert_eq!(wait_op(&f, &op), OpStatus::Succeeded);
+    assert_eq!(
+        after_dash(&args(&f)),
+        ["https://app.example.com/check/", "https://docs.example/a"]
+    );
+    stop(&f, &profile_id);
+
+    // Turned off for the profile: only its own pages.
+    ok(invoke(
+        &f,
+        "update_profile",
+        json!({ "profileId": profile_id, "expectedVersion": profile_version(&f, &profile_id),
+                "privacy": { "location_lock": false } }),
+    ));
+    launch(&f, &profile_id);
+    assert_eq!(after_dash(&args(&f)), ["https://shop.example/"]);
+    stop(&f, &profile_id);
+
+    // The Settings default off: a new profile's first proxy leaves it off.
+    ok(invoke(
+        &f,
+        "update_setting",
+        json!({ "key": "profiles.open_check_page", "value": false }),
+    ));
+    let other = ok(invoke(&f, "create_profile", json!({ "name": "Second" })));
+    let other_id = other["id"].as_str().unwrap_or_default().to_owned();
+    let assigned = assign(&f, &other_id, Some(&px), true);
+    assert_eq!(assigned["privacy"].get("open_check_page"), None);
 }
 
 // ---------------------------------------------------------------------------------------------- restart
